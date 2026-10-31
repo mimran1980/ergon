@@ -257,6 +257,10 @@ pub struct Common {
     pub streams: u32,
     /// `--rate`, msg/s over every stream.
     pub rate: u64,
+    /// `--burst`, default 1: slots sent in groups of this many, each group
+    /// at one due time to one stream (`Pacer::with_burst`), handed to the
+    /// transport together and then flushed ([`Tx::flush`]). 1 to 1 024.
+    pub burst: u32,
     /// `--warmup-s`, default 30.
     pub warmup_s: u64,
     /// `--duration-s`, default 30.
@@ -309,6 +313,7 @@ impl Common {
                     .parse()
                     .map_err(|_| Error::Usage("--rate: msg/s".into()))?
             },
+            burst: f.num("burst", 1)?,
             warmup_s: f.num("warmup-s", 30)?,
             duration_s: f.num("duration-s", 30)?,
             size: f.num("size", MESSAGE_LEN)?,
@@ -337,6 +342,9 @@ impl Common {
         }
         if c.streams == 0 {
             return Err(Error::Usage("--streams: at least 1".into()));
+        }
+        if !(1..=1_024).contains(&c.burst) {
+            return Err(Error::Usage(format!("--burst {}: 1 to 1024", c.burst)));
         }
         if c.role != Role::Pong && c.rate == 0 {
             return Err(Error::Usage("--rate: at least 1 msg/s".into()));
@@ -427,6 +435,7 @@ impl Common {
             .setting("round_trip", &self.is_round_trip().to_string())
             .setting("streams", &self.streams.to_string())
             .setting("rate", &self.rate.to_string())
+            .setting("burst", &self.burst.to_string())
             .setting("size", &self.size.to_string())
             .setting("warmup_s", &self.warmup_s.to_string())
             .setting("duration_s", &self.duration_s.to_string())
@@ -562,6 +571,16 @@ pub trait Tx {
     /// # Errors
     /// [`Error::Transport`] when the transport failed for good.
     fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error>;
+
+    /// Hands what `try_send` queued to the wire: called after each group of
+    /// sends (one slot, or a `--burst`). Transports that send at once need
+    /// nothing.
+    ///
+    /// # Errors
+    /// [`Error::Transport`] when the transport failed for good.
+    fn flush(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 /// A transport's receiving side.
@@ -823,7 +842,8 @@ fn stamp(slot: &ergon_latency_core::pace::Slot, send_tsc: u64, kind: Kind) -> [u
     .to_bytes()
 }
 
-/// Sends the slot due at `now`, if any; `Ok(false)` once every slot went.
+/// Sends the slots due at `now`, up to one group (`--burst`), then flushes
+/// the transport; `Ok(false)` once every slot went.
 #[inline]
 fn send_due<T: Tx>(
     clock: &TscClock,
@@ -833,9 +853,33 @@ fn send_due<T: Tx>(
     kind: Kind,
     stats: &mut SendCounts,
 ) -> Result<bool, Error> {
-    let Some(slot) = pacer.poll(now) else {
-        return Ok(!pacer.done());
-    };
+    let mut queued = false;
+    for _ in 0..pacer.burst() {
+        let Some(slot) = pacer.poll(now) else {
+            break;
+        };
+        queued = true;
+        if !send_slot(clock, pacer, tx, &slot, kind, stats)? {
+            break;
+        }
+    }
+    if queued {
+        tx.flush()?;
+    }
+    Ok(!pacer.done())
+}
+
+/// Sends `slot`: `Ok(true)` when the transport took it.
+#[inline]
+fn send_slot<T: Tx>(
+    clock: &TscClock,
+    pacer: &mut Pacer,
+    tx: &mut T,
+    slot: &ergon_latency_core::pace::Slot,
+    kind: Kind,
+    stats: &mut SendCounts,
+) -> Result<bool, Error> {
+    let slot = *slot;
     // the TSC immediately before the send call
     let send_tsc = clock.raw();
     let msg = stamp(&slot, send_tsc, kind);
@@ -845,21 +889,23 @@ fn send_due<T: Tx>(
             if pacer.done() {
                 stats.end_tsc = send_tsc;
             }
+            Ok(true)
         }
         Sent::Busy => {
             if stats.bp_slot != slot.index {
                 stats.bp_slot = slot.index;
                 stats.backpressured += 1;
             }
+            Ok(false)
         }
         Sent::Admin => {
             if stats.admin_slot != slot.index {
                 stats.admin_slot = slot.index;
                 stats.admin_actions += 1;
             }
+            Ok(false)
         }
     }
-    Ok(true)
 }
 
 /// The round trip's sending end on one thread: sends each slot when due
@@ -883,7 +929,8 @@ pub fn ping<T: Tx, R: Rx>(
         c.streams,
         c.warmup_slots()?,
         c.measured_slots()?,
-    )?;
+    )?
+    .with_burst(c.burst)?;
     let deadline = c.deadline(clock, start_tsc);
     let mut stats = SendCounts::new();
     loop {
@@ -936,7 +983,8 @@ pub fn send_oneway<T: Tx>(
             c.streams,
             c.warmup_slots()?,
             c.measured_slots()?,
-        )?;
+        )?
+        .with_burst(c.burst)?;
         let deadline = c.deadline(clock, start_tsc);
         let mut stats = SendCounts::new();
         loop {

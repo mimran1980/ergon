@@ -6,13 +6,16 @@
 //!   in `UdpHandler::on_datagram`, a slice of the connection's receive
 //!   buffer. `datagram_burst` (default
 //!   [`POLL_LIMIT`](super::point::POLL_LIMIT), the other arms' per-stream
-//!   limit) caps the reads per socket per pass.
+//!   limit) caps the reads per socket per pass, in `recvmmsg` calls of up
+//!   to `rx_batch` (`UdpOptions::rx_batch`).
 //! - Send ([`EioUdpTx`]): `ConnMut::send` copies into the connection's send
-//!   slots, then `Driver::flush` hands it to the kernel at once. All slots
-//!   full is busy.
+//!   slots; [`Tx::flush`], after each group of sends (one slot or a
+//!   `--burst`), hands them to the kernel: one `send` for one datagram,
+//!   one `sendmmsg` for more. All slots full: flushed, then tried once
+//!   more, then busy.
 //! - Echo: the handler has no driver to send with, so an echo made while
-//!   the driver polls ([`Staged`]) goes out right after that poll, before
-//!   `Rx::poll` returns.
+//!   the driver polls ([`Staged`]) is queued right after that poll and the
+//!   pass's echoes are flushed together, before `Rx::poll` returns.
 //! - Driver keys: `epoll_events`, `datagram_burst`, `rcvbuf`,
 //!   `busy_poll_us`; receive timestamps off (nothing reads them); keepalive and
 //!   `TCP_USER_TIMEOUT` left alone (the mio arms set neither).
@@ -49,6 +52,8 @@ pub struct EioUdpOptions {
     pub epoll_events: u32,
     /// `Config::datagram_burst`.
     pub datagram_burst: u32,
+    /// `UdpOptions::rx_batch`: datagrams one receive call takes.
+    pub rx_batch: usize,
     /// `Config::busy_poll_us` (`SO_BUSY_POLL`, µs; 0: none).
     pub busy_poll_us: u32,
     /// `Config::loop_cpu`: the CPU the polling thread is pinned to.
@@ -188,7 +193,7 @@ pub fn pair(
         max_datagram: MAX_DATAGRAM,
         tx_slots: TX_SLOTS,
         sndbuf: opts.sndbuf,
-        ..UdpOptions::default()
+        rx_batch: opts.rx_batch,
     };
     let mut ids = Vec::with_capacity(streams as usize);
     for i in 0..streams {
@@ -208,9 +213,10 @@ pub fn pair(
     Ok((EioUdpTx { s: Rc::clone(&s) }, EioUdpRx { s }))
 }
 
-/// One datagram queued and flushed now; `Ok(false)` when busy.
+/// One datagram queued (flushed first if every slot is taken); `Ok(false)`
+/// when still busy.
 #[inline]
-fn send_now(
+fn queue(
     d: &mut Driver<UdpConn>,
     ids: &[ConnId],
     stream: u32,
@@ -223,10 +229,17 @@ fn send_now(
         .get_mut(id)
         .ok_or_else(|| Error::Transport(format!("stream {stream}: its socket closed")))?;
     match c.send(msg) {
-        Ok(()) => {
-            d.flush().map_err(|e| eio("flush", e))?;
-            Ok(true)
-        }
+        Ok(()) => return Ok(true),
+        Err(ergon_io::Error::Busy(_)) => {}
+        Err(e) => return Err(eio("udp send", e)),
+    }
+    // every slot taken: hand them to the kernel, then once more
+    d.flush().map_err(|e| eio("flush", e))?;
+    let mut c = d
+        .get_mut(id)
+        .ok_or_else(|| Error::Transport(format!("stream {stream}: its socket closed")))?;
+    match c.send(msg) {
+        Ok(()) => Ok(true),
         Err(ergon_io::Error::Busy(_)) => Ok(false),
         Err(e) => Err(eio("udp send", e)),
     }
@@ -244,11 +257,20 @@ impl Tx for EioUdpTx {
                 Sent::Busy
             });
         };
-        Ok(if send_now(&mut d, &self.s.ids, stream, msg)? {
+        Ok(if queue(&mut d, &self.s.ids, stream, msg)? {
             Sent::Sent
         } else {
             Sent::Busy
         })
+    }
+
+    #[inline]
+    fn flush(&mut self) -> Result<(), Error> {
+        // inside the receive side's poll the echo pass flushes
+        if let Ok(mut d) = self.s.d.try_borrow_mut() {
+            d.flush().map_err(|e| eio("flush", e))?;
+        }
+        Ok(())
     }
 }
 
@@ -284,14 +306,8 @@ impl Rx for EioUdpRx {
         }
         let mut staged = s.staged.borrow_mut();
         if staged.len > 0 {
-            staged.drain(|stream, m| {
-                if send_now(&mut d, &s.ids, stream, m)? {
-                    return Ok(true);
-                }
-                // every slot taken: hand them to the kernel, once
-                d.flush().map_err(|e| eio("flush", e))?;
-                send_now(&mut d, &s.ids, stream, m)
-            })?;
+            staged.drain(|stream, m| queue(&mut d, &s.ids, stream, m))?;
+            d.flush().map_err(|e| eio("flush", e))?;
         }
         Ok(n)
     }
@@ -323,6 +339,7 @@ impl Inspect for EioUdpRx {
             ("udp.max_datagram", MAX_DATAGRAM.to_string()),
             ("udp.tx_slots", TX_SLOTS.to_string()),
             ("udp.rx_per_pass", cfg.datagram_burst.to_string()),
+            ("udp.rx_batch", self.s.opts.rx_batch.to_string()),
             (
                 "rcvbuf",
                 cfg.rcvbuf

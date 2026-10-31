@@ -166,3 +166,24 @@ fn wait_busy_spins_until_the_slot_is_due() -> R {
     assert_eq!(slot.index, 0);
     Ok(())
 }
+
+/// `with_burst(b)`: b consecutive slots share one due time and one stream,
+/// with consecutive sequence numbers there; the average rate is unchanged
+/// (group g is due when slot g × b would be without bursts).
+#[test]
+fn a_burst_sends_b_slots_at_once_to_one_stream() -> R {
+    let clock = TscClock::new();
+    let plain = Pacer::new(&clock, 1_000, 1_000, 2, 0, 12)?;
+    let pacer = Pacer::new(&clock, 1_000, 1_000, 2, 0, 12)?.with_burst(4)?;
+    let slots: Vec<_> = (0..12).map(|k| pacer.slot(k)).collect();
+    let streams: Vec<u32> = slots.iter().map(|s| s.stream).collect();
+    let seqs: Vec<u64> = slots.iter().map(|s| s.seq).collect();
+    assert_eq!(streams, [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0]);
+    assert_eq!(seqs, [0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7]);
+    for k in 0..12 {
+        assert_eq!(pacer.due(k), plain.due(k / 4 * 4), "slot {k}");
+    }
+    assert_eq!(pacer.burst(), 4);
+    assert!(Pacer::new(&clock, 0, 1, 1, 0, 1)?.with_burst(0).is_err());
+    Ok(())
+}

@@ -3,7 +3,11 @@
 //! Slot `k` is due at
 //! `start + k * interval` on the raw counter (32.32 fixed point, so a long
 //! run does not drift), one message per slot (burst 1), and goes to stream
-//! `k mod N` as that stream's message `k / N`. The sender busy-spins until a
+//! `k mod N` as that stream's message `k / N`. With
+//! [`with_burst(b)`](Pacer::with_burst) slots go in groups of `b`: group
+//! `g = k / b` is due at `start + g * b * interval` (the same average rate)
+//! and goes whole to stream `g mod N`, as its messages
+//! `(g / N) * b ..` in order. The sender busy-spins until a
 //! slot is due and stamps it with when it was due, whatever the replies do,
 //! so time spent queued counts against the latency (no coordinated
 //! omission).
@@ -67,6 +71,7 @@ pub struct Pacer {
     /// raw ticks per slot, 32.32 fixed point
     interval_fp: u128,
     streams: u32,
+    burst: u64,
     warmup: u64,
     total: u64,
     next: u64,
@@ -104,6 +109,7 @@ impl Pacer {
             start_tsc,
             interval_fp: (second << 32) / u128::from(rate),
             streams,
+            burst: 1,
             warmup,
             total,
             next: 0,
@@ -116,11 +122,32 @@ impl Pacer {
         })
     }
 
+    /// Sends slots in groups of `burst`, each group at one due time and to
+    /// one stream (module docs). 1 is one slot at a time.
+    ///
+    /// # Errors
+    /// [`Error::Schedule`] for a burst of 0.
+    pub const fn with_burst(mut self, burst: u32) -> Result<Self, Error> {
+        if burst == 0 {
+            return Err(Error::Schedule("a burst of 0"));
+        }
+        self.burst = burst as u64;
+        Ok(self)
+    }
+
+    /// The slots a group sends at once.
+    #[must_use]
+    pub fn burst(&self) -> u32 {
+        // set from a u32
+        u32::try_from(self.burst).unwrap_or(u32::MAX)
+    }
+
     /// The raw counter slot `index` is due at.
     #[must_use]
     #[inline]
     pub fn due(&self, index: u64) -> u64 {
-        let offset = (self.interval_fp * u128::from(index)) >> 32;
+        let first = index - index % self.burst;
+        let offset = (self.interval_fp * u128::from(first)) >> 32;
         self.start_tsc
             .wrapping_add(u64::try_from(offset).unwrap_or(u64::MAX))
     }
@@ -130,11 +157,12 @@ impl Pacer {
     #[inline]
     pub fn slot(&self, index: u64) -> Slot {
         let streams = u64::from(self.streams);
+        let group = index / self.burst;
         Slot {
             index,
             // below `streams`, a u32
-            stream: u32::try_from(index % streams).unwrap_or(0),
-            seq: index / streams,
+            stream: u32::try_from(group % streams).unwrap_or(0),
+            seq: group / streams * self.burst + index % self.burst,
             intended_tsc: self.due(index),
             measured: index >= self.warmup,
         }

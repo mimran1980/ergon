@@ -17,6 +17,12 @@
 //!   waits in the ring.
 //! - Socket options by `setsockopt`: `SO_RCVBUF`, `SO_SNDBUF`,
 //!   `SO_BUSY_POLL`. Nothing allocates after [`pair`].
+//! - Batched ([`MioUdpOptions::mmsg`] > 0): the same loop, but each read is
+//!   a `recvmmsg` of up to `mmsg` datagrams, and a send only queues: the
+//!   point's flush (after each group of sends) and the end of each receive
+//!   pass hand every queued datagram to the kernel in one `sendmmsg` per
+//!   socket. mio has no batched call, so these two go through
+//!   `ergon_io::sys` (thin `libc` wrappers) on the mio socket's fd.
 //!
 //! The sockets, their send rings and the per-stream read are
 //! [`MioUdpStreams`] and [`MioUdpReader`], built on any `mio::Registry`
@@ -40,6 +46,7 @@ use std::os::fd::AsRawFd;
 use std::rc::Rc;
 use std::time::Duration;
 
+use ergon_io::sys::MmsgBatch;
 use ergon_latency_core::message::MESSAGE_LEN;
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Registry, Token};
@@ -60,6 +67,9 @@ pub struct MioUdpOptions {
     pub busy_read_us: u32,
     /// `Events` capacity: the most ready sockets one `epoll_wait` reports.
     pub epoll_events: usize,
+    /// 0: one `recv` and one `send` a datagram. N: `recvmmsg` of up to N a
+    /// call, and queued sends leave in `sendmmsg` (module docs).
+    pub mmsg: usize,
 }
 
 /// Counters.
@@ -79,8 +89,10 @@ pub struct MioUdpStats {
     pub would_block: u64,
     /// `Poll::poll` calls.
     pub polls: u64,
-    /// `recv` calls.
+    /// `recv` (or `recvmmsg`) calls.
     pub recv_calls: u64,
+    /// `send` (or `sendmmsg`) calls.
+    pub send_calls: u64,
 }
 
 /// A stream's queued datagrams.
@@ -140,6 +152,8 @@ struct TxState {
     dirty: Vec<u32>,
     in_dirty: Vec<bool>,
     stats: MioUdpStats,
+    /// batched sends (`mmsg` > 0)
+    mm: Option<MmsgBatch>,
 }
 
 impl TxState {
@@ -152,6 +166,7 @@ impl TxState {
     ) -> Result<Attempt, Error> {
         let mut retried = false;
         loop {
+            stats.send_calls += 1;
             match sock.send(payload) {
                 Ok(_) => {
                     stats.tx += 1;
@@ -183,10 +198,14 @@ impl TxState {
             let (Some(sock), Some(ring)) = (socks.get(i), self.rings.get_mut(i)) else {
                 return Err(Error::Transport(format!("stream {i} of {}", socks.len())));
             };
-            while let Some(d) = ring.front() {
-                match Self::attempt(sock, d, &mut self.stats)? {
-                    Attempt::Taken => ring.pop(),
-                    Attempt::Again => break,
+            if let Some(mm) = self.mm.as_mut() {
+                Self::flush_batched(sock, ring, mm, &mut self.stats)?;
+            } else {
+                while let Some(d) = ring.front() {
+                    match Self::attempt(sock, d, &mut self.stats)? {
+                        Attempt::Taken => ring.pop(),
+                        Attempt::Again => break,
+                    }
                 }
             }
             if ring.queued == 0 {
@@ -194,6 +213,53 @@ impl TxState {
                 self.dirty.swap_remove(k);
             } else {
                 k += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TxState {
+    /// `ring`'s datagrams to the kernel in `sendmmsg` calls, until it is
+    /// empty or the socket has no room; `ECONNREFUSED` once is tried again.
+    #[inline]
+    fn flush_batched(
+        sock: &UdpSocket,
+        ring: &mut Ring,
+        mm: &mut MmsgBatch,
+        stats: &mut MioUdpStats,
+    ) -> Result<(), Error> {
+        let fd = sock.as_raw_fd();
+        let slots = ring.lens.len();
+        let mut retried = false;
+        while ring.queued > 0 {
+            let n = ring.queued.min(mm.capacity());
+            for j in 0..n {
+                let slot = (ring.head + j) % slots;
+                let at = slot * MAX_DATAGRAM;
+                mm.arm_tx(j, &ring.buf[at..at + ring.lens[slot]]);
+            }
+            stats.send_calls += 1;
+            match ergon_io::sys::sendmmsg(fd, mm, n) {
+                Ok(0) => {
+                    stats.would_block += 1;
+                    return Ok(());
+                }
+                Ok(k) => {
+                    stats.tx += k as u64;
+                    for _ in 0..k {
+                        ring.pop();
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
+                    stats.tx_refused += 1;
+                    if retried {
+                        return Ok(());
+                    }
+                    retried = true;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(os("udp sendmmsg", e)),
             }
         }
         Ok(())
@@ -258,6 +324,7 @@ impl MioUdpStreams {
                 dirty: Vec::with_capacity(n),
                 in_dirty: vec![false; n],
                 stats: MioUdpStats::default(),
+                mm: (opts.mmsg > 0).then(|| MmsgBatch::new(opts.mmsg)),
             }),
             opts,
             ipv6: local.is_ipv6(),
@@ -304,8 +371,10 @@ impl MioUdpStreams {
                 self.socks.len()
             )));
         };
-        // a datagram already waiting goes first: order is kept
+        // a datagram already waiting goes first: order is kept; batched,
+        // every send waits for the flush
         if ring.queued == 0
+            && tx.mm.is_none()
             && matches!(
                 TxState::attempt(sock, payload, &mut tx.stats)?,
                 Attempt::Taken
@@ -367,6 +436,7 @@ impl MioUdpStreams {
             ("udp.max_datagram", MAX_DATAGRAM.to_string()),
             ("udp.tx_slots", TX_SLOTS.to_string()),
             ("udp.rx_per_pass", POLL_LIMIT.to_string()),
+            ("udp.mmsg", o.mmsg.to_string()),
             ("rcvbuf", o.rcvbuf.to_string()),
             (
                 "sndbuf",
@@ -382,6 +452,7 @@ impl MioUdpStreams {
             ("stat.would_block", t.would_block.to_string()),
             ("stat.polls", r.polls.to_string()),
             ("stat.recv_calls", r.recv_calls.to_string()),
+            ("stat.send_calls", t.send_calls.to_string()),
         ] {
             out.push((k.to_owned(), v));
         }
@@ -396,6 +467,8 @@ impl MioUdpStreams {
 /// [`MioUdpStreams`] at a time.
 pub struct MioUdpReader {
     buf: Box<[u8]>,
+    /// batched reads (`mmsg` > 0)
+    mm: Option<MmsgBatch>,
     /// The receive side's counters (`polls` is the caller's to count).
     pub stats: MioUdpStats,
 }
@@ -410,8 +483,16 @@ impl MioUdpReader {
     /// One [`MAX_DATAGRAM`] buffer, every page touched now.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_mmsg(0)
+    }
+
+    /// 0: as [`new`](Self::new). N: `N` × [`MAX_DATAGRAM`] bytes, read
+    /// with `recvmmsg` of up to N datagrams a call.
+    #[must_use]
+    pub fn with_mmsg(mmsg: usize) -> Self {
         Self {
-            buf: vec![1u8; MAX_DATAGRAM].into_boxed_slice(),
+            buf: vec![1u8; MAX_DATAGRAM * mmsg.max(1)].into_boxed_slice(),
+            mm: (mmsg > 0).then(|| MmsgBatch::new(mmsg)),
             stats: MioUdpStats::default(),
         }
     }
@@ -432,6 +513,9 @@ impl MioUdpReader {
         let sock = streams.socks.get(stream as usize).ok_or_else(|| {
             Error::Transport(format!("stream {stream} of {}", streams.socks.len()))
         })?;
+        if self.mm.is_some() {
+            return self.read_batched(sock, on);
+        }
         let mut n = 0;
         for _ in 0..POLL_LIMIT {
             self.stats.recv_calls += 1;
@@ -447,6 +531,47 @@ impl MioUdpReader {
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(e) => return Err(os("udp recv", e)),
+            }
+        }
+        Ok((n, false))
+    }
+}
+
+impl MioUdpReader {
+    /// [`read`](Self::read) in `recvmmsg` calls: a call that comes back
+    /// short read the socket dry.
+    #[inline]
+    fn read_batched<F: FnMut(&[u8])>(
+        &mut self,
+        sock: &UdpSocket,
+        on: &mut F,
+    ) -> Result<(usize, bool), Error> {
+        let Some(mm) = self.mm.as_mut() else {
+            return Ok((0, true));
+        };
+        let fd = sock.as_raw_fd();
+        let mut n = 0;
+        while n < POLL_LIMIT {
+            let armed = mm.arm_rx(&mut self.buf, MAX_DATAGRAM, POLL_LIMIT - n);
+            self.stats.recv_calls += 1;
+            match ergon_io::sys::recvmmsg(fd, mm, armed) {
+                Ok(None) => return Ok((n, true)),
+                Ok(Some(k)) => {
+                    for j in 0..k {
+                        let at = j * MAX_DATAGRAM;
+                        on(&self.buf[at..at + mm.len(j).min(MAX_DATAGRAM)]);
+                    }
+                    self.stats.rx += k as u64;
+                    n += k;
+                    if k < armed {
+                        return Ok((n, true));
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
+                    self.stats.rx_refused += 1;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(os("udp recvmmsg", e)),
             }
         }
         Ok((n, false))
@@ -485,6 +610,7 @@ pub fn pair(
             "streams and epoll events must be at least 1".into(),
         ));
     }
+    let opts_mmsg = opts.mmsg;
     let poll = Poll::new().map_err(|e| os("epoll_create", e))?;
     let events = Events::with_capacity(opts.epoll_events);
     let s = Rc::new(MioUdpStreams::new(
@@ -502,7 +628,7 @@ pub fn pair(
             s,
             poll,
             events,
-            reader: MioUdpReader::new(),
+            reader: MioUdpReader::with_mmsg(opts_mmsg),
             ready: Vec::with_capacity(n),
             in_ready: vec![false; n],
         },
@@ -513,6 +639,11 @@ impl Tx for MioUdpTx {
     #[inline]
     fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
         self.s.send(stream, msg)
+    }
+
+    #[inline]
+    fn flush(&mut self) -> Result<(), Error> {
+        self.s.flush()
     }
 }
 

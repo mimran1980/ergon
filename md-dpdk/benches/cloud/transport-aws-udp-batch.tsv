@@ -1,0 +1,32 @@
+# UDP batching session (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file>): unreliable UDP between two hosts, Aeron on the
+# kernel and on DPDK (md-dpdk), raw mio one call a datagram and batched
+# (recvmmsg/sendmmsg), ergon-io batched (rx_batch 16, the default), with
+# rx_batch 1 (receive one a call; sends still batched) and 64, and ergon-io
+# on smoltcp over DPDK (ping on the stack, pong on the kernel). No netem.
+#
+#   u1   1 stream, one message a slot, 50k to 500k msg/s: where the socket
+#        loops fell behind before batching
+#   b8   1 stream, bursts of 8 to one stream at one due time (--burst 8),
+#        the same average rates: every arm's latency counts each message of
+#        the burst, so p50 is the middle of a burst and p99 its tail
+#   s32  32 streams at 200k msg/s: one message a socket at a time, where
+#        per-socket batching should not help
+#
+# arm   name                 binary     setup    hosts  arguments
+arm  mio-udp-mmsg        udp_lat    sockets  two  --impl mio --mmsg 16
+arm  eio-udp-rx1         udp_lat    sockets  two  --impl ergon --rx-batch 1
+arm  eio-udp-smol        udp_lat    sockets  two  --impl ergon --backend smoltcp-spin
+arm  aeron-udp-b8        aeron_lat  kernel   two  --mode udp --reliable false --burst 8
+arm  dpdk-aeron-udp-b8   aeron_lat  dpdk     two  --mode udp --reliable false --burst 8
+arm  mio-udp-b8          udp_lat    sockets  two  --impl mio --burst 8
+arm  mio-udp-mmsg-b8     udp_lat    sockets  two  --impl mio --mmsg 16 --burst 8
+arm  eio-udp-b8          udp_lat    sockets  two  --impl ergon --burst 8
+arm  eio-udp-rx1-b8      udp_lat    sockets  two  --impl ergon --rx-batch 1 --burst 8
+arm  eio-udp-rx64-b8     udp_lat    sockets  two  --impl ergon --rx-batch 64 --burst 8
+arm  eio-udp-smol-b8     udp_lat    sockets  two  --impl ergon --backend smoltcp-spin --burst 8
+
+# set   pair par host loads                 streams  netem  arms
+set u1   a    -   ab   50000,200000,500000   1        -      eio-udp,mio-udp,mio-udp-mmsg,eio-udp-rx1,eio-udp-smol,aeron-udp,dpdk-aeron-udp,aa
+set b8   a    -   ab   50000,200000          1        -      eio-udp-b8,mio-udp-b8,mio-udp-mmsg-b8,eio-udp-rx1-b8,eio-udp-rx64-b8,eio-udp-smol-b8,aeron-udp-b8,dpdk-aeron-udp-b8,aa
+set s32  a    -   ab   200000                32       -      eio-udp,mio-udp,mio-udp-mmsg,aeron-udp,dpdk-aeron-udp,aa

@@ -925,6 +925,7 @@ fn mio_stream_sets_share_a_callers_registry() -> R {
         sndbuf: None,
         busy_read_us: 0,
         epoll_events: 64,
+        mmsg: 0,
     };
     let (pa, pb) = ("127.0.0.1:39200".parse()?, "127.0.0.1:39210".parse()?);
     let a = MioUdpStreams::new(poll.registry(), 0, pa, pb, 2, udp.clone())?;
@@ -1076,5 +1077,105 @@ fn the_kernel_pong_pins_its_echo_thread() -> R {
         "echo affinity {mask:?}, --cpus {cpu}, started on {started:?}"
     );
     std::fs::remove_dir_all(&out)?;
+    Ok(())
+}
+
+/// The ping's manifest setting `key`, as a number.
+fn setting_num(out: &Path, key: &str) -> R<u64> {
+    let m = std::fs::read_to_string(out.join("manifest.json"))?;
+    let want = format!("\"{key}\": \"");
+    let at = m.find(&want).ok_or_else(|| format!("no {key} in {m}"))? + want.len();
+    let end = m[at..].find('"').ok_or("unterminated")? + at;
+    Ok(m[at..end].parse()?)
+}
+
+/// `--burst 8`: the ping hands each group of 8 to the transport and then
+/// flushes, so a batched arm sends a group in one `sendmmsg` (send calls
+/// an eighth of the datagrams) and reads its echoes in fewer calls than
+/// datagrams. Every message still arrives once, in order.
+fn batched_burst(run: &Run) -> R {
+    let out = run.ping_pong()?;
+    check(run, &out, "load", 1)?;
+    let (tx, calls) = (
+        setting_num(&out, "stat.tx")?,
+        setting_num(&out, "stat.send_calls")?,
+    );
+    assert_eq!(tx, run.rate * 3, "warm-up and measured slots");
+    assert_eq!(calls * 8, tx, "one sendmmsg a group of 8");
+    let (rx, reads) = (
+        setting_num(&out, "stat.rx")?,
+        setting_num(&out, "stat.recv_calls")?,
+    );
+    assert_eq!(rx, tx);
+    assert!(reads < rx, "{reads} reads for {rx} datagrams");
+    std::fs::remove_dir_all(out)?;
+    Ok(())
+}
+
+#[test]
+fn udp_mio_mmsg_sends_a_burst_in_one_call() -> R {
+    batched_burst(&Run {
+        extra: &["--mmsg", "16", "--burst", "8"],
+        ..Run::udp("mio", 1, 1_000, 36_000)
+    })
+}
+
+#[test]
+fn udp_ergon_sends_a_burst_in_one_call() -> R {
+    batched_burst(&Run {
+        extra: &["--rx-batch", "4", "--burst", "8"],
+        ..Run::udp("ergon", 1, 1_000, 24_000)
+    })
+}
+
+/// The batching flags belong to one arm each, and a burst is 1 to 1 024.
+#[test]
+fn batching_flags_an_arm_cannot_take_are_refused() -> R {
+    let out = scratch("refused-batch")?;
+    let o = out.display().to_string();
+    let udp = [
+        "--role",
+        "local",
+        "--round-trip",
+        "--rate",
+        "100",
+        "--warmup-s",
+        "0",
+        "--duration-s",
+        "1",
+        "--label",
+        "t:x",
+        "--out",
+        &o,
+        "--local",
+        "127.0.0.1:39130",
+        "--peer",
+        "127.0.0.1:39140",
+    ];
+    refused(
+        UDP,
+        &with(&udp, &["--impl", "ergon", "--mmsg", "8"]),
+        "--mmsg is the mio arm's",
+    )?;
+    refused(
+        UDP,
+        &with(&udp, &["--impl", "mio", "--rx-batch", "8"]),
+        "--rx-batch is ergon-io's",
+    )?;
+    refused(
+        UDP,
+        &with(&udp, &["--impl", "ergon", "--rx-batch", "0"]),
+        "--rx-batch 0: 1 to 1024",
+    )?;
+    refused(
+        UDP,
+        &with(&udp, &["--impl", "mio", "--mmsg", "2000"]),
+        "--mmsg 2000: 0 to 1024",
+    )?;
+    refused(
+        UDP,
+        &with(&udp, &["--impl", "mio", "--burst", "0"]),
+        "--burst 0: 1 to 1024",
+    )?;
     Ok(())
 }

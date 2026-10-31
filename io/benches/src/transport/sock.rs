@@ -716,7 +716,12 @@ pub const UDP_USAGE: &str = "\
 udp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S --label SET:ARM --out DIR
         [--local 127.0.0.1:22000] [--peer 127.0.0.1:23000] [--streams 1] [--warmup-s 30] [--duration-s 30]
         [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES]
-        [--epoll-events 64] [--busy-read-us 0] [--datagram-burst 64 (ergon)]
+        [--epoll-events 64] [--busy-read-us 0] [--datagram-burst 64 (ergon)] [--rx-batch 16 (ergon)]
+        [--mmsg N (mio)] [--burst 1]
+--burst N: the sender sends N messages at once to one stream (one due time), then flushes.
+--rx-batch: ergon-io's UdpOptions::rx_batch, datagrams one recvmmsg takes (1 to 1024).
+--mmsg N: the mio arm reads with recvmmsg of up to N and sends queued datagrams with sendmmsg
+        (0, the default: one recv and one send a datagram).
 stream i: --local port + i <-> --peer port + i (local: the echo/receiver end binds --peer).
 --backend: ergon-io's (--impl ergon). epoll-spin (the default) is the kernel.
         smoltcp-spin measures when this binary is built with smoltcp-dpdk
@@ -747,6 +752,41 @@ stream i: connection i. local: the echo/receiver end listens, the other connects
         --busy-read-us 0 (the SQPOLL thread polls the NIC).
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
+/// `udp_lat`'s batching flags: (`--rx-batch`, ergon-io's; `--mmsg`, the
+/// mio arm's), each refused on the other arm.
+fn batch_flags(f: &mut Flags, imp: Impl) -> Result<(usize, usize), Error> {
+    let rx_batch = f.take("rx-batch");
+    let mmsg = f.take("mmsg");
+    if imp != Impl::Ergon && rx_batch.is_some() {
+        return Err(Error::Usage(
+            "--rx-batch is ergon-io's (--impl ergon)".into(),
+        ));
+    }
+    if imp != Impl::Mio && mmsg.is_some() {
+        return Err(Error::Usage("--mmsg is the mio arm's (--impl mio)".into()));
+    }
+    let num = |flag: &str, v: Option<String>, default: usize, lo: usize| -> Result<usize, Error> {
+        let n = match v {
+            None => default,
+            Some(v) => v
+                .parse()
+                .map_err(|_| Error::Usage(format!("--{flag} {v}: a number")))?,
+        };
+        if !(lo..=1_024).contains(&n) {
+            return Err(Error::Usage(format!("--{flag} {n}: {lo} to 1024")));
+        }
+        Ok(n)
+    };
+    let rx_batch = num(
+        "rx-batch",
+        rx_batch,
+        ergon_io::UdpOptions::default().rx_batch,
+        1,
+    )?;
+    let mmsg = num("mmsg", mmsg, 0, 0)?;
+    Ok((rx_batch, mmsg))
+}
+
 /// `udp_lat`: parses `args` (without the program name) and runs the point;
 /// the row, or `None` for a pong.
 ///
@@ -773,6 +813,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
             .parse()
             .map_err(|_| Error::Usage(format!("--datagram-burst {v}: a number")))?,
     };
+    let (rx_batch, mmsg) = batch_flags(&mut f, s.imp)?;
     let choice = super::bypass::udp_choice(&mut f, c.role, s.imp == Impl::Ergon, local)?;
     f.finish()?;
     // every stream's ports checked before any thread starts
@@ -797,6 +838,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                 sndbuf: s.sndbuf,
                 busy_read_us: s.busy_read_us,
                 epoll_events: s.epoll_events as usize,
+                mmsg,
             };
             run(&c, s.imp, "udp", &arm, false, |end, _cpu| {
                 let (l, p) = ends(end);
@@ -818,6 +860,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                             sndbuf: s.sndbuf,
                             epoll_events: s.epoll_events,
                             datagram_burst,
+                            rx_batch,
                             busy_poll_us: s.busy_read_us,
                             loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
                             helper_cpus: helpers.clone(),
