@@ -313,6 +313,28 @@ class FairnessTest(unittest.TestCase):
                 self.assertIn("settings", {v.rule for v in got})
                 self.assertTrue(any("net.core.busy_read=0" in v.detail for v in got if v.rule == "settings"))
 
+    def test_userspace_stack_on_sockets_bypasses_host_a_only(self):
+        # ergon-io's smoltcp-spin or fstack-spin on setup sockets: host a's
+        # data NIC is DPDK's (vm.sh fstack-up), so its kernel busy poll is
+        # off and its interrupt deferral unread; host b is the kernel peer
+        # and is still held to the env
+        args = {"smoltcp": "--impl ergon --backend smoltcp-spin",
+                "fstack": "--impl ergon --backend fstack-spin"}
+        for name, a in args.items():
+            with self.subTest(stack=name):
+                run = Run(self)
+
+                def bypass_a(m, a=a):
+                    m["settings"]["a"].update(self.BUSY)
+                    m["settings"]["a"]["knob.napi_defer"] = "unread"
+                    m["runner"] = dict(m.get("runner") or {}, setup="sockets", args=a)
+                run.edit(ONE, bypass_a)
+                self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+                run.edit(ONE, lambda m: m["settings"]["b"].update({"net.core.busy_read": "0"}))
+                got = fairness.check(run.run)
+                self.assertTrue(any(v.rule == "settings" and "b net.core.busy_read=0" in v.detail for v in got),
+                                "\n".join(str(v) for v in got))
+
     def test_kernel_bypass_arm_needs_no_busy_poll_sweep(self):
         # busy poll per arm (aeron-kernel's path at 0, swept), every other arm
         # at 50 swept too, but aeron-dpdk, which bypasses the kernel

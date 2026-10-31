@@ -690,6 +690,27 @@ def bypass_point(p):
     return bool(parts) and all(x in BYPASS_TRANSPORTS for x in parts)
 
 
+# ergon-io's userspace stacks on setup sockets (smoltcp-spin, fstack-spin):
+# DPDK owns host a's data NIC (vm.sh fstack-up) and the ping runs the stack
+# there; host b stays the kernel peer. Host a's kernel socket busy poll and
+# NIC interrupt deferral have nothing to act on (and are not read: vm.sh
+# stop before it), so they are left out for host a only.
+USERSPACE_BACKENDS = ("--backend smoltcp-spin", "--backend fstack-spin")
+NIC_KNOBS = KERNEL_SOCKET_KNOBS | {"knob.napi_defer"}
+
+
+def bypass_host(p, host):
+    """Whether host's data NIC is DPDK's at this point: every host of a
+    kernel-bypass arm, or host a of an ergon-io userspace stack on setup
+    sockets."""
+    if bypass_point(p):
+        return True
+    runner = (p.manifest or {}).get("runner") or {}
+    args = f" {runner.get('args') or ''} "
+    return (host == "a" and runner.get("setup") == "sockets"
+            and (runner.get("bin") == "fstack_spin_lat" or any(f" {b} " in args for b in USERSPACE_BACKENDS)))
+
+
 def onload_point(p):
     """Whether a point is an Onload arm's: the runner's onload set-up."""
     return ((p.manifest or {}).get("runner") or {}).get("setup") == "onload"
@@ -1012,9 +1033,11 @@ def check(run_dir, absences=None, notes=None):
             for p in ps:
                 arm = arm_key(p)
                 # a kernel-bypass arm's: no kernel socket busy poll
-                skip = KERNEL_SOCKET_KNOBS if bypass_point(p) else set()
-                want = {k: v for k, v in dict(shared, **per_arm.get(arm, {})).items() if k not in skip}
+                every = dict(shared, **per_arm.get(arm, {}))
                 for host in hosts_of_point(p):
+                    skip = (KERNEL_SOCKET_KNOBS if bypass_point(p)
+                            else NIC_KNOBS if bypass_host(p, host) else set())
+                    want = {k: v for k, v in every.items() if k not in skip}
                     got = p.manifest["settings"].get(host)
                     if got is None:
                         add("settings", set_, [p.tag], f"{p.tag}: no settings read back on {host}")
@@ -1130,6 +1153,8 @@ def check(run_dir, absences=None, notes=None):
                 tuned = (env is not None and env[1].get(arm, {}).get("knob.napi_defer", "0") != "0"
                          and arm in env[2].get("knob.napi_defer", set()))
                 for host in hosts:
+                    if bypass_host(p, host):
+                        continue
                     on = napi_on(p, host)
                     if on == "unread":
                         add("napi", set_, [p.tag], f"{p.tag}: {host}'s data NICs' interrupt deferral not read back")
