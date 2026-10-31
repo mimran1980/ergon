@@ -72,8 +72,18 @@ seeing the first and the last; µs, p50 / p99 / max, ranges over three runs:
 
 Loopback on a desktop Intel i5-8500T with no isolated or pinned-away
 CPUs: the shape holds elsewhere, not the absolute numbers, and the maxima
-are not attributed. The default stays 16 until a tuned cloud host says
-otherwise.
+are not attributed.
+
+Between two Graviton `c8g.2xlarge` hosts (AWS, isolated CPUs, bursts of 8
+echoed, every message of a burst counted): p50 45.15 at `rx_batch` 64,
+45.50 at 16 and 47.01 at 1 (50,000 msg/s; 48.73, 48.83, 49.05 at
+200,000), max 181 to 190 (rep ranges to 2,090, unexplained). 16 stays the
+default. What costs more is when a reply leaves: ergon-io's handler cannot
+send during `poll`, so a reply queued in `on_datagram` goes after the pass;
+mio replying per datagram was about 5 lower at p50 (40.90)
+([UDP batching](../transports/comparison.md#aws-udp-batching-graviton)).
+A smaller `datagram_burst` should bring the first reply of a burst sooner;
+that is not measured.
 Method and every row: `io/benches/results/udp-batch-size-omarchy-20261030`.
 
 ## Options

@@ -10,7 +10,8 @@ its own details.
 | between processes on one host | Aeron IPC or a spy, not UDP to the host's own address | 5 | [Aeron client](aeron-client.md) |
 | between hosts, 1 stream (at 8, not separated from sockets) | Aeron over kernel UDP | 4 a host (3 driver, 1 app) | [Aeron client](aeron-client.md) (`aeron:udp`) |
 | between hosts, 32 or more streams, up to 50,000 msg/s | plain UDP sockets in one loop: ergon-io (or mio) | 1 a host | [UDP](../io/udp.md) |
-| between hosts, 200,000 msg/s and more | Aeron: the socket loops fall behind | 4 a host | [Aeron client](aeron-client.md) |
+| between hosts, past what one socket loop carries (200,000 msg/s on AMD; 200,000 held but 500,000 not on Graviton `c8g`, batched or not) | Aeron, or ergon-io on a userspace stack (lab) | 4 a host | [Aeron client](aeron-client.md), [UDP batching](comparison.md#aws-udp-batching-graviton) |
+| bursts that each need a reply | reply to each message as it is read, or send the burst as one message: replying after the whole poll pass cost about 5 µs at p50 for bursts of 8 | 1 a host | [UDP batching](comparison.md#aws-udp-batching-graviton) |
 | many logical streams (a symbol, an account) | a few Aeron streams, the key in each message | as above | [Aeron with many streams](aeron-many-streams.md) |
 | reliable delivery between your own hosts | Aeron reliable UDP (the default `aeron:udp`) | 4 a host | [Aeron client](aeron-client.md) |
 | a service that speaks TCP, WebSocket or HTTP | ergon-io, backend by socket count | 1, plus its helpers off the loop's CPU | [choosing a backend](../io/overview.md#choosing-a-backend) |

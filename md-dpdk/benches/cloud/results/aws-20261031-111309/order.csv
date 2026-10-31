@@ -1,0 +1,9 @@
+u1,1,-,203570940019849,eio-udp eio-udp-rx1 eio-udp@AA=1 mio-udp mio-udp-mmsg aeron-udp dpdk-aeron-udp
+u1,2,-,238373103177525,eio-udp-rx1 dpdk-aeron-udp mio-udp mio-udp-mmsg eio-udp eio-udp@AA=1 aeron-udp
+u1,3,-,19275767339375,eio-udp@AA=1 aeron-udp eio-udp-rx1 mio-udp-mmsg mio-udp dpdk-aeron-udp eio-udp
+b8,1,-,134347468478407,dpdk-aeron-udp-b8 mio-udp-b8 mio-udp-mmsg-b8 eio-udp-rx64-b8 eio-udp-b8@AA=1 eio-udp-rx1-b8 aeron-udp-b8 eio-udp-b8
+b8,2,-,155016578385088,eio-udp-b8@AA=1 eio-udp-rx1-b8 mio-udp-mmsg-b8 aeron-udp-b8 eio-udp-b8 eio-udp-rx64-b8 mio-udp-b8 dpdk-aeron-udp-b8
+b8,3,-,254737750397887,eio-udp-rx1-b8 aeron-udp-b8 mio-udp-b8 eio-udp-rx64-b8 dpdk-aeron-udp-b8 eio-udp-b8 mio-udp-mmsg-b8 eio-udp-b8@AA=1
+s32,1,-,121043608862604,mio-udp eio-udp eio-udp@AA=1 aeron-udp dpdk-aeron-udp mio-udp-mmsg
+s32,2,-,60195582007675,eio-udp@AA=1 eio-udp mio-udp-mmsg dpdk-aeron-udp mio-udp aeron-udp
+s32,3,-,24572600365933,aeron-udp mio-udp eio-udp dpdk-aeron-udp eio-udp@AA=1 mio-udp-mmsg

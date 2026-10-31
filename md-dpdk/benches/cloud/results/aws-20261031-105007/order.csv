@@ -1,0 +1,6 @@
+u1,1,-,76614123746750,dpdk-aeron-udp eio-udp-smol@AA=1 eio-udp eio-udp-smol
+u1,2,-,273483397018774,eio-udp-smol eio-udp eio-udp-smol@AA=1 dpdk-aeron-udp
+u1,3,-,133822251126407,eio-udp-smol eio-udp dpdk-aeron-udp eio-udp-smol@AA=1
+b8,1,-,43668148953267,eio-udp-smol-b8@AA=1 eio-udp-smol-b8 eio-udp-b8 dpdk-aeron-udp-b8
+b8,2,-,262208737619344,dpdk-aeron-udp-b8 eio-udp-smol-b8@AA=1 eio-udp-smol-b8 eio-udp-b8
+b8,3,-,272810313228924,dpdk-aeron-udp-b8 eio-udp-smol-b8 eio-udp-smol-b8@AA=1 eio-udp-b8

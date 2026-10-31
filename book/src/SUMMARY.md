@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](./introduction.md)
+[Latency Findings at a Glance](./findings.md)
 
 # ergo-sbe
 

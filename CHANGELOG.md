@@ -19,6 +19,11 @@
 
 ### Changed
 
+- Transport benches: `--burst N` on every arm (N messages at one due time
+  to one stream, then a flush); `udp_lat --rx-batch` (ergon-io) and
+  `--mmsg` (mio with `recvmmsg`/`sendmmsg`); the ergon-io UDP arm queues a
+  group of sends and an echo pass's replies and flushes once.
+
 - md-dpdk EKS image: Aeron's C is built for `x86-64-v2` or `armv8.2-a` by
   default (build argument `RUSTERON_C_MARCH`), not for the CPU of the machine
   or emulator that builds the image; the level is recorded in the image's
@@ -38,6 +43,12 @@
   sockets), and adding or removing a socket no longer re-reads every id.
 
 ### Docs
+
+- Book: "Latency Findings at a Glance", one page of what every benchmark
+  showed, the techniques that worked, the traps and what is still open.
+- Book: UDP batching between Graviton hosts (Aeron kernel and DPDK, mio
+  one call a datagram and batched, ergon-io at `rx_batch` 1, 16, 64, and
+  on smoltcp), in the transport comparison, the UDP page and the choice table.
 
 - Book: "Aeron with Many Streams". Aeron's latency and memory grow with its
   stream count, so use up to 8 Aeron streams per driver with the key in each
