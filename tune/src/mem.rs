@@ -305,7 +305,7 @@ pub fn nodes_online(host: &Host) -> Result<Option<CpuSet>, ReadError> {
 }
 
 const T5_EVIDENCE: &str = "Linux Documentation/admin-guide/sysctl/kernel.rst (numa_balancing); \
-     the lab sets 0 (git show v0.1.37:md-dpdk/benches/cloud/vm.sh); not measured";
+     the lab sets 0; not measured";
 
 /// T5: automatic NUMA balancing is off, on a host with more than one node.
 #[must_use]

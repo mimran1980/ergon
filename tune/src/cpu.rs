@@ -148,11 +148,8 @@ pub fn housekeeping(host: &Host, busy: &CpuSet) -> String {
     spare(host, busy).map_or_else(|| "<housekeeping CPUs>".to_owned(), |s| s.to_string())
 }
 
-const T1_EVIDENCE: &str = "git show \
-     128747b9^:io/benches/results/flags-aws-20261014T163114Z/tables-local.md (noise table, \
-     lines 27-30; interrupts table, lines 332-335) and \
-     128747b9^:io/benches/results/flags-aws-20261015T045527Z/tables-local.md (lines 146-149, \
-     403-406): AWS c7i, one 120 s gap-spinner sample per boot profile; Linux \
+const T1_EVIDENCE: &str = "lab runs flags-aws-20261014T163114Z (noise and interrupts tables) \
+     and flags-aws-20261015T045527Z: AWS c7i, one 120 s gap-spinner sample per boot profile; Linux \
      Documentation/timers/no_hz.rst and admin-guide/kernel-parameters.txt (isolcpus, nohz_full, \
      rcu_nocbs, irqaffinity)";
 
@@ -358,9 +355,8 @@ pub fn t1_isolation(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     out
 }
 
-const T7_EVIDENCE: &str = "git show \
-     128747b9^:io/benches/results/flags-aws-20261015T070339Z/tables.md (c1-rt, c2-rt: HTTP \
-     lines 22-29; WebSocket lines 63-70; interrupts lines 87-124): AWS c7i, two 8-minute \
+const T7_EVIDENCE: &str = "lab run flags-aws-20261015T070339Z (c1-rt, c2-rt: HTTP, \
+     WebSocket and interrupts tables): AWS c7i, two 8-minute \
      reps; Linux Documentation/scheduler/sched-rt-group.rst";
 
 /// T7: `thread`, in `role`, is not under `SCHED_FIFO` or `SCHED_RR`. The
@@ -410,9 +406,8 @@ pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
     }
 }
 
-const T8_EVIDENCE: &str = "git show \
-     128747b9^:io/benches/results/flags-aws-20261015T122127Z/tables.md (lab-uring-sqpoll-c* \
-     against lab-uring-sqpoll-sib-c*, lines 174-279): an io_uring SQPOLL thread on the loop's \
+const T8_EVIDENCE: &str = "lab run flags-aws-20261015T122127Z (lab-uring-sqpoll-c* \
+     against lab-uring-sqpoll-sib-c*): an io_uring SQPOLL thread on the loop's \
      sibling, AWS c7i, three rounds; other sibling loads and two threads on one CPU not \
      measured here";
 
@@ -577,9 +572,8 @@ fn sqpoll_with_loop(cpus: &HotSet, a: u32, b: u32) -> bool {
         || (rb.contains(&Role::Loop) && ra.contains(&Role::SqPoll) && !ra.contains(&Role::Loop))
 }
 
-const T10_EVIDENCE: &str = "git show \
-     128747b9^:io/benches/results/flags-aws-20261015T122127Z/tables.md (lines 174-279, \
-     arrival → decoded, three rounds); \
+const T10_EVIDENCE: &str = "lab run flags-aws-20261015T122127Z (arrival → decoded, three \
+     rounds); \
      AWS instance-optimize-cpu and instance-specify-cpu-options (CpuOptions ThreadsPerCore); \
      kernel-parameters.txt (nosmt); ABI/testing/sysfs-devices-system-cpu (smt/active, smt/control); \
      Azure compute-optimized Fasv6/Falsv6/Famsv6 and general-purpose Dpsv6/Dplsv6 (no SMT)";

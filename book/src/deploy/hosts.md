@@ -72,7 +72,7 @@ interrupts does.
 | host | setting | evidence |
 |---|---|---|
 | x86 VM | leave it | capping at C1 was mixed: [C-states](hft.md#c-states) |
-| x86 metal | leave it | `c7i.metal-24xl`, round 4: idle not separated; at 288 B 1 M msgs/s at least one rep of each capped arm had a p50 above 4 ms (`git show v0.1.37:md-dpdk/BENCHMARKS.md`, "Measured but no setting recommended") |
+| x86 metal | leave it | `c7i.metal-24xl`, round 4: idle not separated; at 288 B 1 M msgs/s at least one rep of each capped arm had a p50 above 4 ms (DPDK transport benchmarks, "Measured but no setting recommended") |
 | Graviton | nothing to set | the OS has no C-states to pick: an idle core waits for an interrupt (`WFI`) |
 
 ## Memory

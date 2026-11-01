@@ -158,9 +158,8 @@ numbers. T1 with the loop on CPU 2 of 8:
 
 ## Evidence per check
 
-Each finding's `evidence` field names its source. The A/B tables are in git
-history: `git show 128747b9^:io/benches/results/<run>/tables.md` (or
-`tables-local.md`; reachable from tags v0.1.30 to v0.1.33). All are AWS `c7i` in Tokyo; each figure in a finding
+Each finding's `evidence` field names its source run. All are AWS `c7i` in
+Tokyo; each figure in a finding
 keeps its max.
 
 | check | evidence | status |
@@ -171,7 +170,7 @@ keeps its max.
 | T8 | two threads on one CPU: not measured here; a busy sibling: T10's run | partly measured |
 | T10, K3 | run `flags-aws-20261015T122127Z` (SQPOLL on the loop's sibling, three rounds); other sibling loads not measured | measured |
 | N1 | runs `flags-aws-20261015T070339Z` (`base`, `nodim`, `nocoalesce`, two reps each) | measured, x86 busy polling only |
-| T20 | lab session `aws-20261028-092158` (`c7i.4xlarge`, mio TCP at 10k msg/s, the IRQ CPU uncapped, at C1, polling; three reps, its cpuidle usage read per point): p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs, max not recorded (`git show v0.1.37:md-dpdk/BENCHMARKS.md`, "c7i: the IRQ CPU's idle depth") | measured, x86 `intel_idle` |
+| T20 | lab session `aws-20261028-092158` (`c7i.4xlarge`, mio TCP at 10k msg/s, the IRQ CPU uncapped, at C1, polling; three reps, its cpuidle usage read per point): p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs, max not recorded (DPDK transport benchmarks, "c7i: the IRQ CPU's idle depth") | measured, x86 `intel_idle` |
 | T21 | the same sessions' nstat `TCPAutoCorking`: 49k–164k of ~600k sends a host corked with the IRQ CPU in C6, 42–149 at C1; `net/ipv4/tcp.c` `tcp_should_autocork` | counted, latency not separated |
 | T3, T4, T5, T6, T9, T11–T19, T22–T24, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
 

@@ -6,11 +6,10 @@ use std::net::Ipv4Addr;
 
 use crate::finding::{Finding, Severity};
 
-const T24_EVIDENCE: &str = "git show v0.1.37:md-dpdk/device-plugin (it injects \
+const T24_EVIDENCE: &str = "the DPDK transport's device plugin (it injects \
      RUSTERON_DPDK_{SENDER,RECEIVER}_{PCI,IPV4_CIDR,GATEWAY} with the \
-     rusteron.io/dpdk-ena-pair it allocates) and v0.1.37:md-dpdk/src/env.rs (the sender trio is \
-     required at start); v0.1.37:book/src/io/backends.md (the two shortest lines); not measured \
-     here";
+     rusteron.io/dpdk-ena-pair it allocates) and its start-up (the sender trio is \
+     required); book io/backends.md (the two shortest lines); not measured here";
 
 /// The three sender values a granted pair always sets, in the order the
 /// checks below validate them: PCI address, IPv4 cidr, gateway.

@@ -476,9 +476,8 @@ Set these on the node at every boot; the plugin does not:
 | `/sys/kernel/mm/transparent_hugepage/enabled` | `never`: that stops `khugepaged`; `madvise` still runs it (the lab's node was `madvise`) | `khugepaged` calls `lru_add_drain_all`, which runs a kworker on every CPU with queued pages | `transparent_hugepage=never` on the boot line also works. hugetlbfs pages are unaffected |
 | `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer sends a nohz kick and a reschedule IPI, and keeps the tick on | kernel 6.12 and later; debugfs, lost at reboot (a oneshot unit after `sys-kernel-debug.mount`); safe only where nothing real-time runs on those CPUs |
 
-Apply both at every boot from a oneshot unit (the lab's
-`ergon-quiet-cpus.service`, with a read-only `--check`, is in git history at
-`v0.1.37:samples/low-latency-k8s/node/`).
+Apply both at every boot from a oneshot unit, with a read-only `--check`
+mode to confirm them.
 
 What still reaches every isolated CPU: anything that calls
 `lru_add_drain_all` (block-device ioctls, `systemctl daemon-reload` and

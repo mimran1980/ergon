@@ -115,8 +115,7 @@ caller reads the switch; the checks stay pure functions over a `Host`.
   Kernel queries (T4's `statfs`, T11's `adjtimex`, N1's and N4's ethtool)
   reach only the running host; on a tree they report unknown.
 - **Evidence named.** Each finding's `evidence` names its source: an AWS
-  `c7i` A/B table or transport-suite result in git history (`git show
-  <commit>:<path>`; T1, T2, T7, T10, N1, T20, T21), or
+  `c7i` lab run named by its run id (T1, T2, T7, T10, N1, T20, T21), or
   documentation and "not measured here". Hosts differ: measure yours.
 - **Only what the table lists.** CPU frequency is not checked. T20 never
   opens `/dev/cpu_dma_latency` (opening it registers a request), so a

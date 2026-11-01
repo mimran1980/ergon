@@ -404,12 +404,10 @@ fn driver_of(
     }
 }
 
-const N1_EVIDENCE: &str = "git show \
-     128747b9^:io/benches/results/flags-aws-20261015T070339Z/tables.md (c1/c2-base, -nodim, \
-     -nocoalesce: lines 22-29, 50-57, 63-70; loop counters lines 386, 598, 1232, 1450; \
-     pre-empting worker kworker/2:1, lines 186 and 190): AWS c7i, recv-busy, two 8-minute \
-     reps each; git show v0.1.37:io/benches/results/flags-aws-20261019T175248Z/env-rcv.txt \
-     (lines 81-82, 146-149: on with rx-usecs 20 as found, back on after a reset); Linux \
+const N1_EVIDENCE: &str = "lab run flags-aws-20261015T070339Z (c1/c2-base, -nodim, \
+     -nocoalesce, with loop counters; pre-empting worker kworker/2:1): AWS c7i, recv-busy, \
+     two 8-minute reps each; lab run flags-aws-20261019T175248Z's receiver settings (on with \
+     rx-usecs 20 as found, back on after a reset); Linux \
      drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_up enables adaptive moderation); \
      aws-graviton-getting-started perfrunbook (adaptive-rx off for latency-sensitive work)";
 
@@ -499,7 +497,7 @@ pub fn n1_adaptive_rx<E: Ethtool>(
 }
 
 const N2_EVIDENCE: &str = "Linux Documentation/networking/napi.rst; the lab sets them only with busy \
-     polling (git show v0.1.37:md-dpdk/benches/cloud/vm.sh); not measured here";
+     polling; not measured here";
 
 /// One sysfs NAPI setting: absent (an older kernel) is 0.
 fn napi_setting(host: &Host, interface: &str, name: &str) -> Result<u64, ReadError> {

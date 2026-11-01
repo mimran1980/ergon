@@ -55,9 +55,8 @@ pub fn t22_aeron_affinity_names(env: impl Fn(&str) -> Option<String>) -> Finding
 }
 
 const T23_EVIDENCE: &str = "a sized 2 MiB hugetlbfs is what lets Aeron allocate its log buffers \
-     (an unsized mount reports no free space); git show \
-     v0.1.37:book/src/transports/comparison.md, \"hugepages\" (the IPC 2 MiB directory was not \
-     separated from tmpfs); k8s/nri-latency-pods/README.md";
+     (an unsized mount reports no free space); book transports/comparison.md, \"hugepages\" \
+     (the IPC 2 MiB directory was not separated from tmpfs); k8s/nri-latency-pods/README.md";
 
 /// Page size Aeron must be told when `AERON_DIR` is on the plugin's 2 MiB mount.
 pub const AERON_HUGEPAGE_BYTES: &str = "2097152";

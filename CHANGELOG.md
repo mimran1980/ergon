@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `ergon-tune` findings name their evidence by lab run id (for example
+  `flags-aws-20261015T070339Z`) instead of a `git show` path.
+
+### Docs
+
+- Book (deployment, tuning) and the Kubernetes READMEs cite lab runs by id.
+
 ## [0.1.38] — 2026-10-31
 
 ### Added

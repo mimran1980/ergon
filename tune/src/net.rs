@@ -273,9 +273,8 @@ pub fn nic_irqs(host: &Host, nic: &Nic) -> Result<Vec<NicIrq>, ReadError> {
     Ok(out)
 }
 
-const T2_EVIDENCE: &str = "git show \
-     128747b9^:io/benches/results/flags-aws-20261015T062428Z/tables.md (c1/c2-base against \
-     c1/c2-irqlocal: noise lines 9-15, market data lines 56-62): AWS c7i, two reps; Linux \
+const T2_EVIDENCE: &str = "lab run flags-aws-20261015T062428Z (c1/c2-base against \
+     c1/c2-irqlocal: noise and market data tables): AWS c7i, two reps; Linux \
      drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_setup_io_intr: queue i's IRQ on CPU i \
      modulo the online CPUs, set again at every ena_up)";
 

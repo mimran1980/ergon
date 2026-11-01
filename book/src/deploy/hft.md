@@ -51,7 +51,7 @@ run on kind. It does not measure the rows below.
 | TCP autocorking off | a small send goes out at once, not after the previous one's transmit completes (`TCP_NODELAY` does not stop autocorking) | pod netns, or node for `hostNetwork` | counted, not timed: c7i corked 49k–164k of ~600k sends a host per point with the IRQ CPU in C6, 42–149 at C1 ([C-states](#c-states)). ergon-tune T21 | `sysctl -w net.ipv4.tcp_autocorking=0`; in a pod `securityContext.sysctls`, allowed by the kubelet's `--allowed-unsafe-sysctls` |
 | `SCHED_FIFO` on the loop | real-time priority | pod | measured, **mixed**: [SCHED_FIFO](#sched_fifo). Off by default | `ergon-cpus --fifo` ([latency pods](latency-pods.md#real-time-scheduling-built-default-off)) |
 | ENA receive ring `rx 4096` | room for bursts | node | not measured here | `ethtool -G <if> rx 4096` |
-| global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | not measured as a global sysctl; a per-socket `SO_BUSY_POLL` was ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) (`git show v0.1.37:md-dpdk/BENCHMARKS.md`, "Measured but no setting recommended") | not recommended on this evidence: leave unset |
+| global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | not measured as a global sysctl; a per-socket `SO_BUSY_POLL` was ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) (DPDK transport benchmarks, "Measured but no setting recommended") | not recommended on this evidence: leave unset |
 | quiet-core spin test | finds CPUs the platform stalls | node | not measured here: the cloud lab skipped CPUs that stalled 300 µs in a 120 s spin. A pod cannot choose its cores | run it on new nodes; cordon or replace noisy ones |
 | no exec probes, no `restartPolicy: Always` sidecars on hot pods | no probe process lands on the loop's CPU | pod | an exec starts on any CPU of the cpuset (`k8s/nri-shared-cpus/README.md`, Limits); not measured here | `httpGet`/`tcpSocket`/`grpc` probes; the [admission policy](latency-pods.md#4-admission) enforces it |
 | both hosts in one cluster placement group | shorter network path between the pair | node (cloud) | AWS docs; not measured here | the node group's placement group |
@@ -61,12 +61,10 @@ run on kind. It does not measure the rows below.
 ## Evidence
 
 Every row: one run, arms compared only with the same run's baseline. µs.
-Raw tables: `git show <commit>:<path>` as named; commits `2517309d` and
-`128747b9` are reachable from tags v0.1.30 to v0.1.33. Hosts: AWS `c7i.2xlarge`
+Each table names its run id. Hosts: AWS `c7i.2xlarge`
 receiver (SMT on), `c7i.xlarge` sender, kernel 7.0; Azure
-`Standard_D8ds_v6`, kernel 6.17; Graviton `c8g.2xlarge` (`git show v0.1.37:io/benches/BENCHMARK.md`).
-Boot lines and NIC settings per run are in the `env-rcv*.txt` next to each
-run id under `io/benches/results/` at that tag. The loops measured were
+`Standard_D8ds_v6`, kernel 6.17; Graviton `c8g.2xlarge`. Boot lines and NIC settings were recorded per run.
+The loops measured were
 busy-spinning WebSocket and HTTP clients over kernel sockets. The arms:
 
 | arm | how the loop receives |
@@ -81,8 +79,8 @@ busy-spinning WebSocket and HTTP clients over kernel sockets. The arms:
 
 A loop that only reads the CPU counter, on the CPU the busy loop uses,
 records every gap. One sample per boot line; the loop sends nothing.
-Sources: `git show 2517309d:io/benches/results/flags-aws-20261014T163114Z/tables.md`
-and `…/flags-azure-20261014T144146Z/tables.md`, "Platform noise".
+Sources: runs `flags-aws-20261014T163114Z` and
+`flags-azure-20261014T144146Z`, "Platform noise".
 
 | host | boot line | gaps >5 µs /min | >20 µs /min | >100 µs /min | longest gap (max) |
 |---|---|---|---|---|---|
@@ -101,7 +99,7 @@ two isolated lines.
 
 ### Interrupt placement
 
-**Graviton** (fair run, `git show v0.1.37:io/benches/results/flags-aws-20261019T175248Z/fair.md`): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
+**Graviton** (fair run `flags-aws-20261019T175248Z`): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
 `mio`, and `uring-spin`, since removed), moderation off everywhere, two
 rounds. Six points' senders fell behind; the file's top note names them.
 
@@ -116,7 +114,7 @@ two families overlap. From 16 connections `recv-busy` (48.98–49.63 at 16,
 78.14–78.29 at 64, from-due p99 9.7 s) and `recv-busy-pq` (44.26–44.73) sit
 above the interrupt backends (39.27–40.42); `uring-sqpoll` stays level.
 
-**x86** (`git show 2517309d:io/benches/results/flags-aws-20261015T062428Z/tables.md`,
+**x86** (run `flags-aws-20261015T062428Z`,
 `irqlocal` arm: every queue IRQ on the loop's CPU), `recv-busy` market data,
 kernel arrival → decoded:
 
@@ -129,7 +127,7 @@ The WebSocket round trip in that run showed no consistent change.
 
 ### Interrupt moderation
 
-`git show 2517309d:io/benches/results/flags-aws-20261015T070339Z/tables.md`,
+Run `flags-aws-20261015T070339Z`,
 AWS c7i, `recv-busy`, 10,000 round trips a second. Baseline: adaptive-rx on. Rounds 1 / 2.
 
 | arm | WebSocket p50 | p99.99 | max | HTTP p99.99 | max |
@@ -144,7 +142,7 @@ moderation on is not measured.
 
 ### SMT sibling
 
-`git show 2517309d:io/benches/results/flags-aws-20261015T122127Z/tables.md`,
+Run `flags-aws-20261015T122127Z`,
 AWS c7i, `uring-sqpoll` market data, kernel arrival → decoded, three rounds:
 the SQPOLL kernel thread on its own core against the loop's SMT sibling.
 

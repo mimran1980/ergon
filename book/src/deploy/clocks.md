@@ -19,8 +19,7 @@ reads `SystemTime`, a wall clock that can go back (minstant-0.1.7
 **Read cost**, ns per read: median batch (slowest batch); each batch is the
 mean of 10,000 back-to-back reads, so the slowest single read is not
 recorded. AWS, isolated CPU, 2026-10-16 runs; c9g is a 50-batch run, the
-others 200. Source: in git history,
-`git show v0.1.37:md-dpdk/benches/cloud/results/clockbench-aws-20261016.txt`.
+others 200. Source: run `clockbench-aws-20261016`.
 
 | read | c7i.2xlarge | c8g.xlarge | c9g.2xlarge |
 |---|---|---|---|

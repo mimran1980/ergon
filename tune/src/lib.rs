@@ -51,8 +51,7 @@
 //!   files per task on the host; [`FaultWatch::check`] reads one open file
 //!   and allocates only when it reports.
 //! - **Evidence**: each finding's `evidence` names its source: a
-//!   settings-matrix table in git history (`git show
-//!   128747b9^:io/benches/results/<run>/tables.md`, with lines), or the
+//!   settings-matrix lab run (named by its run id), or the
 //!   kernel's, Kubernetes' or a vendor's documentation, marked "not
 //!   measured here".
 //! - **The switch**: every host-check warning line ends with how to silence
