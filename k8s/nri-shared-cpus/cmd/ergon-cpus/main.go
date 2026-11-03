@@ -78,8 +78,8 @@ func usage(w *os.File) {
   ergon-cpus [--env NAME=SPEC]... [--affinity shared|keep] [--fifo PRIO] -- cmd [args...]
 
 SPEC values for --env:
-  isolated:<i>    the i-th CPU of ERGON_ISOLATED_CPUS
-  shared:<i>      the i-th CPU of ERGON_SHARED_CPUS
+  isolated:<i>    the CPU at index i (from 0) of ERGON_ISOLATED_CPUS, not CPU i
+  shared:<i>      the CPU at index i (from 0) of ERGON_SHARED_CPUS
   core:<j>        the first CPU of core group j
   core:<j>:<t>    CPU t of core group j
   isolated        the whole isolated list
@@ -87,7 +87,7 @@ SPEC values for --env:
 
 Example (Aeron media driver, Graviton, cpu: 2):
   ergon-cpus --env AERON_SENDER_CPU_AFFINITY=isolated:0 \
-             --env AERON_RECEIVER_CPU_AFFINITY=isolated:1 -- aeronmd
+             --env AERON_RECEIVER_CPU_AFFINITY=isolated:1 -- media_driver
 `)
 }
 

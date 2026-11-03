@@ -316,18 +316,20 @@ SPEC forms for `--env`:
 
 | SPEC | becomes |
 |---|---|
-| `isolated:<i>` | the i-th CPU of `ERGON_ISOLATED_CPUS` |
-| `shared:<i>` | the i-th CPU of `ERGON_SHARED_CPUS` |
+| `isolated:<i>` | the CPU at position `i` (from 0) of `ERGON_ISOLATED_CPUS`, the pod's exclusive CPUs sorted: an index, not a CPU number. With `2,3`, `isolated:0` is CPU 2 |
+| `shared:<i>` | the CPU at position `i` of `ERGON_SHARED_CPUS` |
 | `core:<j>` / `core:<j>:<t>` | CPU t (default 0) of core group j |
 | `isolated` / `shared` | the whole list |
 
-Aeron C media driver example:
+Aeron C media driver example (`media_driver` from
+[rusteron-media-driver](https://crates.io/crates/rusteron-media-driver);
+Aeron's `aeronmd` reads the same variables):
 
 ```yaml
 command: ["ergon-cpus",
           "--env", "AERON_SENDER_CPU_AFFINITY=isolated:0",
           "--env", "AERON_RECEIVER_CPU_AFFINITY=isolated:1",
-          "--", "aeronmd"]
+          "--", "media_driver"]
 env: [{ name: AERON_THREADING_MODE, value: DEDICATED }]
 ```
 

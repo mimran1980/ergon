@@ -582,8 +582,8 @@ nohz_full=2-3 rcu_nocbs=2-3 isolcpus=managed_irq,domain,2-3 hugepagesz=2M hugepa
 `AERON_DIR`, io_uring seccomp, and the NIC PHC. The isolation of CPUs 2-3
 comes from the **boot line**, not from a grant: `cpu-partition` needs the
 program to move its own threads between cgroups
-([Latency Pods](latency-pods.md#2-isolated-partition)), and `aeronmd` does
-not.
+([Latency Pods](latency-pods.md#2-isolated-partition)), and the media
+driver does not.
 
 ```yaml
 apiVersion: v1
@@ -606,7 +606,7 @@ spec:
     command: ["ergon-cpus",
               "--env", "AERON_SENDER_CPU_AFFINITY=isolated:0",
               "--env", "AERON_RECEIVER_CPU_AFFINITY=isolated:1",
-              "--", "aeronmd"]
+              "--", "media_driver"]       # rusteron-media-driver's binary
     env:
     - { name: AERON_THREADING_MODE, value: DEDICATED }
     - { name: AERON_DIR, value: /dev/hugepages/aeron }   # set by the app, see below
@@ -621,8 +621,9 @@ spec:
 |---|---|
 | `cpu: "2"` | two exclusive CPUs from the static CPU manager: the sender's and the receiver's |
 | `ergon.io/shared-millicpus: "250"` | the plugin adds the shared CPU and starts every thread there |
-| `AERON_SENDER_CPU_AFFINITY=isolated:0` | sender on exclusive index 0 |
-| `AERON_RECEIVER_CPU_AFFINITY=isolated:1` | receiver on exclusive index 1 |
+| `AERON_SENDER_CPU_AFFINITY=isolated:0` | sender on the pod's first exclusive CPU |
+| `AERON_RECEIVER_CPU_AFFINITY=isolated:1` | receiver on its second |
+| `media_driver` | the C media driver, as built by [rusteron-media-driver](https://crates.io/crates/rusteron-media-driver) (`cargo install rusteron-media-driver --features static`); it reads the same `AERON_*` variables as Aeron's `aeronmd`, which works here too |
 | `AERON_CONDUCTOR_CPU_AFFINITY` unset | the conductor stays on the shared CPU |
 | `AERON_THREADING_MODE=DEDICATED` | sender, receiver and conductor on their own threads |
 | `hugepages.ergon.io/app: "2M"` + `hugepages-2Mi` | a **sized** hugetlbfs mounted at `/dev/hugepages` |
@@ -655,8 +656,22 @@ rejected by Aeron. That is why the size comes from the annotation.
 | `AERON_DRIVER_NATIVE_RESOURCE_AGENT_CPU_AFFINITY` | native resource agent | leave unset |
 | `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` (before Aeron 1.54: `AERON_DRIVER_CPUSET_AFFINITY`) | makes the four above offsets into the cgroup cpuset | keep `false`; the wrapper refuses to translate when either is true |
 
-`ergon-cpus` turns `isolated:<i>` into a real CPU number before exec. It
-also sets its own affinity to the shared CPUs, so the driver starts there.
+**`isolated:0` is an index, not a CPU number.** `cpu: "2"` gives the pod two
+exclusive CPUs; the static CPU manager picks which (here 2 and 3, on
+another node maybe 5 and 9) and the plugin lists them, sorted, in
+`ERGON_ISOLATED_CPUS`. `isolated:<i>` is position `i` in that list,
+counted from 0, so the manifest stays the same on every node:
+
+| `ERGON_ISOLATED_CPUS` | `isolated:0` | `isolated:1` | `isolated:2` |
+|---|---|---|---|
+| `2,3` | CPU 2 | CPU 3 | refused: the pod has 2 |
+| `5,9` | CPU 5 | CPU 9 | refused |
+
+`ergon-cpus` turns each spec into the real CPU number and sets the
+variable to it (`AERON_SENDER_CPU_AFFINITY=2`) before exec, so the driver
+sees a plain number and needs no offset mode. An index past the list is
+an error, not a wrap. It also sets its own affinity to the shared CPUs, so
+the driver starts there.
 
 **Check it worked:**
 
