@@ -47,7 +47,11 @@ fn book_bencharks_md_states_policy() {
 
 #[test]
 fn cluster_decode_benches_do_not_validate_headers_on_one_arm() {
-    let src = include_str!("../../cluster/benches/cluster_codec_bench.rs");
+    // The timed arm bodies live in decode_arms/mod.rs; the loops in the bench.
+    let src = concat!(
+        include_str!("../../cluster/benches/cluster_codec_bench.rs"),
+        include_str!("../../cluster/benches/decode_arms/mod.rs"),
+    );
     assert!(
         !src.contains("sbe_tool_header_ok"),
         "sbe-tool decode arms must wrap at the body offset like ergo wrap(); \
