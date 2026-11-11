@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Fake curl for test-lab.sh: this machine's public address.
-echo 198.51.100.7

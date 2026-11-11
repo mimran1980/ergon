@@ -1,0 +1,11 @@
+# The FIX SBE conformance suite revision that scripts/run-fix-sbe-conformance.sh
+# builds and runs the RLValidator leg against, as "<url> <commit>".
+#
+# Why a pin: the script used to clone the default branch, so the Java leg's
+# verdict could change with an upstream push and a failure could not be
+# reproduced. The commit is the head of upstream `master` on 2026-11-05
+# (`git ls-remote <url> HEAD`); the suite has no release newer than v1.0,
+# which predates the tests the Rust side mirrors. Bump it deliberately:
+# re-run the script and update sbe/tests/fix_sbe_conformance_test.rs fixtures
+# if the goldens moved.
+https://github.com/FIXTradingCommunity/fix-sbe-conformance.git 2d6ea262187acd0802adcc3060fb41a80daf1526

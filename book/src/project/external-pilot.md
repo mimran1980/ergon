@@ -1,14 +1,14 @@
-# External Schema Pilot
+# External schema pilot
 
-> The 1.0 exit criterion requires an **external** user or production pilot
-> with wire **and** latency results against their own schema — not only
+> The 1.0 exit criterion requires an external user or production pilot
+> with wire and latency results against their own schema, not only
 > in-repo tests.
 
-## Status: Open
+## Status: open
 
-The **FIX SBE Conformance Suite** (`sbe/tests/fix_sbe_conformance_test.rs`,
+The FIX SBE conformance suite (`sbe/tests/fix_sbe_conformance_test.rs`,
 fixtures, and `scripts/run-fix-sbe-conformance.sh`) is necessary internal
-wire evidence. It is **not** the 1.0 external-signal criterion: there is
+wire evidence. It is not the 1.0 external-signal criterion: there is
 no external user, no independent schema family, and no latency measurement
 from outside this repository.
 
@@ -20,12 +20,16 @@ exit item.
 | Part | Runs in CI | Source |
 |---|---|---|
 | Byte-identity of ergon responses against Real Logic's goldens, suite tests 1–3 | yes (`cargo test -p ergo-sbe`) | `sbe/tests/fix_sbe_conformance_test.rs` |
-| Official RLValidator over ergon's responses | no: compiled only with `--cfg ergon_rlvalidator`, which CI does not set. With the cfg, a missing suite fails | `optional_java_rlvalidator_accepts_ergon_equivalent_responses` |
+| Official RLValidator over ergon's responses | weekly in `nightly.yml` and in `just release`, not per push: compiled only with `--cfg ergon_rlvalidator`, which `ci.yml` does not set. With the cfg, a missing suite fails | `optional_java_rlvalidator_accepts_ergon_equivalent_responses` |
 
-`scripts/run-fix-sbe-conformance.sh` builds the suite, sets
-`FIX_SBE_CONFORMANCE_HOME`, compiles that test with `--cfg ergon_rlvalidator`
-and runs it by name. A missing suite directory, an unbuilt `target/classes`
-or a classpath failure stops the script.
+`scripts/run-fix-sbe-conformance.sh` (`just test-fix-sbe-conformance`) fetches
+the suite at the commit in `scripts/fix-sbe-conformance-pin.txt`, builds it,
+sets `FIX_SBE_CONFORMANCE_HOME`, compiles that test with
+`--cfg ergon_rlvalidator` and runs it by name. A suite at any other commit, a
+missing suite directory, an unbuilt `target/classes` or a classpath failure
+stops the script. The pin means this leg's verdict does not move with an
+upstream push; it is still the same conformance suite ergon is compared with,
+so it stays internal evidence and this pilot stays open.
 
 ### Commands
 

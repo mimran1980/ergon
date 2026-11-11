@@ -4,7 +4,7 @@ use ergo_sbe_fuzz::orderbook_codec::BookSnapshotDecoder;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    // Verify first — only decode trusted input
+    // Decode only input that verifies.
     if BookSnapshotDecoder::verify(data).is_err() {
         return;
     }
@@ -14,6 +14,6 @@ fuzz_target!(|data: &[u8]| {
     let Ok(mut levels) = message.levels() else {
         return;
     };
-    // bulk_decode with hoisted bounds check — must not panic
+    // bulk_decode with its hoisted bounds check must not panic.
     let _ = levels.bulk_decode();
 });

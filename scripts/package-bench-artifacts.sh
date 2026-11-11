@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package-bench-artifacts.sh — package benchmark evidence for release.
+# package-bench-artifacts.sh: package benchmark evidence for release.
 #
 # Discover the fresh SBE run ID, stamp cluster results with provenance,
 # create consistently named gzip archives with Criterion estimates +
@@ -15,7 +15,7 @@
 #   <output-dir>/bench-cluster-no-lto.tar.gz
 #
 # Optional env:
-#   REQUIRE_CLUSTER=0  — set to skip cluster archives (local dry-runs only).
+#   REQUIRE_CLUSTER=0  set to skip cluster archives (local dry-runs only).
 #                        Release CI leaves the default (1) so missing cluster
 #                        evidence fails the job.
 set -euo pipefail
@@ -38,7 +38,7 @@ fail() {
 
 SBE_RUNS="$REPO_ROOT/target/bench-runs"
 if [ ! -d "$SBE_RUNS" ]; then
-    fail "no SBE bench runs at $SBE_RUNS — run 'just bench' first"
+    fail "no SBE bench runs at $SBE_RUNS: run 'just bench' first"
 fi
 
 # Fail closed: package only a run whose *both* profile manifests stamp HEAD.
@@ -65,7 +65,7 @@ while IFS= read -r candidate; do
     fi
 done < <(ls -t "$SBE_RUNS" 2>/dev/null)
 [ -n "$SBE_RUN_ID" ] || fail \
-    "no SBE bench run with run-manifest commit matching HEAD ($COMMIT) — re-run 'just bench' on this commit"
+    "no SBE bench run with run-manifest commit matching HEAD ($COMMIT); re-run 'just bench' on this commit"
 SBE_RUN_DIR="$SBE_RUNS/$SBE_RUN_ID"
 [ -d "$SBE_RUN_DIR" ] || fail "SBE run dir missing: $SBE_RUN_DIR"
 
@@ -76,7 +76,7 @@ SBE_RUN_DIR="$SBE_RUNS/$SBE_RUN_ID"
 # exists to prevent.
 GATE_LOG="$SBE_RUN_DIR/no-lto/gate.txt"
 [ -s "$GATE_LOG" ] || fail \
-    "missing $GATE_LOG — the run did not record the no-LTO gate stdout; re-run 'just bench'"
+    "missing $GATE_LOG: the run did not record the no-LTO gate stdout; re-run 'just bench'"
 
 for profile in no-lto lto; do
     CRITERION_DIR="$SBE_RUN_DIR/$profile/criterion"
@@ -88,7 +88,7 @@ for profile in no-lto lto; do
     MANIFEST="$CRITERION_DIR/run-manifest.json"
     # Re-check immediately before packaging (no rewrite of a mismatched stamp).
     manifest_commit_matches "$MANIFEST" \
-        || fail "SBE $profile run-manifest commit is not HEAD ($COMMIT) under $SBE_RUN_ID — stale evidence"
+        || fail "SBE $profile run-manifest commit is not HEAD ($COMMIT) under $SBE_RUN_ID (stale evidence)"
     # Refresh estimate count / metadata only while keeping the proven commit.
     python3 -c "
 import json
@@ -110,9 +110,10 @@ with open(path, 'w') as f:
     tar -czf "$ARCHIVE" -C "$SBE_RUN_DIR/$profile" criterion
     # Validate archive expands and contains estimates + manifest
     tmp=$(mktemp -d)
-    tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json' || fail "$ARCHIVE missing run-manifest.json"
-    tar -tzf "$ARCHIVE" | grep -q 'estimates.json' || fail "$ARCHIVE missing estimates.json"
-    # Archive manifest must still claim HEAD — never a rewritten foreign commit.
+    listing=$(tar -tzf "$ARCHIVE") || fail "cannot list $ARCHIVE"
+    grep -q 'run-manifest.json' <<<"$listing" || fail "$ARCHIVE missing run-manifest.json"
+    grep -q 'estimates.json' <<<"$listing" || fail "$ARCHIVE missing estimates.json"
+    # Archive manifest must still claim HEAD, never a rewritten foreign commit.
     tar -xzf "$ARCHIVE" -C "$tmp" criterion/run-manifest.json
     python3 -c "
 import json, sys
@@ -136,7 +137,7 @@ package_cluster() {
         if [ "$REQUIRE_CLUSTER" = "1" ]; then
             fail "cluster $label criterion dir missing ($dir)"
         else
-            echo "WARN: cluster $label criterion dir missing ($dir) — skipping (REQUIRE_CLUSTER=0)"
+            echo "WARN: cluster $label criterion dir missing ($dir), skipping (REQUIRE_CLUSTER=0)"
             return 0
         fi
     fi
@@ -145,7 +146,7 @@ package_cluster() {
     # with other bench binaries (`target/criterion` also holds other
     # binaries' groups) and Criterion leaves `new/` in place for groups a run does not
     # touch, so counting or shipping `new/` folds foreign keys into the release
-    # artifact — one run packaged 53 "estimates" of which 35 belonged to other
+    # artifact: one run packaged 53 "estimates" of which 35 belonged to other
     # benches. With no repeats on disk there is nothing better to go on, so fall
     # back to `new/`.
     local estimate_count evidence
@@ -173,7 +174,7 @@ package_cluster() {
         if [ "$REQUIRE_CLUSTER" = "1" ]; then
             fail "no cluster estimates for $label under $dir"
         else
-            echo "WARN: no cluster estimates for $label — skipping (REQUIRE_CLUSTER=0)"
+            echo "WARN: no cluster estimates for $label, skipping (REQUIRE_CLUSTER=0)"
             return 0
         fi
     fi
@@ -184,9 +185,9 @@ package_cluster() {
     MANIFEST="$dir/run-manifest.json"
     if [ ! -f "$MANIFEST" ]; then
         if [ "$REQUIRE_CLUSTER" = "1" ]; then
-            fail "cluster $label missing run-manifest.json under $dir — re-run 'just bench-cluster'"
+            fail "cluster $label missing run-manifest.json under $dir; re-run 'just bench-cluster'"
         else
-            echo "WARN: cluster $label missing run-manifest — skipping (REQUIRE_CLUSTER=0)"
+            echo "WARN: cluster $label missing run-manifest, skipping (REQUIRE_CLUSTER=0)"
             return 0
         fi
     fi
@@ -197,9 +198,9 @@ ok = d.get('commit') == sys.argv[2] and bool(d.get('run_id'))
 sys.exit(0 if ok else 1)
 " "$MANIFEST" "$COMMIT" 2>/dev/null; then
         if [ "$REQUIRE_CLUSTER" = "1" ]; then
-            fail "cluster $label run-manifest commit/run_id does not match HEAD ($COMMIT) — re-run 'just bench-cluster'"
+            fail "cluster $label run-manifest commit/run_id does not match HEAD ($COMMIT); re-run 'just bench-cluster'"
         else
-            echo "WARN: cluster $label stale/missing run provenance — skipping (REQUIRE_CLUSTER=0)"
+            echo "WARN: cluster $label stale/missing run provenance, skipping (REQUIRE_CLUSTER=0)"
             return 0
         fi
     fi
@@ -236,7 +237,8 @@ with open(path, 'w') as f:
         tar -czf "$ARCHIVE" -C "$parent" "$base" -C "$dir" run-manifest.json 2>/dev/null \
             || tar -czf "$ARCHIVE" -C "$parent" "$base"
         # Ensure manifest is inside archive
-        if ! tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json'; then
+        listing=$(tar -tzf "$ARCHIVE" || true)
+        if ! grep -q 'run-manifest.json' <<<"$listing"; then
             # re-pack with manifest at archive root
             tmp=$(mktemp -d)
             cp -R "$dir"/* "$tmp/" 2>/dev/null || true
@@ -245,8 +247,9 @@ with open(path, 'w') as f:
             rm -rf "$tmp"
         fi
     fi
-    tar -tzf "$ARCHIVE" | grep -q 'estimates.json' || fail "$ARCHIVE missing estimates.json"
-    tar -tzf "$ARCHIVE" | grep -q 'run-manifest.json' || fail "$ARCHIVE missing run-manifest.json"
+    listing=$(tar -tzf "$ARCHIVE") || fail "cannot list $ARCHIVE"
+    grep -q 'estimates.json' <<<"$listing" || fail "$ARCHIVE missing estimates.json"
+    grep -q 'run-manifest.json' <<<"$listing" || fail "$ARCHIVE missing run-manifest.json"
     echo "Cluster $label: $estimate_count estimates ($evidence) → bench-cluster-$label.tar.gz"
 }
 

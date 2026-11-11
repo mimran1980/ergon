@@ -25,7 +25,6 @@ rlimits:
   rtPrio: "50"
 seccomp:
   ioUring: allow
-schedFifo: thread
 ptp: auto
 `))
 	if err != nil {
@@ -242,35 +241,6 @@ func TestResolveGrantsPtpMissing(t *testing.T) {
 	_, err := resolveGrants(cfg, &r)
 	if err == nil {
 		t.Fatal("want a refusal when the node has no PHC")
-	}
-}
-
-func TestResolveGrantsSchedFifo(t *testing.T) {
-	cfg := grantConfig(t)
-	r := baseRequest()
-	r.PodAnnotations = map[string]string{
-		names.RlimitsPrefix + r.Container:   "rt-prio",
-		names.SchedFifoPrefix + r.Container: "thread",
-	}
-	g, err := resolveGrants(cfg, &r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.SchedFifo != 50 {
-		t.Errorf("fifo prio %d, want 50 from the rtPrio config", g.SchedFifo)
-	}
-}
-
-func TestResolveGrantsSchedFifoOffByConfig(t *testing.T) {
-	cfg := grantConfig(t)
-	cfg.SchedFifo = config.SchedFifoOff
-	r := baseRequest()
-	r.PodAnnotations = map[string]string{
-		names.SchedFifoPrefix + r.Container: "thread",
-	}
-	_, err := resolveGrants(cfg, &r)
-	if err == nil {
-		t.Fatal("want a refusal when schedFifo is off")
 	}
 }
 

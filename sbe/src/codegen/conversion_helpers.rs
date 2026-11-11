@@ -1,9 +1,9 @@
 //! Conversion and DTO helper functions shared by codegen paths.
 
 use super::runtime::to_snake_case;
+use crate::Schema;
 use crate::ir::{Presence, PrimitiveType};
-use crate::structured_ir::{FieldType, MessageField, SchemaElements, rust_type};
-use crate::{GenerationConfig, Schema};
+use crate::structured_ir::{FieldType, MessageField, SchemaElements};
 
 /// Semantic text kind for a 1-byte fixed array. `None` means no `*_str`.
 ///
@@ -77,7 +77,6 @@ pub(crate) fn fixed_array_from_bulk_bytes(
 #[cfg(test)]
 mod fixed_array_from_bulk_bytes_tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn one_byte_unsigned_is_the_bulk_array() {
@@ -98,6 +97,7 @@ mod fixed_array_from_bulk_bytes_tests {
     }
 }
 
+#[cfg(test)]
 mod fixed_array_text_kind_tests {
     use super::*;
 
@@ -154,7 +154,7 @@ pub(crate) fn message_field_infos(
             // Report the type the DTO actually materialises. This must go
             // through `dto_domain_type` rather than re-deriving the rule: a
             // fourth independent copy of "is the domain type applied here?" is
-            // a fourth chance to drift. Boolean enums are the one addition —
+            // a fourth chance to drift. Boolean enums are the one addition:
             // the DTO emits `bool` for them unconditionally, which
             // `dto_domain_type` deliberately reports as "no domain type".
             let domain_ty = match &f.field_type {
@@ -195,12 +195,12 @@ pub(crate) const fn presence_str(p: Presence) -> &'static str {
     }
 }
 
-/// Inherent methods on the **message decoder** that force a `_field` rename.
+/// Inherent methods on the message decoder that force a `_field` rename.
 ///
 /// Placement utilities (`remaining`, `buffer`, `limit`, `message_offset`, and
-/// metadata-only byte views such as `as_fixed_*`) live **only** on
-/// `{Name}DecoderMetadata` via `get_metadata()` and are intentionally **absent**
-/// from this list — schema fields may use those names without rename.
+/// metadata-only byte views such as `as_fixed_*`) live only on
+/// `{Name}DecoderMetadata` via `get_metadata()` and are not in this list, so
+/// schema fields may use those names without a rename.
 ///
 /// Keep in sync with emitted inherent methods in `message_decoder.rs`.
 /// Single source of truth for decoder field rename + Display accessor naming.
@@ -231,7 +231,7 @@ pub(crate) const DECODER_RESERVED: &[&str] = &[
     // onto that type by `forward_fixed_fields` under the same names they have
     // on the base decoder, so a field colliding with any of these breaks the
     // wrapper even though the name is free on the base decoder itself. One
-    // list keeps the rename identical in both places — a field named `inner`
+    // list keeps the rename identical in both places: a field named `inner`
     // must not be `inner` on one type and `inner_field` on the other.
     "inner",
     "into_inner",
@@ -444,10 +444,10 @@ pub(crate) fn domain_accessor_ident(field_snake: &str, reserved: &[&str]) -> syn
 /// not compile.
 ///
 /// The field wins, and nothing is renamed. Renaming the field to
-/// `orders_count_field` would change an accessor that worked before these
-/// convenience methods existed; omitting the convenience method costs that one
-/// schema a shorthand and leaves every other accessor exactly where it was.
-/// `orders_count()` still resolves — to the field the schema asked for.
+/// `orders_count_field` would change a schema-named accessor; omitting the
+/// convenience method costs that one schema a shorthand and leaves every
+/// other accessor where it was. `orders_count()` still resolves, to the field
+/// the schema asked for.
 pub(crate) fn tail_accessor_ident(
     base_snake: &str,
     suffix: &str,
@@ -505,7 +505,7 @@ pub(crate) fn acting_accessors(
 /// Warn if a shared type has version-gated members (`sinceVersion > 0`).
 ///
 /// Version numbers are per-schema. A shared type with members added in a later
-/// version is ambiguous when imported by a schema at a different version — the
+/// version is ambiguous when imported by a schema at a different version: the
 /// importer's `acting_version` may not match the type's evolution timeline.
 /// Returns `Some(warning_string)` if the type carries version-gated members.
 pub(crate) fn warn_version_gated(
@@ -530,7 +530,7 @@ pub(crate) fn warn_version_gated(
         .max()?;
     Some(format!(
         "warning: shared type `{}` (schema {} id {}) has members at sinceVersion={max_since}. \
-         Version numbers are per-schema — importing schemas at different versions may decode \
+         Version numbers are per-schema, so schemas at different versions may decode \
          these members incorrectly. Consider keeping shared types at version 0.",
         type_name, schema.ir.package, schema.ir.id
     ))
@@ -549,9 +549,8 @@ fn selector_type_name(field: &MessageField) -> Option<&str> {
     }
 }
 
-/// Does `sel` match `field`? One predicate so every resolver agrees on what a
-/// selector means — in particular that `FieldPath` matches at all, which it did
-/// not until 0.1.24.
+/// Does `sel` match `field`? One predicate, so every resolver agrees on what
+/// a selector means.
 pub(crate) fn selector_matches(sel: &crate::ConversionSelector, field: &MessageField) -> bool {
     match sel {
         crate::ConversionSelector::FieldPath(p) => p == &field.path,
@@ -613,20 +612,19 @@ pub(crate) fn find_domain_selector<'a>(
 /// DTO keeps the wire type despite a matching selector.
 ///
 /// This is the single source of truth for "is the domain type applied here?".
-/// It must stay the one predicate: when the DTO field type, the `from_decoder`
-/// expression, and the encode setter each decided this independently they
-/// drifted apart and produced modules that did not compile — an array field
-/// typed `[u8; 4]` written through a domain setter taking the domain type, and
-/// an optional scalar typed `Option<i64>` written through one taking `Decimal`.
+/// It must stay the one predicate. If the DTO field type, the `from_decoder`
+/// expression and the encode setter decide it separately, they drift apart
+/// into modules that do not compile, such as an array field typed `[u8; 4]`
+/// written through a domain setter that takes the domain type.
 ///
 /// Arrays and optional scalars deliberately keep the wire type. Composites,
 /// non-boolean enums, and sets use the domain type.
 ///
 /// Boolean enums are excluded: they already materialise as `bool` through
 /// `*_bool` accessors, and `with_bool_domain_type` registers `bool` as their
-/// domain type — routing them here would send the DTO down the domain-setter path
-/// while the field branch still emitted `*_bool`, which is exactly the drift
-/// this predicate exists to prevent.
+/// domain type. Routing them here would send the DTO down the domain-setter
+/// path while the field branch still emits `*_bool`, the drift this predicate
+/// exists to prevent.
 pub(crate) fn dto_domain_type<'a>(
     field: &MessageField,
     domain_types: &'a [(crate::ConversionSelector, String)],
@@ -676,8 +674,8 @@ pub(crate) fn domain_encode_setter_name(
     }
 }
 
-/// Check whether `null_as_option` config matches an enum type — either via
-/// `all_enums_as_option` blanket or a specific NamedType selector.
+/// Whether `null_as_option` applies to an enum type, through the
+/// `all_enums_as_option` blanket or a `NamedType` selector.
 pub(crate) fn enum_uses_null_as_option(
     enum_name: &str,
     null_as_option: &[crate::ConversionSelector],
@@ -698,11 +696,11 @@ mod reserved_list_tests {
         for name in PLACEMENT_NOT_RESERVED {
             assert!(
                 !DECODER_RESERVED.contains(name),
-                "placement util `{name}` must not be in DECODER_RESERVED — it lives on get_metadata()"
+                "placement util `{name}` must not be in DECODER_RESERVED: it lives on get_metadata()"
             );
             assert!(
                 !ENCODER_RESERVED.contains(name),
-                "placement util `{name}` must not be in ENCODER_RESERVED — it lives on get_metadata()"
+                "placement util `{name}` must not be in ENCODER_RESERVED: it lives on get_metadata()"
             );
         }
     }

@@ -1,4 +1,4 @@
-//! Domain-object tests — owned structs materialised from flyweight decoders.
+//! Domain-object tests: owned structs materialised from flyweight decoders.
 #![allow(
     clippy::all,
     clippy::pedantic,
@@ -322,7 +322,6 @@ fn car_domain_all_fields() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(d.manufacturer, b"Honda");
         assert_eq!(d.model, b"Civic VTi");
         assert_eq!(d.activation_code, b"abcdef");
-        println!("car_domain_all_fields: PASSED");
     "#,
     );
 
@@ -357,7 +356,6 @@ fn car_domain_clone_eq_debug() -> Result<(), Box<dyn std::error::Error>> {
         let dbg = format!("{:?}", d1);
         assert!(dbg.contains("CarDomain"));
         assert!(dbg.contains("serial_number: 42"));
-        println!("car_domain_clone_eq_debug: PASSED");
     "#,
     );
 
@@ -391,7 +389,6 @@ fn car_domain_empty_groups() -> Result<(), Box<dyn std::error::Error>> {
         assert!(d.performance_figures.is_empty());
         assert!(d.manufacturer.is_empty());
         assert!(d.model.is_empty());
-        println!("car_domain_empty_groups: PASSED");
     "#,
     );
 
@@ -460,7 +457,6 @@ fn l3_domain_nested_groups_vardata() -> Result<(), Box<dyn std::error::Error>> {
         let dbg = format!("{:?}", d);
         assert!(dbg.contains("L3BookDomain"), "Debug must contain struct name");
         assert!(dbg.contains("65, 49"), "Debug must contain order_id bytes [65, 49] for b\"A1\"");
-        println!("l3_domain_nested_groups_vardata: PASSED");
     "#,
     );
     Ok(())
@@ -499,7 +495,6 @@ fn l3_domain_12_orders() -> Result<(), Box<dyn std::error::Error>> {
             assert_eq!(d.bids[0].orders[i].order_id, expected.as_bytes());
         }
         assert!(d.asks.is_empty());
-        println!("l3_domain_12_orders: PASSED");
     "#,
     );
 
@@ -523,7 +518,6 @@ fn l3_compute_encoded_length_matches() -> Result<(), Box<dyn std::error::Error>>
             asks.add(|mut l| { l.price(0).qty(0); l.orders(0, |_| Ok(())) })
         }).unwrap();
         assert!(complete.encoded_length() > 0);
-        println!("l3_compute_encoded_length_matches: PASSED");
     "#,
     );
 
@@ -568,7 +562,6 @@ fn binance_depth_domain() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(dom, cloned);
         let dbg = format!("{:?}", dom);
         assert!(dbg.contains("DepthResponseDomain"));
-        println!("binance_depth_domain: PASSED");
     "#,
     );
 
@@ -608,7 +601,7 @@ fn domain_versioned_optional_fields() -> Result<(), Box<dyn std::error::Error>> 
 
         // A fixed-only (no group/var-data) domain message: encode()'s return
         // must still equal encoded_length_with_header(), and that must be
-        // exactly encoded_length() (body only) plus the header size — the
+        // exactly encoded_length() (body only) plus the header size, the
         // same contract a dynamic message honours.
         let mut out = [0u8; VersionedEncoder::compute_length_with_header()];
         let written = d.encode(&mut out)?;
@@ -629,8 +622,8 @@ fn versioned_domain_type_schema() -> PathBuf {
     ))
 }
 
-/// A versioned (`sinceVersion > 0`) field carrying a domain type — composite or
-/// primitive scalar — must materialise into the DTO exactly once.
+/// A versioned (`sinceVersion > 0`) field carrying a domain type, composite or
+/// primitive scalar, must materialise into the DTO exactly once.
 ///
 /// The domain accessor on a versioned field already returns `Result<Option<T>, E>` (see
 /// `converter_impls::is_optional_domain_field`), so the DTO's `from_decoder`
@@ -1107,7 +1100,6 @@ fn car_domain_string_var_data_and_invalid_utf8_empty() -> Result<(), Box<dyn std
             matches!(err, sbe_rt::DecodeError::InvalidUtf8 { field: "manufacturer", .. }),
             "unexpected err: {err:?}"
         );
-        println!("car_domain_string_var_data_and_invalid_utf8_empty: PASSED");
     "#,
     );
     Ok(())
@@ -1173,16 +1165,15 @@ fn car_domain_required_bool_invalid_discriminant_is_typed_error()
             ),
             "expected typed InvalidBoolean, got: {err:?}"
         );
-        println!("car_domain_required_bool_invalid_discriminant_is_typed_error: PASSED");
     "#,
     );
     Ok(())
 }
 
-/// T-1 regression: no generated domain `try_from_decoder` body may contain
-/// `expect(` or `unwrap(` — every fallible field materialisation must
-/// propagate via `?`, including nested group-entry domain types (not just
-/// the top-level message domain struct T-1's own fix targeted).
+/// No generated domain `try_from_decoder` body may contain `expect(` or
+/// `unwrap(`: every fallible field materialisation must propagate via `?`,
+/// including nested group-entry domain types, not only the top-level message
+/// domain struct.
 #[test]
 fn no_domain_try_from_decoder_body_contains_expect_or_unwrap()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -1223,8 +1214,8 @@ fn no_domain_try_from_decoder_body_contains_expect_or_unwrap()
     Ok(())
 }
 
-/// T-1 acceptance criteria: a required boolean field inside a *repeating
-/// group entry* (not just a root message field) with an unknown wire
+/// A required boolean field inside a repeating group entry (not only a root
+/// message field) with an unknown wire
 /// discriminant must also propagate `DecodeError::InvalidBoolean` instead
 /// of panicking. `coverage-edges.xml`'s `MsgA.items` group has exactly this
 /// shape: `flag: BooleanType` at entry offset 4.
@@ -1274,7 +1265,7 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
 
 /// `with_all_enums_as_option()` makes a required enum `Option` on the DTO.
 /// Encoding `None` into a reused buffer must write the schema null image,
-/// not leave the previous `Some` bytes (HFT review 2026-09-15).
+/// not leave the previous `Some` bytes.
 #[test]
 fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -1346,8 +1337,8 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn
 }
 
 /// The same option mapping must compile for a flat bulk-eligible group.
-/// `bulk_add_domain` used to assume `Status` while the DTO field is
-/// `Option<Status>` (E0308/E0277; HFT review 2026-09-15).
+/// `bulk_add_domain` must take `Option<Status>`, the DTO field's type, not
+/// `Status` (E0308/E0277).
 #[test]
 fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dyn std::error::Error>>
 {

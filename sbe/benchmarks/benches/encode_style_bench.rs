@@ -1,4 +1,4 @@
-//! Encode-style cost matrix — confirm `FixedFields` vs setters, composite
+//! Encode-style cost matrix: `FixedFields` against setters, composite
 //! bulk write, and LE vs BE multi-byte stores.
 //!
 //! Inputs are `black_box`'d so LLVM cannot constant-fold the entire encode
@@ -153,7 +153,7 @@ fn big_block_be_from_seed(seed: u64) -> be::BigBlock {
 }
 
 fn bench_fixed_vs_setters(c: &mut Criterion) {
-    // Same prebuilt values — only the write API differs (setters vs .fixed).
+    // Same prebuilt values; only the write API differs (setters vs .fixed).
     let preheld: Vec<CarFixedFields> = (0..256).map(fixed_fields_from_seed).collect();
 
     let mut group = c.benchmark_group("encode/fixed_vs_setters");
@@ -186,7 +186,7 @@ fn bench_fixed_vs_setters(c: &mut Criterion) {
 }
 
 fn bench_composite_write(c: &mut Criterion) {
-    // Preheld wire images for a range of seeds — construction outside timed path.
+    // Preheld wire images for a range of seeds, built outside the timed path.
     let preheld: Vec<Engine> = (0..256).map(engine_from_seed).collect();
 
     let mut group = c.benchmark_group("encode/composite_write");
@@ -229,7 +229,7 @@ fn bench_composite_write(c: &mut Criterion) {
             enc.some_numbers([0; 4]);
             enc.vehicle_code([0; 6]);
             enc.extras(OptionalExtras::default());
-            // Bulk copy only — wire image already built.
+            // Bulk copy only; the wire image is already built.
             enc.engine(black_box(eng));
             black_box(&buf);
         });
@@ -276,7 +276,7 @@ fn bench_endian_wide_block(c: &mut Criterion) {
         });
     });
 
-    // Preheld wire image — pure bulk memcpy (endian already in .0). LE ≈ BE.
+    // Preheld wire image: a bulk memcpy (endianness is already in .0), so LE ≈ BE.
     group.bench_function("le_block_preheld_memcpy", |b| {
         let mut buf = [0u8; le::WideEncoder::ENCODED_LENGTH];
         let mut seed = 0u64;

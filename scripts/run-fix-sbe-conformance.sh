@@ -4,9 +4,9 @@
 # Prerequisites:
 #   - Java 8+ (17 OK)
 #   - Maven
-#   - FIX_SBE_CONFORMANCE_HOME may point at a clone of
-#     https://github.com/FIXTradingCommunity/fix-sbe-conformance
-#     (default: clones into a local work dir under target/)
+#   - FIX_SBE_CONFORMANCE_HOME may point at a clone of the suite, which must be
+#     at the commit in scripts/fix-sbe-conformance-pin.txt (default: fetched at
+#     that commit into a local work dir under target/). Any other commit fails.
 #
 # Primary gate:
 #   cargo test -p ergo-sbe --test fix_sbe_conformance_test
@@ -34,39 +34,29 @@ cargo test -p ergo-sbe --test fix_sbe_conformance_test -- --test-threads=1
 CONF_HOME="${FIX_SBE_CONFORMANCE_HOME:-}"
 if [[ -z "$CONF_HOME" ]]; then
   CONF_HOME="$ROOT/target/fix-sbe-conformance"
-  if [[ ! -d "$CONF_HOME/.git" ]]; then
-    echo "--- cloning fix-sbe-conformance into $CONF_HOME ---"
-    git clone --depth 1 https://github.com/FIXTradingCommunity/fix-sbe-conformance.git "$CONF_HOME"
+  # Fetched at, or moved to, the commit in scripts/fix-sbe-conformance-pin.txt.
+  "$ROOT/scripts/ensure-fix-sbe-conformance.sh" "$CONF_HOME"
+else
+  if [[ ! -d "$CONF_HOME" ]]; then
+    echo "ERROR: Java suite directory is missing: $CONF_HOME" >&2
+    exit 1
   fi
-fi
-
-if [[ ! -d "$CONF_HOME" ]]; then
-  echo "ERROR: Java suite directory is missing: $CONF_HOME" >&2
-  exit 1
+  # A supplied suite must be a git checkout of the pinned commit.
+  "$ROOT/scripts/ensure-fix-sbe-conformance.sh" --verify-only "$CONF_HOME"
 fi
 
 echo "--- building Java suite at $CONF_HOME ---"
-# Java 9+ needs javax.annotation-api for generated sbe-tool sources
-if ! grep -q 'javax.annotation-api' "$CONF_HOME/pom.xml" 2>/dev/null; then
-  python3 - "$CONF_HOME/pom.xml" <<'PY'
-import sys
-from pathlib import Path
-p = Path(sys.argv[1])
-t = p.read_text()
-if 'javax.annotation-api' not in t:
-    i = t.find('<groupId>org.glassfish</groupId>')
-    if i < 0:
-        raise SystemExit('pom layout unexpected')
-    block = t.rfind('<dependency>', 0, i)
-    dep = '''\t\t<dependency>
-\t\t\t<groupId>javax.annotation</groupId>
-\t\t\t<artifactId>javax.annotation-api</artifactId>
-\t\t\t<version>1.3.2</version>
-\t\t</dependency>
-'''
-    p.write_text(t[:block] + dep + t[block:])
-    print('patched javax.annotation-api into pom')
-PY
+# Two edits to the pinned suite's pom (scripts/fix-sbe-conformance-pom.patch):
+# Java 9+ needs javax.annotation-api for the generated sbe-tool sources, and
+# Maven 3.10 refuses the three separate exec-maven-plugin declarations, so
+# they become one plugin with three executions. A patch that does not apply
+# means the suite is not the pinned one or the pom was edited: fail.
+pom_patch="$ROOT/scripts/fix-sbe-conformance-pom.patch"
+if git -C "$CONF_HOME" apply --reverse --check "$pom_patch" 2>/dev/null; then
+  echo "suite pom already patched"
+else
+  git -C "$CONF_HOME" apply "$pom_patch"
+  echo "patched the suite pom"
 fi
 (cd "$CONF_HOME" && mvn -q -DskipTests package)
 export FIX_SBE_CONFORMANCE_HOME="$CONF_HOME"

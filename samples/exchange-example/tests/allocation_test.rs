@@ -19,8 +19,8 @@ static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// `ALLOC_COUNT` is process-global, but Rust's default test runner runs the
 /// tests in this binary concurrently on separate threads. Without this lock,
-/// `publish_claim_commit_zero_alloc`'s real Aeron/media-driver setup — which
-/// does allocate — can race with another test's before/after measurement
+/// `publish_claim_commit_zero_alloc`'s real Aeron/media-driver setup, which
+/// does allocate, can race with another test's before/after measurement
 /// window and inflate its count. One lock per test body serialises them
 /// within this process without requiring `--test-threads=1` globally.
 static ALLOC_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -175,8 +175,8 @@ fn decode_app_message_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Zero allocations around the warmed real claim path —
-/// `try_claim_owned` + direct encode + commit — not just Vec encoding.
+/// Zero allocations around the warmed real claim path (`try_claim_owned`,
+/// direct encode, commit), not just `Vec` encoding.
 #[test]
 fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
     use exchange_example::config::CHANNEL;
@@ -202,8 +202,8 @@ fn publish_claim_commit_zero_alloc() -> Result<(), Box<dyn std::error::Error>> {
         .expect("pub")
         .poll_blocking(Duration::from_secs(5))
         .expect("connect");
-    // Subscribers must exist for claims to connect; they are never polled —
-    // the term buffer comfortably holds this test's traffic.
+    // Subscribers must exist for claims to connect; they are never polled,
+    // and the term buffer comfortably holds this test's traffic.
     let _sub_typed = aeron
         .async_add_subscription::<rusteron_client::AeronAvailableImageLogger, rusteron_client::AeronUnavailableImageLogger>(
             ch, 1001, None, None,

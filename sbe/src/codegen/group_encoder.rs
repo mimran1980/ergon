@@ -115,33 +115,34 @@ pub(crate) fn generate_group_encoder(
         .collect();
     let to_endian = syn::Ident::new(&format!("to_{order_suffix}_bytes"), span);
 
+    // The same null image `fixed()` writes for a `None` message field, so an
+    // entry over a reused buffer cannot leak a previous optional value. Every
+    // field lies inside `ENTRY_BLOCK_LENGTH`, which each caller bounds-checks
+    // before these run.
     let mut null_stmts = proc_macro2::TokenStream::new();
+    let buf_expr: syn::Expr = syn::parse_quote!(self.buf);
     for f in &g.fields {
-        if f.presence != Presence::Optional {
-            continue;
-        }
-        let Some(null_val) = f.null_value else {
-            continue;
-        };
-        let size = f.field_type.size();
-        if size == 0 || size > 8 {
-            continue;
-        }
-        // Exact width in schema endianness — not a full u64 array.
-        let null_bytes = super::nullification::null_sentinel_bytes(null_val, size, byte_order);
         let f_offset = syn::Index::from(f.offset);
-        let size_lit = syn::LitInt::new(&size.to_string(), span);
-        let lits: Vec<syn::LitInt> = null_bytes[..size]
-            .iter()
-            .map(|b| syn::LitInt::new(&b.to_string(), span))
-            .collect();
-        null_stmts.extend(quote::quote! {
-            {
-                let null_bytes: [u8; #size_lit] = [#(#lits),*];
-                let offset = self.offset + #f_offset;
-                self.buf[offset..offset + #size_lit].copy_from_slice(&null_bytes);
+        match super::nullification::null_image_stmts_for_field(
+            f,
+            quote::quote! { self.offset + #f_offset },
+            &buf_expr,
+            byte_order,
+            elements,
+        ) {
+            Ok(Some(stmts)) => null_stmts.extend(stmts),
+            Ok(None) => {}
+            Err(reason) => {
+                let msg_lit = syn::LitStr::new(
+                    &format!(
+                        "cannot derive null image for optional field '{}' in group '{name}': {reason}",
+                        f.name
+                    ),
+                    span,
+                );
+                null_stmts.extend(quote::quote! { compile_error!(#msg_lit); });
             }
-        });
+        }
     }
 
     let is_dynamic = !g.has_fixed_stride();
@@ -181,7 +182,7 @@ pub(crate) fn generate_group_encoder(
     let add_fn: proc_macro2::TokenStream = if is_dynamic {
         let mut body = capacity_body.clone();
         body.extend(quote::quote! {
-            // SAFETY: borrow-split — closure only uses __entry, never self.buf.
+            // SAFETY: borrow split; the closure only uses __entry, never self.buf.
             {
                 let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
                 let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
@@ -287,6 +288,7 @@ pub(crate) fn generate_group_encoder(
                         available: self.buf.len().saturating_sub(self.offset),
                     });
                 }
+                #null_stmts
                 let entry_offset = self.offset;
                 self.offset += block_len;
                 self.written += 1;

@@ -78,7 +78,6 @@
           }
         },
         "seccompProfilePath": { "type": "string" },
-        "schedFifo": { "$ref": "#/definitions/schedFifo" },
         "ptp": {
           "type": "string",
           "pattern": "^(off|auto|/dev/ptp[^/]*)$"
@@ -143,14 +142,6 @@
         { "type": "string", "pattern": "^(?i:off|allow|true|false|yes|no|y|n|on|0|1)$" }
       ]
     },
-    "schedFifo": {
-      "description": "thread or off, or a YAML boolean (true = thread); any case",
-      "anyOf": [
-        { "type": "boolean" },
-        { "type": "integer", "enum": [0, 1] },
-        { "type": "string", "pattern": "^(?i:off|thread|true|false|yes|no|y|n|on|0|1)$" }
-      ]
-    },
     "profile": {
       "type": "object",
       "additionalProperties": false,
@@ -185,7 +176,6 @@
           }
         },
         "seccompProfilePath": { "type": "string" },
-        "schedFifo": { "$ref": "#/definitions/schedFifo" },
         "ptp": { "type": "string", "pattern": "^(off|auto|/dev/ptp[^/]*)$" },
         "hugepagesAeronDir": { "type": "string", "pattern": "^$|^/" }
       }

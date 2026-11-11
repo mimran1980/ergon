@@ -1,5 +1,5 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:ba4efe1e0ad7bbe3af176f66dc4e694dca268baedda371747375499ed16c80a8 -->
-# Kubernetes Quickstart
+<!-- Generated page: edits here are overwritten by the next export. sha256:38110fdd73f4ad4fc25080dfc420603f17340b968009ceec36aa9735af15164a -->
+# Kubernetes quickstart
 
 This sample
 is the first thing to try on Kubernetes. One command gives a kind cluster

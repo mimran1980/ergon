@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:8d7eff1a7f28b3c31cd9e48cef65a343baab31915bc5502e2b57e47fcea4585d -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:3d9f7e4ad694fadc0ab91942d6e7dc0ad17b0a78a143f9145c3a2b063ea7d39c -->
 # Transport Latency Comparison
 
 Which transport has the lowest latency, and the lowest tail, for 64-byte
@@ -9,6 +9,10 @@ figures stay in
 ergon-io's benchmark notes
 and
 ergon-md-dpdk's.
+
+Request/response with one server and many clients (unary with timeout, and
+one request with many responses) is compared on its own page:
+[Request/response](../io/request-response.md).
 
 Terms: [ergon-io glossary](../io/overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary),
@@ -53,6 +57,7 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | Does UDP batching (`recvmmsg`/`sendmmsg`) change the UDP answers? (AWS `c8g`) | Not for one message at a time: mio, ergon-io and ergon-io with `rx_batch` 1 within 0.4 at p50 (31.05–32.86 at 50,000 and 200,000 msg/s, max 180–1,072). For bursts of 8, replying after the poll pass (ergon-io, batched mio) costs about 5 at p50 against replying per datagram (plain mio 40.90, max 179, against 45.5, max 184); the receive batch size moves p50 by 1.5 at most. In a later session `datagram_burst` 1 cut 1.98 and an inline reply 1.15 from the queued reply's 46.34 (max 192, 180 and 206). At 500,000 msg/s no single-thread socket loop keeps up, batched or not; Aeron (kernel 33.95, DPDK 24.78) and smoltcp (36.03) do. Maxima unexplained | [batching](#aws-udp-batching-graviton) |
 | Does this `c7i` pair show the once-a-minute ~15 ms outage? | No. `spikes.py` names no periodic cluster in `aws-20261029-040029` (96 points, 36 with the echo pinned) and none in the remeasure `aws-20261029-174643` (60 points, echo pinned). Among the first 36, maxima of 20 ms and more are 1% loss: three TCP retransmits (20,057 to 51,890) and one page fault (417,929). The second-:25 outage remains the mixed-load session | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack), [mixed load](#maxima-and-the-c7i-path-outages) |
 | Graviton, once a minute, in this bypass run? | Two clusters, two sessions. `aws-20261029-055245`: eight kernel `epoll-spin` UDP points, echo pinned, max 5,499 to 9,298, all at second :05; p50 stays 33.2 to 34.1. The remeasure `aws-20261029-190425`: nine points at second :58, max 5,569 to 9,656, p50 32.4 to 36.0, across kernel TCP, kernel WebSocket, smoltcp and F-Stack WebSocket | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| Between regions (150 ms round trip) with loss: Aeron reliable, kernel TCP or UDP? (one box, netem, one way, ms) | No loss: all equal, p50 the delay + 0.04. With loss, UDP (ergon-io or mio) keeps p50 at the delay and loses the path's loss. Every message at 0.1 % or bursty loss over T and L (150 and 80 ms round trip), 10,000 to 50,000 msg/s: Aeron reliable with its window inside the socket buffer the kernel keeps and several messages a datagram. At T, one factor changed: the application packs 11 to 20 messages an offer (one frame, or a 1 ms wait) and the driver keeps busy-spinning, 100 % delivered in 6 of 6 runs, p50 0.4 to 0.6 past the delay, max 269 to 566, where the same arm unpacked was seconds behind (p50 1,166 to 1,508; [one factor](#application-batching-one-factor)). The bench's earlier form, a 1 ms driver idle sleep, also delivered 100 % in 12 of 12 runs over T, L and bursty loss (p50 1.1 to 169 past the delay, max 371 to 1,010); application batching has not run at L or with bursty loss. Kernel TCP (cubic, 1 connection) delivered 15.7 to 94.7 %, and the matrix's Aeron (8 MiB window over a 4 MiB socket, unbatched) fell behind. Batched Aeron fell behind at X (250 ms) 50,000 msg/s: the bound is loss × datagrams a second × RTT under about 1. At 1 % nothing kept up on one path; Aeron on a second path with 0.01 % loss did, 12 of 12 runs. Kernel TCP with BBR, and sixteen connections, carry more than cubic does (a later run, after the matrix); several Aeron streams not tried | [long distance](#long-distance-with-loss-one-box-netem) |
 | Did hugepages change Aeron's latency? | The IPC page-size A/B did not. Round trip p50 is 0.22 against 0.20 at 10,000 msg/s, 0.22 against 0.21 at 1,000,000, and 0.25 against 0.25 at 5,000,000. A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent hugepages off is a tail result: Azure idle p99.99 67 to 53 µs and idle max 546 to 106; one AWS run overlaps; a traced `khugepaged` drain was a 16.25 µs max | [hugepages](#hugepages) |
 
 ## What was compared
@@ -461,7 +466,7 @@ every CPU with queued pages.
 
 | where | what changed | figures |
 |---|---|---|
-| Azure rounds 4 and 6 | transparent hugepages off | idle p99.99 67 to 53 µs, idle max 546 to 106 µs (`md-dpdk/BENCHMARKS-ROUNDS-2026-10-18.md`). The round-3 trace that prompted it: 8–22 µs kworker LRU drains every 10.24 s on the agent CPUs |
+| Azure rounds 4 and 6 | transparent hugepages off | idle p99.99 67 to 53 µs, idle max 546 to 106 µs (rounds file, in git history). The round-3 trace that prompted it: 8–22 µs kworker LRU drains every 10.24 s on the agent CPUs |
 | AWS `aws-20261014-113947`, one run | the same switch | overlaps: idle p99.99 53.15 against 67.01 µs, max 90 (77–1,180) against 94 (80–498). Published as not separated ([configuration](../md-dpdk/configuration.md#aeron-settings)) |
 | `k8s/nri-shared-cpus`, run 20261024233129 | a trace of `khugepaged` on the housekeeping CPU | `lru_add_drain_all` ran `kworker` on the isolated CPU for 6 µs: that rep's only involuntary switch and its 16.25 µs max. With `transparent_hugepage=never` (run 20261024234841) the three untraced reps took 0 switches |
 
@@ -474,9 +479,43 @@ AWS Kubernetes.
 
 <!-- RESULTS: set 2a -->
 
-Round trip (µs), no netem. A/A: `aeron-udp` again. `dpdk-aeron-udp` is
-left out (see the note at the top). Busy threads a host: Aeron 4, mio and
-ergon-io 1.
+Round trip (µs), no netem. A/A: `aeron-udp` again. Busy threads a host:
+Aeron 4, mio and ergon-io 1.
+
+**DPDK.** The Azure `dpdk-aeron-udp` rows are left out: they measured the
+VMBus fallback, not DPDK on the NIC (the note at the top). The same
+question with DPDK was answered on AWS. Round trip, µs, median of 3 reps,
+p50 / p99 / p99.99 / max (the max's rep range). Compare rows only within
+one session, and never with the Azure tables below.
+
+| session, hosts | msg/s, streams | Aeron on DPDK | Aeron, kernel UDP | mio | ergon-io kernel | ergon-io on smoltcp (one end) |
+|---|---|---|---|---|---|---|
+| `aws-20261027-062105`, two `c7a.2xlarge` (AMD EPYC 9R14 Genoa, 8 cores, ENA) | 50,000, 1 | **28.0** / 35.4 / 131 / 177 (169–178) | 40.9 / 48.6 / 148 / 420 (414–445) | 47.7 / 60.8 / 150 / 521 (236–609) | 48.4 / 60.9 / 155 / 420 (226–553) | |
+| `aws-20261031-111309`, two `c8g.2xlarge` (Graviton4, 8 vCPUs, ENA) | 50,000, 1 | **24.38** / 29.07 / 60.5 / 115 (113–138) | 30.66 / 36.29 / 92.4 / 142 (140–825) | 31.05 / 35.36 / 104 / 180 (174–2,181) | 31.34 / 36.00 / 103 / 186 (159–780) | |
+| | 200,000, 32 | **28.38** / 34.34 / 82.2 / 148 (137–153) | 38.66 / 47.39 / 127 / 221 (219–231) | 33.70 / 43.01 / 142 / 299 (289–389) | 34.02 / 43.58 / 138 / 278 (255–279) | |
+| | 500,000, 1 | **24.78** / 33.76 / 118 / 219 (195–288) | 33.95 / 50.78 / 164 / 497 (242–795) | falls 4.1–4.5 s behind | falls 3.9–4.1 s behind | |
+| `aws-20261031-105007`, two `c8g.2xlarge` | 50,000, 1 | **24.11** / 29.76 / 67.9 / 129 (114–131) | | | 31.15 / 38.34 / 138 / 207 (200–211) | 27.28 / 31.87 / 66.6 / 147 (97–525) |
+| | 500,000, 1 | **24.86** / 36.70 / 121 / 201 (185–659) | | | falls 3.5–4.3 s behind | 36.03 / 78.21 / 1,536 / 1,908 (1,510–2,590) |
+
+- **DPDK does not change the winner; it changes the size.** Aeron on DPDK
+  is lowest at every load and stream count measured: on `c7a` 12.8 below
+  kernel Aeron and 19.7 to 20.4 below the sockets at p50; on `c8g` 6.3 to
+  10.3 below kernel Aeron and 5.3 to 7.0 below the sockets.
+- **It does change the many-streams answer.** On Azure plain sockets beat
+  kernel Aeron from 32 streams (below). On `c8g` at 32 streams the sockets
+  still beat kernel Aeron (by 4.6 to 5.0), but Aeron on DPDK is 5.3 to 5.6
+  below the sockets. From 1 to 32 streams at 200,000 msg/s kernel Aeron's
+  p50 rose 8.3 (30.37 to 38.66) and Aeron on DPDK's 4.0 (24.35 to 28.38).
+- **A socket loop on DPDK closes most of the gap with 1 busy thread.**
+  ergon-io on smoltcp (the ping only) is 3.9 below kernel ergon-io and 3.2
+  above Aeron on DPDK (4 busy threads a host). At 500,000 msg/s it keeps
+  up where no kernel socket loop does, with a 1.5–2.6 ms tail and 0.008 %
+  lost (ENA's packets-per-second allowance).
+- Every max here is unexplained. Details:
+  [unreliable UDP (u)](#unreliable-udp-u),
+  [UDP batching](#aws-udp-batching-graviton).
+
+Azure, kernel paths:
 
 | msg/s | streams | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
 |---|---|---|---|---|---|---|---|---|
@@ -2062,6 +2101,523 @@ What the rows say:
   dumps, not the committed results). Kernel ergon-io is over capacity at this
   rate.
 
+## Long distance with loss (one box, netem)
+
+Which transport carries a 64-byte message stream best between regions,
+for example Tokyo to Chicago (about 150 ms round trip), when the path
+loses packets: Aeron reliable UDP, kernel TCP (ergon-io or mio), or plain
+UDP (ergon-io or mio)? Measured one way, on one box, with the distance and
+the loss made by `tc netem`. The box is a desktop, not a latency platform:
+the millisecond and second effects of distance and loss repair are the
+finding here, not the microsecond floor.
+
+### The answer
+
+One way, ms. "Delivered" is messages received over the whole run divided
+by messages scheduled.
+
+| case | use | measured | why |
+|---|---|---|---|
+| any distance, no loss | any of them: Aeron reliable, kernel TCP or UDP | every arm: p50 = the one-way delay + 0.04, delivered 100 % (T, 10,000 and 50,000 msg/s) | distance alone adds only the propagation delay |
+| lossy path (0.1 % or more), gaps acceptable | UDP: ergon-io or mio, which are the same here | p50 at the delay at every loss level; delivered = 1 − the path's loss (99.9 % at 0.1 %, 99.0 % at 1 %) | nothing waits for a repair. Recover a gap in the application (a snapshot, the latest value) |
+| lossy path, 0.1 % or bursty (about 1 % in bursts of 10), every message in order, while loss × datagrams a second × RTT stays under about 1 (measured: T and L at 10,000 to 50,000 msg/s, not X at 50,000) | Aeron reliable, its receiver window inside the socket buffer the kernel keeps and the application packing messages several to an offer (up to 1,376 B, or a 1 ms wait for the oldest message) with the driver busy-spinning (`aeron-app-batch`). At T the 1 ms driver idle sleep of the re-check (`aeron-batch`) is not needed: it adds up to its sleep, and saves about 0.8 busy CPU, not delivery. At L and with bursty loss only the sleep was measured | `aeron-app-batch` at T 0.1 %, 100 % delivered in 6 of 6 runs: 10,000 msg/s p50 75.63, max 269; 50,000 msg/s p50 75.37, max 566. The same arm unpacked (`aeron-win2m`): p50 1,508 and 1,166 ([one factor](#application-batching-one-factor)). `aeron-batch` (sleep, not application batching), 100 % delivered in all 12 runs: T 10,000 msg/s p50 76.09, max 371; L 50,000 p50 41.62, max 421; T 50,000 p50 236, max 997; T bursty 50,000 p50 244, max 1,010 ([re-check](#aeron-re-check-window-and-batching)); application batching not run at L or bursty. At X 50,000: 97.2 %, fell behind. Kernel TCP (cubic, 1 connection): 15.7 to 94.7 % delivered, p50 2.2 s or more | Aeron repairs about one gap a round trip, so the gaps a second must stay under one a round trip: 11 to 20 messages an offer brought loss × data datagrams a second × RTT to 0.14 (10,000 msg/s) and 0.38 (50,000); the sleeping driver's 10 a datagram gave 0.16 to 0.76. Cubic's window under loss carries less than the load |
+| lossy path, 1 % (independent losses), every message in order | none of the tested settings. Change the path (next row) or the load first | `aeron-batch` 88.5 % (10,000 msg/s) and 22.3 % (50,000) delivered; application batching (`aeron-app-batch`) 80.7 and 32.3 %, the same arm unpacked (`aeron-win2m`) 39.6 and 9.2 %; matrix Aeron 1.0 to 8.3 %, kernel TCP 4.0 to 28.5 %; all seconds behind | gaps a second × RTT stays above one even batched (1.4 at 10,000 msg/s) |
+| a second path with 0.01 % loss or less | Aeron reliable on that path | delivered 100 % in all 12 runs at 50,000 msg/s. p50 0.8 past the path's delay at 94 ms round trip (L2) and 148 to 443 past it at 176 ms (T2); p99.99 769 to 1,660 | loss × packets a second × RTT stays near or under 1, so the repairs keep up. Kernel TCP on the same path delivered 89.7 to 100 %, with the lower p50 where it delivered everything (`eio-tcp-b` 138 and 242 against Aeron's 277 and 531) |
+| a lossless second path | any reliable transport on it | Aeron, ergon-io TCP and mio TCP: p50 = the delay + 0.01, delivered 100 % (T2, 10,000 msg/s) | as the first row |
+
+- **The matrix's reliable arms were not at a tuned best for this path.**
+  Its Aeron ran an 8 MiB window over a 4 MiB socket, which overflowed, and
+  sent unbatched datagrams; the [re-check](#aeron-re-check-window-and-batching)
+  fixes both and changes the 0.1 % answer. Its kernel TCP ran cubic on one
+  connection; BBR and sixteen connections were tried afterwards: they
+  do change the TCP rows. Not tried for Aeron:
+  several streams, dedicated driver threads. The tuning pass's
+  RTT-scaled NAK and linger delivered everything at T 0.1 % 10,000 msg/s
+  but left p50 at 6.9 s ([tuning](#tuning-tried-before-the-matrix)).
+- **Distance makes loss worse for the reliable arms.** At 0.1 % and
+  50,000 msg/s, the matrix's Aeron delivered 98.4 % at L (80 ms round
+  trip), 93.5 % at T (150 ms) and 68.4 % at X (250 ms), with p50 ≥3.1,
+  ≥5.9 and ≥16.8 s; those rows also carry its own socket's drops (see
+  Conditions), so they overstate the path's share. TCP delivered 33.8 to
+  35.4, 26.9 to 27.3 and 23.2 to 24.6 %.
+- **mio against ergon-io: no verdict here.** The backbone-only arms (`-b`)
+  saw the same path in three T2 cells, which makes an A/A check: p50
+  `eio-tcp-b` 138 to 1,314, `mio-tcp-b` 123 to 1,028. That spread is wider
+  than any difference between the two TCP stacks. UDP: identical delivered
+  counts in every cell (the same seed and packet sequence).
+
+### Why
+
+- **Aeron reliable: one gap a round trip.** Aeron delivers in order, so a
+  lost frame holds the image until its retransmit arrives, at least one
+  round trip later. The C driver's loss detector NAKs the first gap from
+  the rebuild position, so gaps are repaired one after another. The image
+  keeps up only while loss × packets a second × RTT stays under about 1.
+  - T, 0.1 %, 10,000 msg/s: 1.5, and the image falls behind.
+  - The T2 backbone, 0.01 %, 50,000 msg/s, 176 ms: about 0.9. Every message
+    arrives, but p50 is 148 to 443 past the delay.
+  - The counters fit: in every lossy one-link cell Aeron sent about 3,600 to
+    4,200 retransmits a run, at 0.1 % as at 1 %, and 350,000 to 400,000
+    NAKs (a re-NAK every 100 µs).
+  - "Packets" are datagrams, not messages: unbatched, the matrix's Aeron
+    sent about one datagram a message. Fewer, fuller datagrams mean fewer
+    gaps a second ([re-check](#aeron-re-check-window-and-batching)).
+- **Kernel TCP (cubic): the window under loss.** Each loss cuts cubic's
+  window, and over 150 ms it grows back slowly. The rate it sustains is about
+  MSS / RTT × 1.22 / √p (Mathis): about 118 KB/s at 1 % and 373 KB/s at
+  0.1 %, against 0.68 MB/s (10,000 msg/s) and 3.4 MB/s (50,000 msg/s) of
+  68-byte frames. So every lossy T cell falls behind and the send buffer
+  holds the backlog. Head-of-line blocking adds at least a round trip per
+  loss on top. RTOs were rare except under bursts (`ge1`: 10 to 21 a cell, 3 runs pooled).
+- **UDP: no repair.** It loses what the path loses and never waits.
+- **A row that fell behind has no latency to compare.** None of its
+  measured messages arrived by the drain's end, so each is recorded at drain
+  end − intended send time: min about 7 s (give-up + drain), max about 32 s
+  (the run's length). Rank those rows by delivered only.
+
+### Conditions
+
+| item | value |
+|---|---|
+| host | Intel Core i5-8500T, 6 cores, no SMT, Linux 7.2.8, `powersave` governor, nothing isolated. Sender and receiver pinned to CPUs 3 and 4, the process and Aeron's driver on 5 |
+| path | a fresh rootless network namespace per point, `tc netem` on its `lo`. Delay: T 75 ms, L 40 ms, X 125 ms one way. Loss on every packet in both directions (data, ACKs, NAKs, status messages). `limit 100000`, MTU 1500, GSO capped at one packet. One netem seed per cell and rep, shared by every arm |
+| two links (T2, L2) | link A, the direct path: 75 / 40 ms, capped at 100 Mbit/s, the cell's loss. Link B, a backbone: 88 / 47 ms, 0.01 % or 0 loss, no cap. An `-a` / `-b` arm runs all its traffic on that link |
+| loss | Bernoulli 0.1 % and 1 %. `ge1`: Gilbert-Elliott bursts, mean 0.99 %, mean burst 10 packets. `T-j`: 1 ms paretonormal jitter with order kept, so a tail sample holds the packets behind it |
+| load | 1 stream, 64-byte messages, 10,000 or 50,000 msg/s open loop, one way, both ends in one process (one clock) |
+| durations | 10 s warm-up, 25 s measured. The sender gives up 5 s after its schedule ends; drain 2 s. A reliable arm's message not delivered by then is recorded at drain end − intended send time (censored, printed ≥) |
+| reps | 3, rep outer; arm order shuffled per cell and rep; 387 points, none failed |
+| Aeron | `aeron:udp` reliable, embedded C driver 1.54, `SHARED` threading, noop idle, MTU 1408, term 16 MiB, receiver window 8 MiB, `SO_RCVBUF` asked 8 MiB of which the kernel kept 4 MiB (`net.core.rmem_max`), so a burst of the window could overflow the socket (see [the re-check](#aeron-re-check-window-and-batching)). NAK and retransmit at their defaults: NAK delay 1 µs, re-NAK every 100 µs, linger 10 ms, max resend 16. No congestion control |
+| kernel TCP | cubic, `TCP_NODELAY`, quick-ACK re-armed per read, RTO min 8 ms, delayed-ACK max 8 ms, `SO_RCVBUF` 4 MiB (8 MiB effective), send buffer autotuned, `tcp_slow_start_after_idle=0`. ergon-io `epoll-spin`, and mio |
+| UDP | ergon-io `epoll-spin`, and mio; 4 MiB buffers |
+| host load | busy CPUs before each point (2 s of `/proc/stat` with nothing of the bench running): at most 0.71, under the 1.2 re-time threshold, so nothing was re-timed. Load average 1.7 to 3.0: the bench's own pinned spinners. Uptime and load are recorded with every point |
+| realised loss | netem's: inside the binomial 99.9 % interval in every Bernoulli cell but one: T2-1-50k link A, 0.989 % of 11,991,285 packets, just below. That changes no row: the arms on link A fell behind or are UDP. `ge1` realised about 0.98 % (reported only) |
+| kernel drops | beyond netem's loss, from each point's `/proc/net/snmp` and `netstat` deltas: Aeron's own receive socket overflowed (`Udp RcvbufErrors`) in 10 of 12 one-link 50,000 msg/s points at 0.1 % and `ge1`: 38 to 256,160 datagrams a point. No other arm dropped anything in the kernel (`PruneCalled` on a few TCP backbone points pruned nothing). Those Aeron rows carry that extra loss |
+
+### Kubernetes
+
+| setting | where |
+|---|---|
+| `net.ipv4.tcp_congestion_control`, `tcp_rmem`, `tcp_wmem`, `tcp_slow_start_after_idle` | the pod (`securityContext.sysctls`; namespaced, but check the cluster's safe list) |
+| `TCP_NODELAY`, `TCP_RTO_MIN_US`, `TCP_DELACK_MAX_US`, socket buffers up to the node's cap | the pod (per socket, no privilege) |
+| Aeron's driver environment (window, term, NAK, linger, max resend, threading, idle strategy) | the pod (driver in the application or a sidecar) |
+| `net.core.rmem_max` / `wmem_max` | the node: they cap `SO_RCVBUF`. Keep Aeron's window within what the kernel kept (an 8 MiB window over a 4 MiB socket overflowed it here), or raise them on the node |
+| the `tcp_bbr` module, and `net.ipv4.tcp_congestion_control` in the kubelet's `allowedUnsafeSysctls` | the node; each pod then picks BBR in its own namespace (measured in a pod: Kubernetes v1.37.0 refuses that sysctl until it is listed) |
+
+### Tuning tried before the matrix
+
+One rep each, T at 1 % and 50,000 msg/s, and T at 0.1 % and 10,000 msg/s.
+
+| arm | change | T 0.1 % 10,000 msg/s | T 1 % 50,000 msg/s |
+|---|---|---|---|
+| `aeron-rel` | none (the matrix's setting) | 96.1 %, fell behind, p50 ≥7,634 | 1.6 %, fell behind |
+| `aeron-rtt` | NAK retry 1.2 × RTT, linger 1.1 × RTT, max resend 256 | 100 %, p50 6,912, max 10,120 | 1.6 %, fell behind |
+| `aeron-cubic` | Aeron's cubic congestion control | 62.7 %, fell behind | 1.5 %, fell behind |
+| `eio-tcp` | none | 100 %, p50 3,513, max 6,766 | 7.1 %, fell behind |
+| `mio-tcp` | none | 94.8 %, fell behind | 6.8 %, fell behind |
+
+None held the delay: every reliable arm's p50 at T 0.1 % stayed in
+seconds, so the matrix ran the defaults. The single-rep spread is wide: the matrix's 3 reps of
+`eio-tcp` at T 0.1 % 10,000 msg/s delivered 86.9 %.
+
+### Aeron re-check: window and batching
+
+The matrix's Aeron lost datagrams in its own receive socket
+(`Udp RcvbufErrors`, see Conditions): its 8 MiB receiver window was twice
+the 4 MiB the kernel kept of `SO_RCVBUF`. And each lost datagram is a gap
+to repair: at 10,000 msg/s it sent about one datagram a message (about 5
+at 50,000, in bursts as its window opened). Two arms re-check that, with `aeron-rel` again as the same-session control (and `eio-tcp`
+at T 0.1 % 10,000 msg/s as kernel TCP's):
+
+| arm | change from `aeron-rel` |
+|---|---|
+| `aeron-win2m` | receiver window 2 MiB: inside the socket the kernel kept, and 2.9 × T's bandwidth-delay product at 50,000 msg/s |
+| `aeron-batch` | that, and the shared driver agent sleeps 1 ms when a duty cycle finds no work (`AERON_SHARED_IDLE_STRATEGY=sleep-ns`, `AERON_SHARED_IDLE_STRATEGY_INIT_ARGS=1ms`), so a millisecond's messages leave in a few full datagrams instead of one each |
+
+Same box, binaries and conditions as the matrix; 3 reps, arm order
+shuffled, each point under the bench lock; 39 points, none failed. Busy
+CPUs before each point 0.01 to 0.15, so nothing was re-timed (load
+average 0.06 to 2.86: the bench's own spinners). Realised loss inside the
+binomial 99.9 % interval in every Bernoulli cell. ms, one way, runs pooled:
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| T-0.1-10k | `aeron-rel` | 750,000 | 557.30 | ≥6,966.74 | ≥12,079.60 | ≥12,356.42 | ≥12,357.79 | 83.458 % | fell behind (worst rep: 10,000 of 10,000 msg/s sent on time, 102,394 censored) |
+| T-0.1-10k | `aeron-batch` | 750,000 | 75.01 | 76.09 | 226.62 | 363.59 | 370.89 | 100.000 % | Aeron NAK repair, 2.0 RTT past the delay (NAKs 4,980, retransmits 508) |
+| T-0.1-10k | `eio-tcp` | 750,000 | 75.01 | ≥2,212.50 | ≥13,254.00 | ≥13,673.43 | ≥13,678.61 | 90.607 % | fell behind (worst rep: 5,700 of 10,000 msg/s sent on time, 68,790 censored) |
+| T-0.1-50k | `aeron-rel` | 3,750,000 | 362.20 | 4,731.17 | 11,081.35 | 11,718.89 | 11,718.75 | 100.000 % | fell behind (worst rep: 43,292 of 50,000 msg/s sent on time, none censored); its own socket dropped 35,912 datagrams, 3 of 3 reps |
+| T-0.1-50k | `aeron-win2m` | 3,750,000 | 75.00 | 1,037.57 | 3,149.92 | 3,353.35 | 3,360.04 | 100.000 % | Aeron NAK repair, 21.9 RTT past the delay (NAKs 277,433, retransmits 2,933) |
+| T-0.1-50k | `aeron-batch` | 3,750,000 | 75.01 | 235.54 | 843.06 | 990.90 | 997.43 | 100.000 % | Aeron NAK repair, 6.1 RTT past the delay (NAKs 23,897, retransmits 2,495) |
+| L-0.1-50k | `aeron-rel` | 3,750,000 | 135.77 | 3,164.60 | 5,859.44 | 6,115.30 | 6,119.10 | 100.000 % | fell behind (worst rep: 45,683 of 50,000 msg/s sent on time, none censored); its own socket dropped 3,646 datagrams, 2 of 3 reps |
+| L-0.1-50k | `aeron-win2m` | 3,750,000 | 40.00 | 743.44 | 1,716.52 | 1,991.25 | 1,998.15 | 100.000 % | Aeron NAK repair, 24.5 RTT past the delay (NAKs 315,444, retransmits 3,356) |
+| L-0.1-50k | `aeron-batch` | 3,750,000 | 40.00 | 41.62 | 271.06 | 416.02 | 421.36 | 100.000 % | Aeron NAK repair, 4.8 RTT past the delay (NAKs 11,812, retransmits 1,301) |
+| T-ge1-50k | `aeron-batch` | 3,750,000 | 75.01 | 244.19 | 860.88 | 1,002.44 | 1,009.65 | 100.000 % | Aeron NAK repair, 6.2 RTT past the delay (NAKs 23,824, retransmits 2,407) |
+| X-0.1-50k | `aeron-batch` | 3,750,000 | 1,750.38 | ≥5,138.02 | ≥8,422.16 | ≥8,682.21 | ≥8,686.87 | 97.193 % | fell behind (worst rep: 37,100 of 50,000 msg/s sent on time, 74,935 censored) |
+| T-1-10k | `aeron-batch` | 750,000 | 1,114.93 | ≥3,363.83 | ≥9,009.36 | ≥9,470.74 | ≥9,471.62 | 88.487 % | fell behind (worst rep: 10,000 of 10,000 msg/s sent on time, 74,540 censored) |
+| T-1-50k | `aeron-batch` | 3,750,000 | 7,013.84 | ≥19,528.68 | ≥31,776.05 | ≥32,027.71 | ≥32,017.83 | 22.262 % | fell behind (worst rep: 833 of 50,000 msg/s sent on time, 1,250,000 censored) |
+
+What it changes:
+
+- **The overflow was the window.** `aeron-rel` again dropped datagrams in
+  its own socket (5 of 6 points at 50,000 msg/s, 143 to 24,185 a point);
+  `aeron-win2m` and `aeron-batch` dropped none in any point.
+- **A window inside the socket keeps up at 0.1 %, about a second late.**
+  `aeron-win2m` delivered 100 % at T and L, 50,000 msg/s, p50 1,038 and
+  743 against `aeron-rel`'s 4,731 and 3,165.
+- **Batching is the likely lever: fewer datagrams, fewer gaps.** `aeron-batch`
+  delivered every message at 0.1 % (T 10,000 msg/s p50 76.09, max 371;
+  L 50,000 p50 41.62, max 421; T 50,000 p50 236, max 997) and under bursts
+  (T `ge1` 50,000: p50 244, max 1,010), where the matrix's kernel TCP
+  delivered 15.7 to 94.7 % and this session's `eio-tcp` 90.6 % at T
+  10,000 msg/s. Its datagrams carried about 10 messages, so
+  loss × datagrams a second × RTT fell to 0.16 to 0.76 (gap starts, for
+  `ge1`), against 1.5 for `aeron-rel` at T 0.1 % 50,000 msg/s. The arm
+  changed three things at once: about 10 messages a datagram, about 12×
+  fewer NAKs (24,000 against 277,000 a run at T 50,000 msg/s) and an
+  agent no longer spinning on the process's CPU. The gap product fits the
+  result; this run isolated nothing. The [one-factor run](#application-batching-one-factor)
+  did: packing in the application alone, driver still spinning, gave the
+  same delivery.
+- **Distance bounds it.** At X (250 ms round trip), 0.1 % and 50,000
+  msg/s, `aeron-batch` fell behind: 97.2 % delivered, p50 ≥5.1 s. T's
+  product of 0.69 scaled to 250 ms is about 1.15, past 1, as the model
+  predicts. So the rule is the product, not a loss level: lower the rate,
+  fill the datagrams fuller, or find a cleaner path.
+- **At 1 % it still falls behind** (the product 1.4 at 10,000 msg/s):
+  88.5 % delivered at 10,000 msg/s and 22.3 % at 50,000, against the matrix's `aeron-rel` 8.3 and 1.7 % and
+  kernel TCP 22.8 to 25.0 and 5.7 to 6.8 % (other sessions: compare only
+  these large differences).
+- **The cost** is up to the sleep on each end: at L 0.1 % its p50 is 1.62
+  past the delay, UDP's 0.01. A sleeping driver agent is the bench's way
+  to batch, not a hot-path setting: it parks a thread. The hot-path form,
+  messages batched in the application (several to one `offer`) with the
+  driver busy-spinning, was measured next
+  ([below](#application-batching-one-factor)). Not tried: other sleeps,
+  `aeron-batch` on the backbone links.
+
+### Application batching, one factor
+
+`aeron-batch` changed three things at once. This experiment changes one:
+the application batches, and nothing else does. Result: **batching in the
+application alone gives the gain at T 0.1 %.**
+
+| arm | driver | window | application |
+|---|---|---|---|
+| `aeron-win2m` | busy-spins (`noop`) | 2 MiB | one message an offer |
+| `aeron-app-batch` | the same | the same | messages packed into one offer, up to one frame (1,376 B: 20 messages) or a 1 ms wait for the oldest |
+| `aeron-batch` (second factor, for reference) | sleeps 1 ms when idle | 2 MiB | one message an offer |
+
+- **Batch rules** (`aeron_lat --batch-bytes 1376 --batch-wait-us 1000`).
+  Each message sits in a u32 length frame, so boundaries and order
+  survive, and each message keeps its own send and intended stamps.
+  Latency is measured from the intended time, so it includes the wait in
+  the batch. The batch goes as soon as the next message would not fit, or
+  when its oldest message has waited the cap. The cap is checked on every
+  pass of the sending loop, not only when a message arrives. The cap is one
+  frame (the MTU less Aeron's 32-byte header), so the receiver never sees
+  a fragment. Nothing allocates once warm.
+- **Cells** (`wan-batching.tsv`): T at loss 0, 0.1 % and 1 %, at 10,000 and
+  50,000 msg/s, 3 reps, arm order shuffled per cell and rep: 54 points,
+  none failed. Same kind of box and netem namespace as the re-check (a
+  6-core desktop x86 box, indicative; the sender, the receiver and the
+  process with its Aeron driver each on their own CPU, each point under
+  the bench lock).
+- **Foreign load.** Other sessions' unlocked work kept the box busy before
+  13 of the 54 points (1.28 to 5.99 busy CPUs against the 1.2 limit). Those
+  13 were set aside, not deleted, and re-timed once: they restarted at
+  0.23 to 0.33 busy CPUs. The other 41 started at 0.02 to 1.14. So every
+  point below started within the limit. The load average during points
+  ran 1.26 to 8.17 (the bench's own spinners add 2 to 3; other sessions'
+  unlocked work the rest), so a stall in a max can be foreign. The set-aside runs
+  (`...-foreign-busy`) are kept beside the run.
+- **Reported per arm**: delivered, the latency table, and `wan_report.py`'s
+  wire and CPU table. That table gives the UDP datagrams the namespace
+  sent (`Udp OutDatagrams`, so status messages and NAKs are included),
+  messages a datagram, messages an offer, NAKs, retransmits,
+  back-pressure events (refused slots, and batches refused at their wait
+  cap), and the process's busy CPUs. Each max cause is labelled
+  demonstrated, correlated or unexplained.
+
+Latency, ms, one way (the delay is 75), runs pooled per arm from the raw
+histograms (3 runs, n summed). `≥`: censored records make that figure a
+lower bound.
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| T-0-10k | `aeron-win2m` | 750,000 | 75.00 | 75.04 | 75.76 | 83.10 | 86.35 | 100.000 % | correlated: host stall or preemption (an 11.43 ms stall) |
+| T-0-10k | `aeron-app-batch` | 750,000 | 75.01 | 75.56 | 76.48 | 84.28 | 87.98 | 100.000 % | unexplained (12.98 ms past the delay): next experiment |
+| T-0-10k | `aeron-batch` | 750,000 | 75.01 | 76.02 | 77.07 | 84.87 | 92.33 | 100.000 % | correlated: host stall or preemption (a 16.09 ms stall) |
+| T-0-50k | `aeron-win2m` | 3,750,000 | 75.00 | 75.04 | 75.89 | 85.33 | 90.35 | 100.000 % | correlated: host stall or preemption (a 15.31 ms stall) |
+| T-0-50k | `aeron-app-batch` | 3,750,000 | 75.01 | 75.24 | 75.96 | 83.30 | 88.07 | 100.000 % | correlated: host stall or preemption (a 13.17 ms stall) |
+| T-0-50k | `aeron-batch` | 3,750,000 | 75.01 | 76.09 | 77.07 | 79.10 | 82.22 | 100.000 % | correlated: host stall or preemption (a 7.99 ms stall) |
+| T-0.1-10k | `aeron-win2m` | 750,000 | 75.00 | 1,507.85 | 3,233.81 | 3,368.03 | 3,374.72 | 100.000 % | correlated: recovery, 22.0 RTT past the delay (NAKs 325,092, retransmits 3,608) |
+| T-0.1-10k | `aeron-app-batch` | 750,000 | 75.01 | 75.63 | 218.37 | 261.88 | 269.35 | 100.000 % | correlated: recovery, 1.3 RTT past the delay (NAKs 48,962, retransmits 541) |
+| T-0.1-10k | `aeron-batch` | 750,000 | 75.01 | 76.22 | 224.66 | 359.66 | 367.04 | 100.000 % | correlated: recovery, 1.9 RTT past the delay (NAKs 5,735, retransmits 598) |
+| T-0.1-50k | `aeron-win2m` | 3,750,000 | 75.00 | 1,166.02 | ≥3,961.52 | ≥4,146.07 | ≥4,151.63 | 99.234 % | correlated: recovery, 27.2 RTT past the delay (NAKs 270,185, retransmits 2,990) |
+| T-0.1-50k | `aeron-app-batch` | 3,750,000 | 75.01 | 75.37 | 408.42 | 558.37 | 565.72 | 100.000 % | correlated: recovery, 3.3 RTT past the delay (NAKs 129,978, retransmits 1,421) |
+| T-0.1-50k | `aeron-batch` | 3,750,000 | 75.00 | 222.82 | 919.08 | 1,163.92 | 1,170.48 | 100.000 % | correlated: recovery, 7.3 RTT past the delay (NAKs 23,331, retransmits 2,342) |
+| T-1-10k | `aeron-win2m` | 750,000 | 7,011.58 | ≥19,528.68 | ≥30,333.21 | ≥30,517.76 | ≥30,523.23 | 39.567 % | demonstrated: queueing, fell behind (achieved 3,191 of 10,000/s in the worst run) |
+| T-1-10k | `aeron-app-batch` | 750,000 | 383.59 | ≥4,882.17 | ≥9,613.34 | ≥9,789.51 | ≥9,794.72 | 80.650 % | demonstrated: queueing, fell behind (sent on time, 75,038 censored in the worst run) |
+| T-1-10k | `aeron-batch` | 750,000 | 1,537.53 | ≥4,831.84 | ≥8,212.45 | ≥8,552.19 | ≥8,557.38 | 86.788 % | demonstrated: queueing, fell behind (sent on time, 63,804 censored in the worst run) |
+| T-1-50k | `aeron-win2m` | 3,750,000 | 7,010.17 | ≥19,528.68 | ≥31,776.05 | ≥32,027.71 | ≥32,019.67 | 9.155 % | demonstrated: queueing, fell behind (achieved 0 of 50,000/s in the worst run) |
+| T-1-50k | `aeron-app-batch` | 3,750,000 | 7,010.81 | ≥19,528.68 | ≥30,786.19 | ≥31,423.73 | ≥31,421.59 | 32.266 % | demonstrated: queueing, fell behind (achieved 4,907 of 50,000/s in the worst run) |
+| T-1-50k | `aeron-batch` | 3,750,000 | 7,011.48 | ≥19,528.68 | ≥31,776.05 | ≥32,027.71 | ≥32,018.26 | 22.974 % | demonstrated: queueing, fell behind (achieved 259 of 50,000/s in the worst run) |
+
+Wire and CPU, a run's mean. Datagrams are every UDP datagram the
+namespace sent, both ends: data, status messages, NAKs and retransmits.
+So "messages a datagram" is low where NAKs are many. CPUs busy: the
+process's CPU time over its run.
+
+| cell | arm | datagrams | messages a datagram | messages an offer | NAKs | retransmits | back-pressured | CPUs busy |
+|---|---|---|---|---|---|---|---|---|
+| T-0-10k | `aeron-win2m` | 334,904 | 1.05 | - | 0 | 0 | 0 | 2.88 |
+| T-0-10k | `aeron-app-batch` | 32,040 | 10.92 | 10.99 | 0 | 0 | 0 | 2.89 |
+| T-0-10k | `aeron-batch` | 35,902 | 9.75 | - | 0 | 0 | 0 | 2.03 |
+| T-0-50k | `aeron-win2m` | 1,578,176 | 1.11 | - | 0 | 0 | 0 | 2.83 |
+| T-0-50k | `aeron-app-batch` | 87,748 | 19.94 | 20.00 | 0 | 0 | 0 | 2.90 |
+| T-0-50k | `aeron-batch` | 171,270 | 10.22 | - | 0 | 0 | 0 | 2.05 |
+| T-0.1-10k | `aeron-win2m` | 562,097 | 0.62 | - | 325,099 | 3,549 | 0 | 2.85 |
+| T-0.1-10k | `aeron-app-batch` | 78,001 | 4.49 | 11.00 | 45,467 | 500 | 0 | 2.86 |
+| T-0.1-10k | `aeron-batch` | 42,374 | 8.26 | - | 5,316 | 552 | 0 | 2.03 |
+| T-0.1-50k | `aeron-win2m` | 491,651 | 3.56 | - | 275,494 | 3,052 | 5,633 | 2.83 |
+| T-0.1-50k | `aeron-app-batch` | 205,938 | 8.50 | 20.00 | 116,875 | 1,279 | 0 | 2.86 |
+| T-0.1-50k | `aeron-batch` | 190,446 | 9.19 | - | 23,176 | 2,350 | 0 | 2.06 |
+| T-1-10k | `aeron-win2m` | 422,862 | 0.53 | - | 387,330 | 4,183 | 1,938 | 2.89 |
+| T-1-10k | `aeron-app-batch` | 370,686 | 0.94 | 11.00 | 338,747 | 3,641 | 0 | 2.89 |
+| T-1-10k | `aeron-batch` | 62,468 | 5.60 | - | 33,299 | 3,426 | 0 | 2.03 |
+| T-1-50k | `aeron-win2m` | 414,360 | 0.60 | - | 379,360 | 4,185 | 2,504 | 2.84 |
+| T-1-50k | `aeron-app-batch` | 405,075 | 1.69 | 20.00 | 370,737 | 4,174 | 11,046 | 2.69 |
+| T-1-50k | `aeron-batch` | 73,626 | 6.58 | - | 38,020 | 3,883 | 6,377 | 2.04 |
+
+What it shows (one factor: `aeron-win2m` against `aeron-app-batch`):
+
+- **The gain holds, and it is the batching.** At T 0.1 % the unpacked
+  spinning driver fell seconds behind (p50 1,508 and 1,166, 22 to 27 RTT of
+  recovery at the max; at 50,000 msg/s one run also ended with 40,240
+  records undelivered, 0.77 % of the three runs' messages). The same driver with messages packed delivered every
+  message at 0.63 and 0.37 past the delay at p50, max 269 and 566: p50
+  20× and 15× lower, max 12.5× and at least 7.3× lower (the unpacked max is censored). In each of the 3 runs of both
+  cells it is lower at p50 and at max (a sign test with 3 runs bottoms out
+  at one-sided p = 0.125, so the size of the gap, not the test, carries
+  it).
+- **Fewer datagrams, fewer gaps, fewer repairs.** Datagrams fell 7.2× at
+  10,000 msg/s and 2.4× at 50,000, and NAKs and retransmits by about the
+  same factor. 11 and 20 messages an offer put loss × data datagrams a
+  second × RTT at 0.14 and 0.38, under 1, where the unpacked arm is at
+  1.5 or more.
+- **At 0.1 % the idle sleep adds nothing.** Against `aeron-batch` (the
+  second factor), application batching is lower at p50 and at max in 3 of
+  3 runs at both rates. The gap is small at 10,000 msg/s (p50 75.63 against
+  76.22, max 269 against 367) and large at 50,000 (p50 75.37 against
+  222.82, p99 408 against 919, max 566 against 1,170): a full frame a
+  datagram where the sleeping driver sent about 9.
+- **No CPU saving.** The three busy-spinning threads stay busy: 2.7 to
+  2.9 CPUs for both spinning arms. Only the sleeping driver is lower
+  (2.03 to 2.06), about 0.8 CPU, at the cost of its sleep and without a
+  delivery benefit. Its datagram figure was 9.2 to 10.2 messages a
+  datagram at 50,000 msg/s and 9.75 at 10,000 with no loss, 8.3 at 0.1 %
+  10,000 msg/s (where NAKs and retransmits are in the count) and 5.6 to
+  6.6 at 1 %: about 10, as the re-check inferred.
+- **The price is the wait, and it is small.** With no loss, p50 is
+  0.52 (10,000 msg/s) and 0.20 (50,000) past the unbatched arm's, p99 0.72
+  and 0.07, p99.99 and max the same within the host's stalls. At 10,000 msg/s the 1 ms
+  cap closes the batch at 11 messages; at 50,000 msg/s the frame fills in
+  0.4 ms.
+- **At 1 % nothing keeps up, batched or not.** `aeron-app-batch` delivered
+  80.7 and 32.3 % (unpacked 39.6 and 9.2 %; sleeping 86.8 and 23.0 %),
+  all seconds behind. NAKs stay at 340,000 to 370,000 a run and datagrams
+  barely fall (370,686 against 422,862 at 10,000 msg/s), because the gap
+  product (1.4 at 10,000 msg/s, 3.8 at 50,000) is above 1. The rule is
+  unchanged.
+
+Not shown: L, X, bursty loss, a second path, several streams (this run is T
+only). Three runs a cell, one box. The verdict on a real path is DEFERRED
+(no AWS credentials). A real cross-region path has not been tried.
+
+### Results
+
+ms, one way, absolute, runs pooled per arm (3 reps). `n`: for a reliable
+arm the messages scheduled in the measured window (censored ones
+included); for UDP the messages received. `≥`: a lower bound, set by
+censoring. Each cell's `mio-udp` is its floor; the excess over it is beside
+each table, and is not meaningful for a censored row.
+
+#### T: Tokyo to Chicago, 75 ms one way
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| T-0-10k | `aeron-rel` | 750,000 | 75.00 | 75.04 | 75.63 | 79.56 | 81.31 | 100.000 % | unexplained, 6.3 ms past the delay: next experiment |
+| T-0-10k | `eio-tcp` | 750,000 | 75.01 | 75.04 | 75.04 | 79.43 | 82.44 | 100.000 % | host stall (7.4 ms, rep 2) |
+| T-0-10k | `mio-tcp` | 750,000 | 75.01 | 75.04 | 75.04 | 81.85 | 87.62 | 100.000 % | host stall (12.6 ms, rep 3) |
+| T-0-10k | `mio-udp` | 750,000 | 75.00 | 75.04 | 75.04 | 78.64 | 79.92 | 100.000 % | unexplained, 4.9 ms past the delay (a 2.6 ms stall in that rep does not match): next experiment |
+| T-0-10k | `eio-udp` | 750,000 | 75.00 | 75.04 | 75.04 | 79.36 | 81.45 | 100.000 % | unexplained, 6.5 ms past the delay: next experiment |
+| T-0-50k | `aeron-rel` | 3,750,000 | 75.00 | 75.04 | 75.76 | 80.22 | 83.13 | 100.000 % | unexplained, 8.1 ms past the delay: next experiment |
+| T-0-50k | `eio-tcp` | 3,750,000 | 75.01 | 75.04 | 75.04 | 77.33 | 79.40 | 100.000 % | host stall (4.4 ms, rep 2) |
+| T-0-50k | `mio-tcp` | 3,750,000 | 75.00 | 75.04 | 75.04 | 78.38 | 80.69 | 100.000 % | host stall (5.6 ms, rep 3) |
+| T-0-50k | `mio-udp` | 3,750,000 | 75.00 | 75.04 | 75.04 | 81.53 | 86.52 | 100.000 % | unexplained, 11.5 ms past the delay: next experiment |
+| T-0-50k | `eio-udp` | 3,750,000 | 75.00 | 75.04 | 75.04 | 79.36 | 80.76 | 100.000 % | unexplained, 5.8 ms past the delay: next experiment |
+| T-0.1-10k | `aeron-rel` | 750,000 | 1,534.87 | ≥6,517.95 | ≥9,865.00 | ≥10,083.11 | ≥10,086.35 | 86.122 % | fell behind (worst rep: 10,000 of 10,000 msg/s sent on time, 74,462 censored) |
+| T-0.1-10k | `eio-tcp` | 750,000 | 75.01 | ≥6,463.42 | ≥11,425.28 | ≥11,584.67 | ≥11,591.71 | 86.942 % | fell behind (worst rep: 6,319 of 10,000 msg/s sent on time, 51,424 censored) |
+| T-0.1-10k | `mio-tcp` | 750,000 | 75.01 | ≥2,436.89 | ≥11,215.57 | ≥11,249.12 | ≥11,249.95 | 94.715 % | fell behind (worst rep: 7,535 of 10,000 msg/s sent on time, 42,042 censored) |
+| T-0.1-10k | `mio-udp` | 749,231 | 75.00 | 75.04 | 75.04 | 78.97 | 84.61 | 99.900 % | unexplained, 9.6 ms past the delay: next experiment |
+| T-0.1-10k | `eio-udp` | 749,231 | 75.00 | 75.04 | 75.04 | 78.38 | 79.65 | 99.900 % | unexplained, 4.7 ms past the delay (a 2.6 ms stall in that rep does not match): next experiment |
+| T-0.1-50k | `aeron-rel` | 3,750,000 | 274.73 | ≥5,872.03 | ≥12,096.37 | ≥12,540.97 | ≥12,543.93 | 93.502 % | fell behind (worst rep: 37,543 of 50,000 msg/s sent on time, 82,837 censored); its own socket also dropped 262,774 datagrams, 3 of 3 reps |
+| T-0.1-50k | `eio-tcp` | 3,750,000 | 6,990.00 | ≥19,495.12 | ≥31,625.05 | ≥31,994.15 | ≥32,001.31 | 27.325 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-0.1-50k | `mio-tcp` | 3,750,000 | 7,001.20 | ≥19,109.25 | ≥31,641.83 | ≥32,010.93 | ≥32,001.29 | 26.852 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-0.1-50k | `mio-udp` | 3,746,194 | 75.00 | 75.04 | 75.04 | 87.62 | 93.59 | 99.899 % | unexplained, 18.6 ms past the delay: next experiment |
+| T-0.1-50k | `eio-udp` | 3,746,194 | 75.00 | 75.04 | 75.04 | 78.91 | 80.01 | 99.899 % | host stall (6.0 ms, rep 3) |
+| T-1-10k | `aeron-rel` | 750,000 | 7,009.40 | ≥19,528.68 | ≥31,776.05 | ≥32,010.93 | ≥32,014.54 | 8.253 % | fell behind (worst rep: 3,021 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-1-10k | `eio-tcp` | 750,000 | 7,001.32 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.36 | 22.791 % | fell behind (worst rep: 0 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-1-10k | `mio-tcp` | 750,000 | 7,001.25 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.33 | 25.036 % | fell behind (worst rep: 0 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-1-10k | `mio-udp` | 742,453 | 75.00 | 75.04 | 75.04 | 87.10 | 91.50 | 98.995 % | unexplained, 16.5 ms past the delay: next experiment |
+| T-1-10k | `eio-udp` | 742,453 | 75.00 | 75.04 | 75.04 | 78.84 | 79.97 | 98.995 % | unexplained, 5.0 ms past the delay: next experiment |
+| T-1-50k | `aeron-rel` | 3,750,000 | 7,008.97 | ≥19,528.68 | ≥31,776.05 | ≥32,027.71 | ≥32,015.45 | 1.729 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-1-50k | `eio-tcp` | 3,750,000 | 7,001.25 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.35 | 6.800 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-1-50k | `mio-tcp` | 3,750,000 | 7,001.20 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.30 | 5.704 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-1-50k | `mio-udp` | 3,712,455 | 75.00 | 75.04 | 75.04 | 78.84 | 79.80 | 98.998 % | unexplained, 4.8 ms past the delay (a 2.6 ms stall in that rep does not match): next experiment |
+| T-1-50k | `eio-udp` | 3,712,455 | 75.00 | 75.04 | 75.04 | 75.10 | 75.30 | 98.998 % | unexplained, 0.3 ms past the delay (a 2.5 ms stall in that rep does not match): next experiment |
+| T-ge1-10k | `aeron-rel` | 750,000 | 627.80 | ≥11,693.72 | ≥20,149.44 | ≥20,635.98 | ≥20,643.02 | 99.926 % | Aeron NAK repair backlog, 137 RTT past the delay (rep 2, all delivered by the drain's end; NAKs 341,694, retransmits 3,598) |
+| T-ge1-10k | `eio-tcp` | 750,000 | 93.98 | ≥9,068.09 | ≥17,951.62 | ≥18,689.82 | ≥18,692.05 | 73.125 % | fell behind (worst rep: 5,787 of 10,000 msg/s sent on time, 116,907 censored) |
+| T-ge1-10k | `mio-tcp` | 750,000 | 75.01 | ≥8,233.42 | ≥31,255.95 | ≥31,994.15 | ≥32,001.18 | 62.284 % | fell behind (worst rep: 0 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-ge1-10k | `mio-udp` | 742,477 | 75.00 | 75.04 | 75.04 | 92.01 | 99.30 | 99.007 % | unexplained, 24.3 ms past the delay: next experiment |
+| T-ge1-10k | `eio-udp` | 742,477 | 75.00 | 75.04 | 75.04 | 84.87 | 91.70 | 99.007 % | host stall (16.7 ms, rep 1) |
+| T-ge1-50k | `aeron-rel` | 3,750,000 | 493.84 | ≥6,031.41 | ≥11,878.27 | ≥12,356.42 | ≥12,360.57 | 90.854 % | fell behind (worst rep: 35,104 of 50,000 msg/s sent on time, 247,388 censored); its own socket also dropped 19,885 datagrams, 2 of 3 reps |
+| T-ge1-50k | `eio-tcp` | 3,750,000 | 7,001.34 | ≥19,511.90 | ≥31,658.61 | ≥32,010.93 | ≥32,001.35 | 19.530 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-ge1-50k | `mio-tcp` | 3,750,000 | 7,001.22 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.29 | 15.684 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T-ge1-50k | `mio-udp` | 3,713,428 | 75.00 | 75.04 | 75.04 | 79.30 | 81.21 | 99.020 % | unexplained, 6.2 ms past the delay: next experiment |
+| T-ge1-50k | `eio-udp` | 3,713,428 | 75.00 | 75.04 | 75.04 | 79.17 | 80.44 | 99.020 % | unexplained, 5.4 ms past the delay (a 3.2 ms stall in that rep does not match): next experiment |
+| T-j-1-10k | `aeron-rel` | 750,000 | 7,004.31 | ≥19,511.90 | ≥31,776.05 | ≥32,010.93 | ≥32,013.07 | 8.324 % | fell behind (worst rep: 3,019 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-j-1-10k | `eio-tcp` | 750,000 | 7,001.34 | ≥19,511.90 | ≥31,641.83 | ≥32,010.93 | ≥32,001.34 | 28.510 % | fell behind (worst rep: 135 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-j-1-10k | `mio-tcp` | 750,000 | 7,001.28 | ≥19,511.90 | ≥31,675.38 | ≥31,994.15 | ≥32,001.30 | 28.349 % | fell behind (worst rep: 0 of 10,000 msg/s sent on time, 250,000 censored) |
+| T-j-1-10k | `mio-udp` | 742,547 | 74.23 | 76.41 | 78.64 | 91.42 | 97.39 | 99.013 % | netem jitter queue (running maximum) |
+| T-j-1-10k | `eio-udp` | 742,547 | 74.23 | 76.41 | 78.64 | 85.66 | 92.98 | 99.013 % | host stall (17.8 ms, rep 1) |
+
+Excess over the cell's `mio-udp` (or `mio-udp-a`) floor, p50 / p99.99, ms (censored: not meaningful):
+
+- T-0-10k: `aeron-rel` +0.00 / +0.92; `eio-tcp` +0.00 / +0.79; `mio-tcp` +0.00 / +3.21; `eio-udp` +0.00 / +0.72
+- T-0-50k: `aeron-rel` +0.00 / -1.31; `eio-tcp` +0.00 / -4.20; `mio-tcp` +0.00 / -3.15; `eio-udp` +0.00 / -2.17
+- T-0.1-10k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -0.59
+- T-0.1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -8.71
+- T-1-10k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -8.26
+- T-1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -3.74
+- T-ge1-10k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -7.14
+- T-ge1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -0.13
+- T-j-1-10k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -5.76
+
+#### L: London to Chicago, 40 ms one way
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| L-0.1-50k | `aeron-rel` | 3,750,000 | 102.87 | ≥3,110.08 | ≥6,639.58 | ≥7,021.26 | ≥7,027.58 | 98.414 % | fell behind (worst rep: 50,000 of 50,000 msg/s sent on time, 79,741 censored); its own socket also dropped 2,613 datagrams, 2 of 3 reps |
+| L-0.1-50k | `eio-tcp` | 3,750,000 | 6,368.28 | ≥18,924.70 | ≥30,618.42 | ≥31,373.39 | ≥31,368.26 | 33.766 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L-0.1-50k | `mio-tcp` | 3,750,000 | 6,338.52 | ≥18,689.82 | ≥30,601.64 | ≥31,339.84 | ≥31,338.50 | 35.448 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L-0.1-50k | `mio-udp` | 3,746,271 | 40.00 | 40.01 | 40.04 | 61.44 | 68.36 | 99.901 % | unexplained, 28.4 ms past the delay: next experiment |
+| L-0.1-50k | `eio-udp` | 3,746,271 | 40.00 | 40.01 | 40.04 | 45.81 | 51.86 | 99.901 % | unexplained, 11.9 ms past the delay: next experiment |
+| L-1-50k | `aeron-rel` | 3,750,000 | 7,008.07 | ≥19,528.68 | ≥31,776.05 | ≥32,027.71 | ≥32,017.63 | 3.142 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L-1-50k | `eio-tcp` | 3,750,000 | 6,583.91 | ≥19,377.68 | ≥31,641.83 | ≥32,010.93 | ≥32,001.30 | 8.420 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L-1-50k | `mio-tcp` | 3,750,000 | 6,823.44 | ≥19,444.79 | ≥31,692.16 | ≥32,010.93 | ≥32,001.30 | 8.704 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L-1-50k | `mio-udp` | 3,712,411 | 40.00 | 40.01 | 40.04 | 44.56 | 46.44 | 98.996 % | unexplained, 6.4 ms past the delay: next experiment |
+| L-1-50k | `eio-udp` | 3,712,411 | 40.00 | 40.01 | 40.04 | 44.17 | 45.95 | 98.996 % | host stall (6.0 ms, rep 3) |
+| L-0-50k | `mio-udp` | 3,750,000 | 40.00 | 40.01 | 40.04 | 44.07 | 45.89 | 100.000 % | unexplained, 5.9 ms past the delay: next experiment |
+
+Excess over the cell's `mio-udp` (or `mio-udp-a`) floor, p50 / p99.99, ms (censored: not meaningful):
+
+- L-0.1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -15.63
+- L-1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -0.39
+
+#### X: for example Singapore to São Paulo, 125 ms one way
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| X-0.1-50k | `aeron-rel` | 3,750,000 | 7,004.41 | ≥16,844.32 | ≥23,521.66 | ≥23,907.53 | ≥23,908.05 | 68.448 % | fell behind (worst rep: 21,173 of 50,000 msg/s sent on time, 694,302 censored); its own socket also dropped 2,043 datagrams, 3 of 3 reps |
+| X-0.1-50k | `eio-tcp` | 3,750,000 | 7,001.29 | ≥19,226.69 | ≥31,641.83 | ≥32,010.93 | ≥32,001.34 | 23.151 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| X-0.1-50k | `mio-tcp` | 3,750,000 | 7,001.17 | ≥19,176.36 | ≥31,641.83 | ≥32,010.93 | ≥32,001.24 | 24.605 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| X-0.1-50k | `mio-udp` | 3,746,174 | 125.00 | 125.04 | 125.04 | 136.05 | 139.79 | 99.898 % | unexplained, 14.8 ms past the delay: next experiment |
+| X-0.1-50k | `eio-udp` | 3,746,174 | 125.00 | 125.04 | 125.04 | 128.84 | 131.00 | 99.898 % | host stall (6.0 ms, rep 1) |
+| X-1-50k | `aeron-rel` | 3,750,000 | 7,009.21 | ≥19,528.68 | ≥31,776.05 | ≥32,010.93 | ≥32,014.00 | 0.973 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| X-1-50k | `eio-tcp` | 3,750,000 | 7,001.24 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.30 | 4.268 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| X-1-50k | `mio-tcp` | 3,750,000 | 7,001.24 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.30 | 3.979 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| X-1-50k | `mio-udp` | 3,712,646 | 125.00 | 125.04 | 125.04 | 132.78 | 138.36 | 99.001 % | unexplained, 13.4 ms past the delay: next experiment |
+| X-1-50k | `eio-udp` | 3,712,646 | 125.00 | 125.04 | 125.04 | 128.58 | 129.50 | 99.001 % | unexplained, 4.5 ms past the delay: next experiment |
+| X-0-50k | `mio-udp` | 3,750,000 | 125.00 | 125.04 | 125.04 | 135.79 | 142.09 | 100.000 % | unexplained, 17.1 ms past the delay: next experiment |
+
+Excess over the cell's `mio-udp` (or `mio-udp-a`) floor, p50 / p99.99, ms (censored: not meaningful):
+
+- X-0.1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -7.21
+- X-1-50k: `aeron-rel` censored; `eio-tcp` censored; `mio-tcp` censored; `eio-udp` +0.00 / -4.20
+
+#### T2: two links, direct 75 ms and backbone 88 ms
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| T2-0.1-50k | `aeron-rel-a` | 3,750,000 | 2,399.35 | ≥6,379.54 | ≥9,110.03 | ≥9,579.79 | ≥9,583.22 | 96.688 % | fell behind (worst rep: 47,767 of 50,000 msg/s sent on time, 73,717 censored) |
+| T2-0.1-50k | `aeron-rel-b` | 3,750,000 | 88.00 | 530.58 | 1,430.26 | 1,659.90 | 1,667.26 | 100.000 % | Aeron NAK repair, 9 RTT (NAKs 263,782, retransmits 2,868) |
+| T2-0.1-50k | `eio-tcp-a` | 3,750,000 | 7,001.24 | ≥19,511.90 | ≥31,641.83 | ≥32,010.93 | ≥32,001.34 | 25.734 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T2-0.1-50k | `eio-tcp-b` | 3,750,000 | 88.01 | 242.35 | 4,726.98 | 4,747.95 | 4,749.82 | 100.000 % | fell behind (worst rep: 47,702 of 50,000 msg/s sent on time, back-pressured 6,004 times, none censored) |
+| T2-0.1-50k | `mio-tcp-b` | 3,750,000 | 88.01 | 122.81 | ≥2,485.13 | ≥2,665.48 | ≥2,666.02 | 99.367 % | fell behind (worst rep: 50,000 of 50,000 msg/s sent on time, 33,237 censored) |
+| T2-0.1-50k | `mio-udp-a` | 3,746,076 | 75.01 | 75.04 | 75.04 | 78.77 | 79.93 | 99.899 % | unexplained, 4.9 ms past the delay (a 2.8 ms stall in that rep does not match): next experiment |
+| T2-0.1-50k | `mio-udp-b` | 3,749,602 | 88.00 | 88.01 | 88.08 | 94.96 | 99.06 | 99.990 % | unexplained, 11.1 ms past the delay: next experiment |
+| T2-1-50k | `aeron-rel-a` | 3,750,000 | 7,005.50 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,011.74 | 1.717 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T2-1-50k | `aeron-rel-b` | 3,750,000 | 88.00 | 277.09 | 1,063.26 | 1,320.16 | 1,327.29 | 100.000 % | Aeron NAK repair, 7 RTT (NAKs 260,536, retransmits 2,825) |
+| T2-1-50k | `eio-tcp-a` | 3,750,000 | 7,001.24 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.34 | 5.364 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T2-1-50k | `eio-tcp-b` | 3,750,000 | 88.01 | 137.89 | 1,715.47 | 1,989.15 | 1,996.17 | 100.000 % | TCP retransmit recovery, 10.8 RTT past the delay (rep 2, retransmits 19) |
+| T2-1-50k | `mio-tcp-b` | 3,750,000 | 88.01 | 1,028.13 | ≥6,161.43 | ≥6,438.26 | ≥6,439.15 | 89.654 % | fell behind (worst rep: 50,000 of 50,000 msg/s sent on time, 221,652 censored) |
+| T2-1-50k | `mio-udp-a` | 3,712,698 | 75.01 | 75.04 | 75.04 | 78.97 | 80.07 | 99.009 % | unexplained, 5.1 ms past the delay (a 2.7 ms stall in that rep does not match): next experiment |
+| T2-1-50k | `mio-udp-b` | 3,749,664 | 88.00 | 88.01 | 88.08 | 110.30 | 117.06 | 99.991 % | unexplained, 29.1 ms past the delay: next experiment |
+| T2-1-10k | `aeron-rel-a` | 750,000 | 7,008.79 | ≥19,511.90 | ≥31,776.05 | ≥32,010.93 | ≥32,011.50 | 8.246 % | fell behind (worst rep: 3,019 of 10,000 msg/s sent on time, 250,000 censored) |
+| T2-1-10k | `aeron-rel-b` | 750,000 | 88.00 | 88.01 | 88.67 | 93.59 | 96.52 | 100.000 % | unexplained, 8.5 ms past the delay: next experiment |
+| T2-1-10k | `eio-tcp-a` | 750,000 | 7,001.31 | ≥19,511.90 | ≥31,658.61 | ≥32,010.93 | ≥32,001.37 | 27.045 % | fell behind (worst rep: 0 of 10,000 msg/s sent on time, 250,000 censored) |
+| T2-1-10k | `eio-tcp-b` | 750,000 | 88.01 | 88.01 | 88.08 | 91.88 | 94.99 | 100.000 % | host stall (7.0 ms, rep 2) |
+| T2-1-10k | `mio-tcp-b` | 750,000 | 88.01 | 88.01 | 88.08 | 91.16 | 92.98 | 100.000 % | host stall (5.0 ms, rep 1) |
+| T2-1-10k | `mio-udp-a` | 742,281 | 75.01 | 75.04 | 75.04 | 79.36 | 81.81 | 98.985 % | unexplained, 6.8 ms past the delay: next experiment |
+| T2-1-10k | `mio-udp-b` | 750,000 | 88.00 | 88.01 | 88.08 | 102.11 | 109.45 | 100.000 % | unexplained, 21.4 ms past the delay: next experiment |
+| T2-ge1-50k | `aeron-rel-a` | 3,750,000 | 6,145.34 | ≥9,974.05 | ≥12,381.59 | ≥13,094.62 | ≥13,098.27 | 95.816 % | fell behind (worst rep: 36,893 of 50,000 msg/s sent on time, 157,836 censored) |
+| T2-ge1-50k | `aeron-rel-b` | 3,750,000 | 88.00 | 235.93 | 1,343.23 | 1,540.36 | 1,547.25 | 100.000 % | Aeron NAK repair, 8 RTT (NAKs 260,191, retransmits 2,817) |
+| T2-ge1-50k | `eio-tcp-a` | 3,750,000 | 7,001.34 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.39 | 20.076 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| T2-ge1-50k | `eio-tcp-b` | 3,750,000 | 88.01 | 1,313.87 | ≥10,812.92 | ≥11,257.51 | ≥11,261.38 | 94.384 % | fell behind (worst rep: 33,709 of 50,000 msg/s sent on time, 213,002 censored) |
+| T2-ge1-50k | `mio-tcp-b` | 3,750,000 | 88.01 | 536.61 | ≥6,606.03 | ≥7,277.12 | ≥7,282.24 | 99.732 % | fell behind (worst rep: 38,843 of 50,000 msg/s sent on time, 14,047 censored) |
+| T2-ge1-50k | `mio-udp-a` | 3,712,641 | 75.01 | 75.04 | 75.04 | 86.77 | 91.07 | 99.015 % | unexplained, 16.1 ms past the delay: next experiment |
+| T2-ge1-50k | `mio-udp-b` | 3,749,658 | 88.00 | 88.01 | 88.08 | 92.27 | 94.02 | 99.990 % | unexplained, 6.0 ms past the delay: next experiment |
+
+Excess over the cell's `mio-udp` (or `mio-udp-a`) floor, p50 / p99.99, ms (censored: not meaningful):
+
+- T2-0.1-50k: `aeron-rel-a` censored; `aeron-rel-b` +455.54 / +1581.13; `eio-tcp-a` censored; `eio-tcp-b` +167.31 / +4669.18; `mio-tcp-b` censored; `mio-udp-b` +12.97 / +16.19
+- T2-1-50k: `aeron-rel-a` censored; `aeron-rel-b` +202.05 / +1241.19; `eio-tcp-a` censored; `eio-tcp-b` +62.85 / +1910.18; `mio-tcp-b` censored; `mio-udp-b` +12.97 / +31.33
+- T2-1-10k: `aeron-rel-a` censored; `aeron-rel-b` +12.97 / +14.23; `eio-tcp-a` censored; `eio-tcp-b` +12.97 / +12.52; `mio-tcp-b` +12.97 / +11.80; `mio-udp-b` +12.97 / +22.75
+- T2-ge1-50k: `aeron-rel-a` censored; `aeron-rel-b` +160.89 / +1453.59; `eio-tcp-a` censored; `eio-tcp-b` censored; `mio-tcp-b` censored; `mio-udp-b` +12.97 / +5.50
+
+#### L2: two links, direct 40 ms and backbone 47 ms
+
+| cell | arm | n | min | p50 | p99 | p99.99 | max | delivered | max cause |
+|---|---|---|---|---|---|---|---|---|---|
+| L2-1-50k | `aeron-rel-a` | 3,750,000 | 7,008.12 | ≥19,511.90 | ≥31,776.05 | ≥32,010.93 | ≥32,017.93 | 3.102 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L2-1-50k | `aeron-rel-b` | 3,750,000 | 47.00 | 47.78 | 510.66 | 769.13 | 776.18 | 100.000 % | Aeron NAK repair, 8 RTT (NAKs 160,714, retransmits 1,806) |
+| L2-1-50k | `eio-tcp-a` | 3,750,000 | 7,001.24 | ≥19,511.90 | ≥31,759.27 | ≥32,010.93 | ≥32,001.37 | 7.954 % | fell behind (worst rep: 0 of 50,000 msg/s sent on time, 1,250,000 censored) |
+| L2-1-50k | `eio-tcp-b` | 3,750,000 | 47.01 | 1,396.70 | ≥6,190.79 | ≥6,392.12 | ≥6,395.83 | 95.815 % | fell behind (worst rep: 50,000 of 50,000 msg/s sent on time, 219,725 censored) |
+| L2-1-50k | `mio-tcp-b` | 3,750,000 | 47.01 | ≥3,342.86 | ≥10,317.99 | ≥10,519.31 | ≥10,514.20 | 95.652 % | fell behind (worst rep: 43,186 of 50,000 msg/s sent on time, 228,269 censored) |
+| L2-1-50k | `mio-udp-a` | 3,712,816 | 40.01 | 40.04 | 40.04 | 44.17 | 45.49 | 99.001 % | unexplained, 5.5 ms past the delay: next experiment |
+| L2-1-50k | `mio-udp-b` | 3,749,585 | 47.00 | 47.02 | 47.02 | 50.23 | 51.87 | 99.989 % | unexplained, 4.9 ms past the delay (a 2.7 ms stall in that rep does not match): next experiment |
+
+Excess over the cell's `mio-udp` (or `mio-udp-a`) floor, p50 / p99.99, ms (censored: not meaningful):
+
+- L2-1-50k: `aeron-rel-a` censored; `aeron-rel-b` +7.74 / +724.96; `eio-tcp-a` censored; `eio-tcp-b` censored; `mio-tcp-b` censored; `mio-udp-b` +6.98 / +6.06
+
+
+### Every max
+
+| cause | maxima | what it is |
+|---|---|---|
+| fell behind | 49 | Aeron reliable or kernel TCP behind its schedule: messages censored, or sent below 98 % of the rate. A censored max is a lower bound, at most the run's length |
+| retransmit or NAK recovery | 6 | Aeron on the backbone link, 7 to 9 round trips past the delay (4); Aeron's repair backlog at T-ge1-10k, 137 round trips, every message delivered by the drain's end; kernel TCP on the backbone at T2-1-50k, 10.8 round trips |
+| host stall | 11 | a stall in that rep of 0.8 to 1.25 times the max's excess (4.4 to 17.8 ms) |
+| netem jitter queue | 1 | the jitter cell's running maximum |
+| **unexplained** | 35 | 0.3 to 29.1 ms past the delay; 18 of them at 4.5 to 6.8 ms. In 8 the rep's recorded stall (2.5 to 3.2 ms) does not match the max's size |
+
+`wan_report.py` applies that stall rule, so these causes are the run's
+`report.md`'s. Next experiment for the unexplained ones: rerun a floor cell (`mio-udp`,
+no loss) with each max's time aligned to the stalls file and a gap
+spinner on an idle CPU, to separate host noise on this desktop from netem's
+timer.
+
 ## Conclusion
 
 <!-- CONCLUSION -->
@@ -2088,6 +2644,7 @@ numbers only within one cloud:
 | ergon-io on `c7i` and `c8g` (one rep, pinned echo) | UDP (first sessions): smoltcp, no-loss p50 5.70 to 7.49 below kernel `epoll-spin` on `c7i` and 3.78 to 4.02 below on `c8g`. F-Stack TCP no-loss p99 38.8 to 53.2, max 135 to 359. Remeasure, same session within each machine: smoltcp TCP no-loss p50 3.0 to 8.9 below kernel TCP. Not ranked against Aeron on DPDK, and not one overlay | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) | 1 busy thread |
 | reliable delivery between hosts, no loss | Aeron reliable UDP, for its p50, its p99 and its headroom | Aeron 54.8–57.6 / 59.9–64.3 / 269–1,335 / 902–3,725; TCP 64.7–69.8 / 79–225 / 559–6,017 / 1,366–8,027 (10,000 and 50,000 msg/s); TCP past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
 | reliable under loss | compare the tails at your loss rate: neither wins everywhere. Aeron keeps the lower p50 and, to 0.1 %, the lower p99; its maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) | 0.1 %: Aeron 53.1–61.6 / 67.7–90.1 / 7,246–8,675 / 10,147–10,240; TCP 65.0–68.5 / 127–148 / 3,379–13,132 / 5,615–15,470 | as above |
+| between regions over a lossy path (one box, netem; one way, ms) | gaps acceptable: UDP, ergon-io or mio. Every message needed, 0.1 % or bursty loss, while loss × datagrams a second × RTT stays under about 1: Aeron reliable with its window inside the kept socket buffer and batched datagrams (held at T and L, not at X 50,000 msg/s). At 1 %, nothing tested keeps up on one path: give the reliable copy a second path whose loss × datagrams a second × RTT stays under about 1 (Aeron on a 0.01 % backbone did) ([long distance](#long-distance-with-loss-one-box-netem)) | T (75 ms one way), 1 %: UDP 75.04 / 75.04 / 75.10–87.10 / 75.30–91.50, 99.0 % delivered. T, 0.1 %, Aeron batched: 10,000 msg/s 76.09 / 226.62 / 363.59 / 370.89; 50,000 msg/s 235.54 / 843.06 / 990.90 / 997.43, 100 % delivered. Backbone (88 ms, 0.01 %), 50,000 msg/s: Aeron 236–531 / 1,063–1,430 / 1,320–1,660 / 1,327–1,667, 100 % delivered | UDP 2 busy threads; Aeron 2 and its driver agent (`SHARED`; batched: it sleeps 1 ms when idle) |
 | Aeron driver threading with 32 or more streams (AWS `c7i`, `c8g`, kernel and DPDK) | dedicated driver threads, in their own process or in the application: each thread taken from the driver adds latency, more with more streams and on Graviton ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)) | p50 above dedicated: `SHARED_NETWORK` +1.9 to +32.6, `SHARED` +3.1 to +73.7, `INVOKER` +4.9 to +130.8 | dedicated 3 driver threads a host; 2, 1 and 0 |
 
 - The tail on this cloud is the host as much as the transport: without
@@ -2135,3 +2692,6 @@ maxima.
   [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack) only.
 - DPDK under loss (see above), and Aeron over IPC with more than one stream.
 - Throughput maxima: every point is a fixed rate.
+- Long distance: a real inter-region path (the [long distance](#long-distance-with-loss-one-box-netem)
+  set is netem on one box), several Aeron streams, Aeron
+  with dedicated driver threads, payloads other than 64 bytes.

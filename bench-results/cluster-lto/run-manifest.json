@@ -1,0 +1,13 @@
+{
+  "run_id": "cluster-20261106T151023Z-c8d9b86",
+  "profile": "lto",
+  "commit": "c8d9b8646a52a01ac1fee48265d09f6ea7d4a18f",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "target": "x86_64-unknown-linux-gnu",
+  "host": "Intel(R) Core(TM) i5-8500T CPU @ 2.10GHz",
+  "estimates": 18,
+  "repeats": 5,
+  "arm_order": "paired",
+  "uptime_start": " 23:10:23 up  3:02,  7 users,  load average: 0.43, 1.37, 2.33",
+  "uptime_end": " 23:26:40 up  3:19,  8 users,  load average: 2.01, 2.74, 2.73"
+}

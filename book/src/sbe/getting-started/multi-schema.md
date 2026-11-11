@@ -1,12 +1,12 @@
-# Multi-Schema Patterns
+# Multi-schema patterns
 
 SBE schemas often share types (`messageHeader`, `groupSizeEncoding`,
 composites, enums, sets). ergo-sbe supports two approaches:
 
 | Approach | When | Method |
 |----------|------|--------|
-| **`xi:include`** (standard) | Schema files live together; official SBE portability matters | `<include href="common-types.xml"/>` — `parse(SchemaSource::file(..))` resolves includes relative to the file |
-| **Shared `Ir`** (programmatic) | Schemas are parsed from strings, generated, or live in separate repos | `SchemaSource::file(..).with_shared(&common)` — seed one parse from another's resolved types |
+| `xi:include` (standard) | Schema files live together; official SBE portability matters | `<include href="common-types.xml"/>`; `parse(SchemaSource::file(..))` resolves includes relative to the file |
+| Shared `Ir` (programmatic) | Schemas are parsed from strings, generated, or live in separate repos | `SchemaSource::file(..).with_shared(&common)` seeds one parse from another's resolved types |
 
 The `<include>` path is what the SBE spec expects. The shared-`Ir` path is a
 convenience for tooling, build scripts, and any workflow where you already have
@@ -16,7 +16,7 @@ A consumer parsed `with_shared` also carries the shared schema's composites,
 enums and sets (not its messages) and its source files, so it generates on its
 own with `ergo_sbe::generate`, or as a consumer of a shared module below.
 
-### Shared `Ir` — `build.rs`
+### Shared `Ir` in `build.rs`
 
 ```rust,no_run
 // build.rs
@@ -25,7 +25,7 @@ use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 fn main() -> ergo_sbe::miette::Result<()> {
     // 1. Parse the shared schema once (composites, enums, sets).
     let common = parse(SchemaSource::file("schemas/common-types.xml"))?;
-    // 2. Parse each consumer against it — no <include> needed.
+    // 2. Parse each consumer against it; no <include> needed.
     let orders = parse(SchemaSource::file("schemas/orders.xml").with_shared(&common))?;
     let fills = parse(SchemaSource::file("schemas/fills.xml").with_shared(&common))?;
     // 3. One module per schema; the first owns the shared types.
@@ -77,7 +77,7 @@ let common = parse(SchemaSource::xml(
 </messageSchema>"#,
 ))?;
 
-// No <types> / <include> — Price resolves from `common`.
+// No <types> / <include>: Price resolves from `common`.
 let orders = parse(
     SchemaSource::xml(
         r#"<?xml version="1.0"?>
@@ -92,7 +92,7 @@ let orders = parse(
 )?;
 ```
 
-The shared `Ir` path does **not** recover bare top-level `<type>` typedefs
+The shared `Ir` path does not recover bare top-level `<type>` typedefs
 (those are inlined during parsing and dropped from the token stream). Reference
 them through a `<composite>` / `<enum>` / `<set>` in the shared schema instead.
 

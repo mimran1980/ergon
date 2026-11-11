@@ -2,21 +2,20 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use roxmltree::{Document, Node};
 
-use crate::ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
+use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
     collect_description, element_children, opt_u16_attr, parse_byte_order, reject_unknown_attrs,
-    string_attr, u16_attr, validate_sbe_name,
+    string_attr, u16_attr,
 };
 use super::error::{Fault, FaultKind, IncludeCause};
 use super::message::parse_message;
-use super::registry::{TypeRegistry, compute_type_size};
+use super::registry::TypeRegistry;
 use super::types::parse_types_node;
-use super::warn::{WarnState, warn_once};
+use super::warn::WarnState;
 
 /// DFS include graph: the stack is the in-flight visit path; `finished` files
 /// are skipped (diamond/shared includes), not treated as cycles.
@@ -121,7 +120,7 @@ pub(crate) fn parse_schema(
     // Gap 3: validate header type structure (must have the required fields).
     validate_header_type(&header_type, &registry)?;
 
-    // Second pass: Parse all messages — also check for duplicate message names.
+    // Second pass: parse every message and reject duplicate message names.
     let mut seen_message_names: HashSet<String> = HashSet::new();
     for child in element_children(root) {
         if child.tag_name().name() == "message" {

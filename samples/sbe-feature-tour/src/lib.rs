@@ -1,8 +1,8 @@
-//! ErgoSBE feature tour — live demos of generated APIs.
+//! ErgoSBE feature tour: live demos of generated APIs.
 //!
 //! Schema: [`schemas/feature-tour.xml`](../schemas/feature-tour.xml)  
 //! Generated codecs: `src/generated/feature_tour.rs` after `cargo build`
-//! (gitignored — open that path for go-to-definition / browsing).
+//! (gitignored; open that path for go-to-definition or browsing).
 //!
 //! # Features covered
 //!
@@ -18,8 +18,8 @@
 //! | [`demo_any_message`] | Multi-template `AnyMessage` dispatch |
 //! | [`demo_try_vs_trusted`] | `try_decode` / `try_from` / `wrap` + full-tail `verify` |
 //! | [`demo_display_debug`] | Diagnostic `Display` / `Debug` (not a wire format) |
-//! | [`demo_conversion_only`] | **`with_conversion` only** — generic `price_as` / `price_from` (no domain type on field) |
-//! | [`demo_domain_type_manual_impl`] | **`with_manual_domain_type(..)`** — concrete `manual_price(...)?`, app-supplied impl |
+//! | [`demo_conversion_only`] | **`with_conversion` only**: generic `price_as` / `price_from` (no domain type on field) |
+//! | [`demo_domain_type_manual_impl`] | **`with_manual_domain_type(..)`**: concrete `manual_price(...)?`, app-supplied impl |
 //! | [`demo_bulk_add`] | `bulk_add` on the fixed-stride nested `acceleration` group |
 //! | [`run_all`] | Runs every demo; used by `main` and tests |
 
@@ -184,7 +184,7 @@ pub fn encode_sample_car(buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
 // ANCHOR_END: encode_sample_car
 // ANCHOR_END: demo_car_size_and_encode
 
-/// Nested `acceleration` rows are a fixed-stride leaf group — `bulk_add`
+/// Nested `acceleration` rows are a fixed-stride leaf group, and `bulk_add`
 /// writes every entry after one region check.
 // ANCHOR: demo_bulk_add
 pub fn demo_bulk_add() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -300,7 +300,7 @@ pub fn demo_car_decode_stages(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(octanes, vec![95]);
     let (model, decoder) = decoder.into_model_as_str()?;
     let (code, _decoder) = decoder.into_activation_code_as_str()?;
-    // All three &str coexist — each borrows 'a from the original wire buffer.
+    // All three &str coexist: each borrows 'a from the original wire buffer.
     assert_eq!((mfr, model, code), ("Honda", "Civic VTi", "abcdef"));
     Ok(())
 }
@@ -318,7 +318,7 @@ pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
     assert_eq!(car.manufacturer_len()?, 5);
 
     // A fixed-stride group is a real iterator, and it does not have to be
-    // drained. Read one acceleration entry, then let the walk move on — the
+    // drained. Read one acceleration entry, then let the walk move on: the
     // unread entries are skipped by the next step, not lost.
     let (mfr, _rest) = car
         .skip_fuel_figures()?
@@ -338,7 +338,7 @@ pub fn demo_car_visit_entries(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 // ANCHOR_END: demo_car_visit_entries
 
 /// Ordered lane: one callback per tail, in wire order, same spelling at every
-/// tail. A façade over the staged stages — same single traversal.
+/// tail. A façade over the staged stages, with the same single traversal.
 // ANCHOR: demo_car_ordered_lane
 pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let mut speeds = Vec::new();
@@ -391,7 +391,7 @@ pub fn demo_car_ordered_lane(wire: &[u8]) -> Result<(), Box<dyn std::error::Erro
 // ANCHOR: demo_car_random_access
 pub fn demo_car_random_access(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_decode(wire, 0)?;
-    // Manufacturer is the first var-data field, after both groups — still legal
+    // Manufacturer is the first var-data field, after both groups, and still legal
     // here because random access rescan preceding tails.
     assert_eq!(car.manufacturer_as_str()?, "Honda");
     assert_eq!(car.serial_number(), 1234);
@@ -411,7 +411,7 @@ pub fn demo_car_random_access(wire: &[u8]) -> Result<(), Box<dyn std::error::Err
 // ANCHOR: demo_car_domain_dto
 pub fn demo_car_domain_dto(wire: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let dec = CarDecoder::try_decode(wire, 0)?;
-    // try_from_decoder (not TryFrom/From): two fallible sources — decoder vs
+    // try_from_decoder (not TryFrom/From): two fallible sources, decoder vs
     // try_from_slice_with_header for framed bytes; materialisation can fail.
     let dto = CarDomain::try_from_decoder(dec)?;
     assert_eq!(dto.serial_number, 1234);
@@ -501,7 +501,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
     let _dec = CarDecoder::try_decode(valid_car, 0)?;
 
     // `verify` walks the complete dynamic tail (groups + var-data), not a
-    // header-only peek — use it when you need full structural acceptance
+    // header-only peek. Use it when you need full structural acceptance
     // without materialising a long-lived decoder stage chain.
     CarDecoder::verify(valid_car)?;
 
@@ -530,7 +530,7 @@ pub fn demo_try_vs_trusted(valid_car: &[u8]) -> Result<(), Box<dyn std::error::E
 
 // ─── 7. Display / Debug ────────────────────────────────────────────────────
 
-/// Diagnostic formatting — not a stable serialization format.
+/// Diagnostic formatting, not a stable serialization format.
 // ANCHOR: demo_display_debug
 pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let car = CarDecoder::try_from(valid_car)?;
@@ -589,7 +589,7 @@ pub fn demo_display_debug(valid_car: &[u8]) -> Result<(), Box<dyn std::error::Er
 
 // ─── 8. with_conversion only: generic price_as / price_from ────────────────
 
-// App adapter — generator does not depend on rust_decimal.
+// App adapter: the generator does not depend on rust_decimal.
 impl TryFromSbe<Decimal> for Rd {
     type Error = &'static str;
 
@@ -674,7 +674,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     assert_eq!(price2, price);
     assert_eq!(size2, size);
 
-    // Same buffer, different app type — only possible with with_conversion.
+    // Same buffer, different app type, only possible with with_conversion.
     let fixed: FixedPrice = dec.price_as()?;
     assert_eq!(
         fixed,
@@ -697,7 +697,7 @@ pub fn demo_conversion_only() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
 // App-supplied conversion for `ManualDecimal` (see build.rs). This is a
 // straight copy-paste of the doc comment on `manual_price` in the
-// generated module — DomainImpl::Manual gives you that snippet as a
+// generated module. DomainImpl::Manual gives you that snippet as a
 // starting point precisely so you don't have to write this from scratch.
 impl TryFromSbe<ManualDecimal> for Rd {
     type Error = &'static str;
@@ -738,14 +738,14 @@ impl TryToSbe<ManualDecimal> for Rd {
 /// `with_manual_domain_type(ManualDecimal, "rust_decimal::Decimal")`
 /// (see `build.rs`). Same concrete `manual_price(...)?` / `manual_price()?`
 /// signatures as `DomainImpl::Generated` gives `Decimal64`-style fields
-/// elsewhere — the difference is entirely in who writes the two `impl`
+/// elsewhere. The difference is entirely in who writes the two `impl`
 /// blocks above.
 ///
 /// | API on Quote | Present? |
 /// |--------------|----------|
 /// | `manual_price(rust_decimal::Decimal) -> Result<..>` | yes |
 /// | `manual_price() -> Result<rust_decimal::Decimal, ..>` | yes |
-/// | Auto-generated `impl TryFromSbe<ManualDecimal>` | **no** — that's the `impl` block above |
+/// | Auto-generated `impl TryFromSbe<ManualDecimal>` | **no**: that's the `impl` block above |
 // ANCHOR: demo_domain_type_manual_impl
 pub fn demo_domain_type_manual_impl() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; QuoteEncoder::compute_length_with_header()];
@@ -860,7 +860,7 @@ mod tests {
         let wire = demo_domain_type_manual_impl()?;
         let dec = QuoteDecoder::try_from(wire.as_slice())?;
         assert_eq!(dec.manual_price()?, Rd::new(12345, 2));
-        // The raw wire composite is a plain ManualDecimal — no auto-impl,
+        // The raw wire composite is a plain ManualDecimal, with no auto-impl and
         // no hidden generated conversion beyond the app's own impl above.
         assert_eq!(dec.manual_price_value().mantissa(), 12345);
         assert_eq!(dec.manual_price_value().exponent(), -2);

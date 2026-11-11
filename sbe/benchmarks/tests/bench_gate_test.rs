@@ -1368,10 +1368,12 @@ fn the_runner_gates_exactly_the_directory_it_produces() -> Result<(), Box<dyn st
 
 #[test]
 fn cluster_stamped_results_from_the_expected_run_pass() -> Result<(), Box<dyn std::error::Error>> {
+    // A cluster run is paired: every invocation in both arm orders, stamped.
     let criterion = TempCriterion::new()?;
-    write_all_cluster_pairs(&criterion.0, 100.0, 100.0)?;
-    stamp_cluster_run_ids(&criterion.0, RUN_ID)?;
-    write_manifest(&criterion.0, &complete_manifest(RUN_ID))?;
+    write_cluster_orders(&criterion.0, 2, "", STABLE, STABLE, STABLE)?;
+    write_cluster_aa_orders(&criterion.0, 2, STABLE, STABLE)?;
+    stamp_everything(&criterion.0, RUN_ID)?;
+    write_manifest(&criterion.0, &paired_manifest(RUN_ID, "lto", 2))?;
 
     let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
     assert!(
@@ -2060,5 +2062,604 @@ fn a_snapshot_without_a_producer_marker_is_refused() -> Result<(), Box<dyn std::
         "a refused snapshot must write nothing:\n{}",
         describe(&output)
     );
+    Ok(())
+}
+
+// ── Cluster arm order ───────────────────────────────────────────────────────
+//
+// Whichever arm of a Criterion group runs first is measured differently from
+// the one after it, and the cluster pairs are close enough that this decides
+// the verdict. `just bench-cluster` therefore takes every invocation twice,
+// arms in registration order (`repeats/<k>`) and reversed
+// (`repeats-reversed/<k>`). A pair's ratio in invocation `k` is the geometric
+// mean of the two orders' ratios, so neither arm gains from going first, and
+// the A/A controls are combined the same way so their band describes the same
+// measurement.
+
+/// Where invocation `k` of the reversed arm order keeps a key's estimates.
+fn reversed_estimate_dir(root: &Path, repeat: usize, group: &str, function: &str) -> PathBuf {
+    root.join("repeats-reversed")
+        .join(repeat.to_string())
+        .join(group)
+        .join(function)
+}
+
+/// A pair's two arms in one order: `(ergon, sbe-tool)`.
+type Orders = (Arm, Arm);
+
+/// Every maintained cluster pair, `repeats` invocations in both arm orders.
+/// `group` carries `forward` and `reversed`; every other pair carries `stable`
+/// in both, so only `group` can move the verdict.
+fn write_cluster_orders(
+    root: &Path,
+    repeats: usize,
+    group: &str,
+    forward: Orders,
+    reversed: Orders,
+    stable: Orders,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (name, ergo_fn, ref_fn) in CLUSTER_PAIRS {
+        let (fwd, rev) = if *name == group {
+            (forward, reversed)
+        } else {
+            (stable, stable)
+        };
+        for k in 0..repeats {
+            write_repeat_arm(root, k, name, ergo_fn, fwd.0)?;
+            write_repeat_arm(root, k, name, ref_fn, fwd.1)?;
+            write_arm(&reversed_estimate_dir(root, k, name, ergo_fn), rev.0)?;
+            write_arm(&reversed_estimate_dir(root, k, name, ref_fn), rev.1)?;
+        }
+        write_arm(&estimate_dir(root, name, ergo_fn), fwd.0)?;
+        write_arm(&estimate_dir(root, name, ref_fn), fwd.1)?;
+    }
+    Ok(())
+}
+
+/// The cluster A/A controls in both arm orders: `arm_a` and `arm_b` run the
+/// same work, so any ratio away from 1 is the harness.
+fn write_cluster_aa_orders(
+    root: &Path,
+    repeats: usize,
+    forward: Orders,
+    reversed: Orders,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for group in CLUSTER_AA_GROUPS {
+        for k in 0..repeats {
+            write_repeat_arm(root, k, group, "arm_a", forward.0)?;
+            write_repeat_arm(root, k, group, "arm_b", forward.1)?;
+            write_arm(&reversed_estimate_dir(root, k, group, "arm_a"), reversed.0)?;
+            write_arm(&reversed_estimate_dir(root, k, group, "arm_b"), reversed.1)?;
+        }
+        write_arm(&estimate_dir(root, group, "arm_a"), forward.0)?;
+        write_arm(&estimate_dir(root, group, "arm_b"), forward.1)?;
+    }
+    Ok(())
+}
+
+fn paired_manifest(run_id: &str, profile: &str, repeats: usize) -> String {
+    format!(
+        r#"{{"run_id":"{run_id}","profile":"{profile}","commit":"abc","rustc":"rustc 1.0.0","target":"x86_64","host":"Test CPU","repeats":{repeats},"arm_order":"paired"}}"#
+    )
+}
+
+const TOOL: Arm = (100.0, 99.9, 100.1);
+const STABLE: Orders = ((100.0, 99.9, 100.1), (100.0, 99.9, 100.1));
+const KEEP_ALIVE: &str = "cluster_encode_session_keep_alive";
+
+/// The arm that runs first gains: ergon at 105 against 100 going first, at 95
+/// going second. Read on one order alone that is a 5 % breach (or a 5 % win);
+/// combined over both it is 0.9987, inside the ceiling.
+#[test]
+fn an_arm_order_effect_cancels_in_the_paired_ratio() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_cluster_orders(
+        &criterion.0,
+        3,
+        KEEP_ALIVE,
+        ((105.0, 104.9, 105.1), TOOL),
+        ((95.0, 94.9, 95.1), TOOL),
+        STABLE,
+    )?;
+    write_cluster_aa_orders(&criterion.0, 3, STABLE, STABLE)?;
+    write_manifest(&criterion.0, &paired_manifest(RUN_ID, "lto", 3))?;
+    stamp_everything(&criterion.0, RUN_ID)?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        output.status.success(),
+        "an effect that flips sign with the arm order must cancel:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_regression_in_both_arm_orders_still_fails() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_cluster_orders(
+        &criterion.0,
+        3,
+        KEEP_ALIVE,
+        ((105.0, 104.9, 105.1), TOOL),
+        ((105.0, 104.9, 105.1), TOOL),
+        STABLE,
+    )?;
+    write_cluster_aa_orders(&criterion.0, 3, STABLE, STABLE)?;
+    write_manifest(&criterion.0, &paired_manifest(RUN_ID, "lto", 3))?;
+    stamp_everything(&criterion.0, RUN_ID)?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        !output.status.success(),
+        "a 5 % gap that holds in both orders is not an order effect:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// A control read on one order would excuse this breach: both its arms differ
+/// by 5 % going first, so its forward band sits on 1.05 where the pair is.
+/// Combined over both orders the control reads 1.00, and the breach is outside
+/// it.
+#[test]
+fn the_aa_control_is_combined_over_both_orders_too() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_cluster_orders(
+        &criterion.0,
+        3,
+        KEEP_ALIVE,
+        ((105.0, 104.9, 105.1), TOOL),
+        ((105.0, 104.9, 105.1), TOOL),
+        STABLE,
+    )?;
+    write_cluster_aa_orders(
+        &criterion.0,
+        3,
+        ((105.0, 104.9, 105.1), TOOL),
+        ((95.0, 94.9, 95.1), TOOL),
+    )?;
+    write_manifest(&criterion.0, &paired_manifest(RUN_ID, "lto", 3))?;
+    stamp_everything(&criterion.0, RUN_ID)?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        !output.status.success(),
+        "a control whose order effect cancels must not excuse a breach that does not:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// A run measured in one arm order only cannot separate the codecs from the
+/// order they ran in, so `--run-id` refuses it by name.
+#[test]
+fn a_cluster_run_measured_in_one_arm_order_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_cluster_aa_repeats(&criterion.0, &[(100.0, 99.9, 100.1); 3])?;
+    write_cluster_stable_repeats(&criterion.0, 3, "", TOOL, TOOL)?;
+    write_manifest(&criterion.0, &manifest_with_repeats(RUN_ID, "lto", 3))?;
+    stamp_everything(&criterion.0, RUN_ID)?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        !output.status.success(),
+        "a cluster run with a single arm order must be refused:\n{}",
+        describe(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("arm order"),
+        "the refusal must name the arm order:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// The manifest says paired; the reversed invocations are missing for one
+/// pair. Grading the forward order alone would claim a cancellation that did
+/// not happen.
+#[test]
+fn a_paired_run_missing_a_reversed_invocation_is_incomplete_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    write_cluster_orders(&criterion.0, 3, KEEP_ALIVE, STABLE, STABLE, STABLE)?;
+    for (group, ergo_fn, ref_fn) in CLUSTER_PAIRS {
+        if *group == KEEP_ALIVE {
+            fs::remove_dir_all(reversed_estimate_dir(&criterion.0, 1, group, ergo_fn))?;
+            fs::remove_dir_all(reversed_estimate_dir(&criterion.0, 1, group, ref_fn))?;
+        }
+    }
+    write_manifest(&criterion.0, &paired_manifest(RUN_ID, "lto", 3))?;
+    stamp_everything(&criterion.0, RUN_ID)?;
+
+    let output = run_cluster_gate(&criterion.0, &["--run-id", RUN_ID])?;
+    assert!(
+        !output.status.success(),
+        "a pair missing a reversed invocation must fail:\n{}",
+        describe(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("reversed"),
+        "the refusal must name the reversed order:\n{}",
+        describe(&output)
+    );
+    Ok(())
+}
+
+/// The reversed arm order is snapshotted into its own tree. Written into
+/// `repeats/<k>` it would overwrite the forward invocation `k`, and the gate
+/// would grade one order twice.
+#[test]
+fn a_reversed_snapshot_lands_beside_the_forward_one_not_over_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    let group = "cluster_encode_session_message_header";
+    write_stale_estimate(&criterion.0, group, "ergo-sbe")?;
+    let marker = criterion.0.join(".bench-since");
+    fs::write(&marker, b"")?;
+    set_mtime(&marker, SystemTime::now() - Duration::from_secs(600))?;
+
+    let forward = run_snapshot_into(&criterion.0, 1, "repeats")?;
+    let reversed = run_snapshot_into(&criterion.0, 1, "repeats-reversed")?;
+    assert!(
+        forward.status.success() && reversed.status.success(),
+        "both orders of one invocation must snapshot:\n{}\n{}",
+        describe(&forward),
+        describe(&reversed)
+    );
+    for tree in ["repeats", "repeats-reversed"] {
+        assert!(
+            criterion
+                .0
+                .join(tree)
+                .join("1")
+                .join(group)
+                .join("ergo-sbe/estimates.json")
+                .is_file(),
+            "{tree}/1 must hold the snapshot:\n{}",
+            describe(&reversed)
+        );
+    }
+    let again = run_snapshot_into(&criterion.0, 1, "repeats-reversed")?;
+    assert!(
+        !again.status.success(),
+        "a second reversed snapshot of the same invocation must be refused:\n{}",
+        describe(&again)
+    );
+    let nonsense = run_snapshot_into(&criterion.0, 2, "repeats-sideways")?;
+    assert!(
+        !nonsense.status.success(),
+        "an unknown tree must be refused:\n{}",
+        describe(&nonsense)
+    );
+    Ok(())
+}
+
+fn run_snapshot_into(
+    dir: &Path,
+    k: usize,
+    tree: &str,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    Ok(
+        Command::new(repository()?.join("scripts/snapshot-bench-repeat.sh"))
+            .arg(dir)
+            .arg(k.to_string())
+            .arg(tree)
+            .output()?,
+    )
+}
+
+fn stamp_manifest(dir: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let output = Command::new(repository()?.join("scripts/stamp-cluster-bench-manifest.sh"))
+        .args([dir.as_os_str().to_str().ok_or("temp dir is not UTF-8")?])
+        .args(["lto", RUN_ID, "abc", "rustc 1.0.0", "x86_64"])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "stamping failed:\n{}",
+        describe(&output)
+    );
+    Ok(fs::read_to_string(dir.join("run-manifest.json"))?)
+}
+
+/// The manifest says what was measured, from what is on disk: a run whose
+/// reversed tree is missing is `forward`, however it was started.
+#[test]
+fn the_stamped_manifest_records_the_arm_order_found_on_disk()
+-> Result<(), Box<dyn std::error::Error>> {
+    let paired = TempCriterion::new()?;
+    write_cluster_orders(&paired.0, 2, "", STABLE, STABLE, STABLE)?;
+    let manifest = stamp_manifest(&paired.0)?;
+    assert!(manifest.contains(r#""arm_order": "paired""#), "{manifest}");
+    assert!(manifest.contains(r#""repeats": 2"#), "{manifest}");
+    assert_eq!(
+        fs::read_to_string(
+            reversed_estimate_dir(&paired.0, 1, CLUSTER_PAIRS[0].0, "ergo-sbe").join("run-id.txt")
+        )?,
+        RUN_ID,
+        "the reversed invocations must carry the run id too"
+    );
+
+    let single = TempCriterion::new()?;
+    write_cluster_orders(&single.0, 2, "", STABLE, STABLE, STABLE)?;
+    fs::remove_dir_all(single.0.join("repeats-reversed"))?;
+    let manifest = stamp_manifest(&single.0)?;
+    assert!(manifest.contains(r#""arm_order": "forward""#), "{manifest}");
+    Ok(())
+}
+
+// ── Cluster report: n, mean and batch-mean min to max per arm ──────────────
+
+fn write_samples(dir: &Path, per_op_ns: &[u32]) -> Result<(), Box<dyn std::error::Error>> {
+    // One timed iteration is a batch of 10,000 operations: `times` holds the
+    // batch time, so an operation of `k` ns is a batch of `k * 10,000` ns.
+    let times: Vec<String> = per_op_ns
+        .iter()
+        .map(|k| (u64::from(*k) * 10_000).to_string())
+        .collect();
+    let iters = vec!["1"; per_op_ns.len()].join(",");
+    fs::create_dir_all(dir)?;
+    fs::write(
+        dir.join("sample.json"),
+        format!(
+            r#"{{"sampling_mode":"Flat","iters":[{iters}],"times":[{}]}}"#,
+            times.join(",")
+        ),
+    )?;
+    Ok(())
+}
+
+fn run_report(args: &[&Path]) -> Result<Output, Box<dyn std::error::Error>> {
+    Ok(Command::new("python3")
+        .arg("-I")
+        .arg(repository()?.join("scripts/bench-cluster-report.py"))
+        .args(args)
+        .output()?)
+}
+
+/// The last `count` cells of the row for `group / arm`.
+fn report_cells(stdout: &str, group: &str, arm: &str, count: usize) -> Option<Vec<String>> {
+    let row = stdout
+        .lines()
+        .find(|line| line.starts_with(&format!("{group} / {arm} ")))?;
+    let cells: Vec<String> = row.split_whitespace().map(str::to_owned).collect();
+    cells
+        .get(cells.len().checked_sub(count)?..)
+        .map(<[String]>::to_vec)
+}
+
+/// `just bench-cluster` prints, for every arm, the sample count, mean, and the
+/// min, p50, p99, p99.99 and max of the pooled samples, over every invocation in both arm
+/// orders. A sample is one batch's mean, so the percentiles are batch-mean
+/// percentiles, not per-message tails, and the header says so. The p50 is
+/// the median of those pooled samples, the same population as p99 and max,
+/// not an average of each invocation's median.
+#[test]
+fn the_cluster_report_gives_n_mean_and_batch_mean_percentiles_per_arm()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    let (group, arm) = ("cluster_encode_session_keep_alive", "ergo-sbe");
+    let ops: Vec<u32> = (1..=100).collect();
+    for tree in ["repeats", "repeats-reversed"] {
+        let dir = criterion.0.join(tree).join("1").join(group).join(arm);
+        // mean 505,000 ns per 10,000-op batch; a median of 990,000 ns that a
+        // report averaging invocation medians would print as 99.000.
+        fs::create_dir_all(&dir)?;
+        fs::write(
+            dir.join("estimates.json"),
+            r#"{"mean":{"point_estimate":505000.0},"median":{"point_estimate":990000.0}}"#,
+        )?;
+        write_samples(&dir, &ops)?;
+    }
+    write_estimate(&criterion.0, group, arm, 505_000.0, 990_000.0)?;
+
+    let output = run_report(&[&criterion.0])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", describe(&output));
+    // kept, n, mean, min, p50, p99, p99.99, max.
+    assert_eq!(
+        report_cells(&stdout, group, arm, 8).ok_or("the arm must have a row")?,
+        [
+            "2/2", "200", "50.500", "1.000", "50.000", "99.000", "100.000", "100.000"
+        ],
+        "n pools both arm orders; min, p50, p99, p99.99 and max are per-operation \
+         ns of the pooled batch means:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("batch-mean percentiles, not per-message tails"),
+        "the header must say what a sample is:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// An invocation whose snapshot kept `estimates.json` but no `sample.json`
+/// thins the pooled percentiles without saying so. The report names it, and
+/// says when the percentiles fall back to the final invocation alone.
+#[test]
+fn the_cluster_report_flags_invocations_that_kept_no_samples()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    let group = "cluster_encode_session_keep_alive";
+    let ops: Vec<u32> = (1..=10).collect();
+    for tree in ["repeats", "repeats-reversed"] {
+        for k in ["1", "2"] {
+            for arm in ["ergo-sbe", "sbe-tool"] {
+                let dir = criterion.0.join(tree).join(k).join(group).join(arm);
+                write_estimate_into(&dir, 50_000.0, 49_000.0, 51_000.0)?;
+                // ergon kept every sample but one invocation's; sbe-tool none.
+                if arm == "ergo-sbe" && !(tree == "repeats-reversed" && k == "2") {
+                    write_samples(&dir, &ops)?;
+                }
+            }
+        }
+    }
+    for arm in ["ergo-sbe", "sbe-tool"] {
+        write_estimate(&criterion.0, group, arm, 50_000.0, 50_000.0)?;
+    }
+    write_samples(&estimate_dir(&criterion.0, group, "sbe-tool"), &ops)?;
+
+    let output = run_report(&[&criterion.0])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", describe(&output));
+    assert_eq!(
+        report_cells(&stdout, group, "ergo-sbe", 8).ok_or("ergon must have a row")?[..2],
+        ["3/4", "30"],
+        "three of four invocations kept samples:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "{group} / ergo-sbe: no sample.json in repeats-reversed/2"
+        )),
+        "the invocation that kept no samples must be named:\n{stdout}"
+    );
+    assert_eq!(
+        report_cells(&stdout, group, "sbe-tool", 8).ok_or("sbe-tool must have a row")?[..2],
+        ["0/4", "10"],
+        "with no repeat samples the percentiles come from the final invocation:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "{group} / sbe-tool: no invocation kept sample.json; percentiles from the final invocation (new/) only"
+        )),
+        "the fallback to the final invocation must be said:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// A real, failing cluster gate run with one pair of each outcome: two PASS
+/// (one resolved, one straddling), one INCONCLUSIVE and two FAIL. Returns the
+/// gate's output, also saved as `gate.txt` in the Criterion directory.
+fn verdict_fixture(criterion: &TempCriterion) -> Result<Output, Box<dyn std::error::Error>> {
+    // A wide measured A/A band, about 0.25 to 4.
+    for group in CLUSTER_AA_GROUPS {
+        write_estimate_ci(&criterion.0, group, "arm_a", 100.0, 50.0, 200.0)?;
+        write_estimate_ci(&criterion.0, group, "arm_b", 100.0, 50.0, 200.0)?;
+    }
+    let tool = (100.0, 99.9, 100.1);
+    // (group, ergon arm); a missing ergon arm leaves the pair unmeasured.
+    let cases: [(&str, Option<Arm>); 5] = [
+        // Resolved below the ceiling.
+        (
+            "cluster_encode_session_message_header",
+            Some((90.0, 89.9, 90.1)),
+        ),
+        // Over the ceiling, inside the band: inconclusive.
+        (
+            "cluster_encode_session_keep_alive",
+            Some((200.0, 50.0, 400.0)),
+        ),
+        // Missing estimates.
+        ("cluster_decode_session_message_header", None),
+        // Point under the ceiling, interval across it.
+        ("cluster_decode_session_event", Some((99.0, 95.0, 103.0))),
+        // Beyond the band: a resolved breach.
+        (
+            "cluster_encode_claim_shaped_header_plus_app",
+            Some((500.0, 499.0, 501.0)),
+        ),
+    ];
+    for (group, ergo) in cases {
+        write_estimate_ci(&criterion.0, group, "sbe-tool", tool.0, tool.1, tool.2)?;
+        if let Some((slope, lo, hi)) = ergo {
+            write_estimate_ci(&criterion.0, group, "ergo-sbe", slope, lo, hi)?;
+        }
+    }
+    let gate = run_cluster_gate(&criterion.0, &[])?;
+    assert!(!gate.status.success(), "{}", describe(&gate));
+    fs::write(criterion.0.join("gate.txt"), &gate.stdout)?;
+    Ok(gate)
+}
+
+/// The gate passes an inconclusive pair, which is not parity. With the gate's
+/// output, the report sorts every pair into PASS, INCONCLUSIVE and FAIL. The
+/// gate's output here is real: a change to its format breaks this test.
+#[test]
+fn the_cluster_report_sorts_gate_verdicts_into_pass_inconclusive_and_fail()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    verdict_fixture(&criterion)?;
+    let gate_log = criterion.0.join("gate.txt");
+
+    let output = run_report(&[&criterion.0, Path::new("--gate"), &gate_log])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{}", describe(&output));
+    let verdicts: Vec<(String, String)> = stdout
+        .lines()
+        .filter_map(|line| {
+            let mut cells = line.split_whitespace();
+            let verdict = cells.next()?;
+            ["PASS", "INCONCLUSIVE", "FAIL"]
+                .contains(&verdict)
+                .then(|| (verdict.to_owned(), cells.next().unwrap_or("").to_owned()))
+        })
+        .collect();
+    let expected = [
+        ("PASS", "cluster_encode_session_message_header"),
+        ("PASS", "cluster_decode_session_event"),
+        ("INCONCLUSIVE", "cluster_encode_session_keep_alive"),
+        ("FAIL", "cluster_decode_session_message_header"),
+        ("FAIL", "cluster_encode_claim_shaped_header_plus_app"),
+    ];
+    assert_eq!(
+        verdicts,
+        expected.map(|(v, p)| (v.to_owned(), p.to_owned())),
+        "every pair in exactly one verdict, in verdict order:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("gate verdicts: 2 PASS, 1 INCONCLUSIVE, 2 FAIL"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("envelope straddles the ceiling"),
+        "a pass that is not resolved says so:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("INCONCLUSIVE passes the gate but is not parity"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("warning:"),
+        "a complete gate output whose FAIL count matches gets no warning:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// A crashed gate (no final line), a FAIL count the parsed verdicts do not
+/// match, and an empty output must not read as a clean summary: the report
+/// warns under its counts.
+#[test]
+fn the_cluster_report_warns_when_the_gate_output_is_unreadable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let criterion = TempCriterion::new()?;
+    let gate = verdict_fixture(&criterion)?;
+    let gate_log = criterion.0.join("gate.txt");
+    let text = String::from_utf8_lossy(&gate.stdout);
+    let truncated = text
+        .lines()
+        .filter(|line| !line.starts_with("FAIL: "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let miscounted = text.replace("\nFAIL: 2 ", "\nFAIL: 3 ");
+    assert_ne!(
+        miscounted, text,
+        "the gate must count two failures:\n{text}"
+    );
+    for (contents, said) in [
+        (truncated.as_str(), "no final PASS or FAIL line"),
+        (
+            miscounted.as_str(),
+            "the gate counted 3 failure(s) but 2 were parsed",
+        ),
+        ("", "no graded pair in the gate output"),
+    ] {
+        fs::write(&gate_log, contents)?;
+        let output = run_report(&[&criterion.0, Path::new("--gate"), &gate_log])?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{}", describe(&output));
+        assert!(
+            stdout.contains(&format!("warning: {said}")),
+            "an unreadable gate output must be flagged:\n{stdout}"
+        );
+    }
     Ok(())
 }

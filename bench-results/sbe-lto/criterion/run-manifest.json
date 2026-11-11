@@ -1,0 +1,9 @@
+{
+  "commit": "af10a56ac3fb36e99c332e6e53aa3d38a5131393",
+  "host": "Apple M4",
+  "profile": "lto",
+  "repeats": 5,
+  "run_id": "b20261106T083837Z-61963-af10a56ac3fb",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "target": "aarch64-apple-darwin"
+}

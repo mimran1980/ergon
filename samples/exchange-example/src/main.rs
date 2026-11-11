@@ -1,4 +1,4 @@
-//! ergon exchange example — IPC ingestion pipeline.
+//! ergon exchange example: an IPC ingestion pipeline.
 //!
 //! - Thread 1 (main): Bitget WS → `BitgetIngestor` → `ClaimPublisher`
 //! - Thread 2: SHARED Aeron media driver (Rusteron 0.2 embedded)

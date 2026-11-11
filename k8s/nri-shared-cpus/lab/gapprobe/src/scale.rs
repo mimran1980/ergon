@@ -1,4 +1,4 @@
-//! The shared-CPU scaling report: for each case the lab's `vm.sh scale`
+//! The shared-CPU scaling report: for each case the lab's scale step
 //! ran, how busy each shared and exclusive CPU was, how much of the shared
 //! CPUs each pod's helpers took, its cgroup's weight, quota and throttling,
 //! where its threads ran, and its spin thread's worst gap.

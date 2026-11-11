@@ -88,7 +88,7 @@ func (m *Metrics) StalePartition() { m.mu.Lock(); m.stalePart++; m.mu.Unlock() }
 func (m *Metrics) Ineligible() { m.mu.Lock(); m.ineligible++; m.mu.Unlock() }
 
 // Grant counts a latency-pod grant by kind ("rlimit", "seccomp", "numa",
-// "ptp", "fifo", "hugepages") and value. The Prometheus name is
+// "ptp", "hugepages") and value. The Prometheus name is
 // ergon_shared_cpus_grants_total{kind,value}.
 func (m *Metrics) Grant(kind, value string) {
 	m.mu.Lock()

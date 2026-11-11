@@ -310,13 +310,12 @@ func TestGrantEnvRlimits(t *testing.T) {
 		{Type: "RLIMIT_NOFILE", Hard: 65536, Soft: 65536},
 		{Type: "RLIMIT_RTPRIO", Hard: 50, Soft: 50},
 	}
-	env := GrantEnv(EnvGrant{Rlimits: rl, SchedFifo: 50, SeccompMode: ModeIOUring, NumaNodes: "0", PtpDevice: "/dev/ptp0"})
+	env := GrantEnv(EnvGrant{Rlimits: rl, SeccompMode: ModeIOUring, NumaNodes: "0", PtpDevice: "/dev/ptp0"})
 	m := kvMap(env)
 	want := map[string]string{
 		"ERGON_RLIMIT_MEMLOCK": "inf",
 		"ERGON_RLIMIT_NOFILE":  "65536",
 		"ERGON_RLIMIT_RTPRIO":  "50",
-		"ERGON_SCHED_FIFO":     "50",
 		"ERGON_SECCOMP":        "io-uring",
 		"ERGON_NUMA_NODES":     "0",
 		"ERGON_PTP_DEVICE":     "/dev/ptp0",
@@ -337,7 +336,7 @@ func TestGrantEnvMinimal(t *testing.T) {
 		t.Errorf("ERGON_SECCOMP = %q, want runtime-default", m["ERGON_SECCOMP"])
 	}
 	for _, k := range []string{"ERGON_RLIMIT_MEMLOCK", "ERGON_RLIMIT_NOFILE", "ERGON_RLIMIT_RTPRIO",
-		"ERGON_SCHED_FIFO", "ERGON_NUMA_NODES", "ERGON_PTP_DEVICE", "ERGON_HUGEPAGES"} {
+		"ERGON_NUMA_NODES", "ERGON_PTP_DEVICE", "ERGON_HUGEPAGES"} {
 		if _, ok := m[k]; ok {
 			t.Errorf("env %s must be absent without a grant", k)
 		}

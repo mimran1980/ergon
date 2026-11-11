@@ -293,8 +293,8 @@ var PartitionLockPath = "/run/ergon-shared-cpus.partition.lock"
 // cpuset.cpus.exclusive is the kernel's exclusivity currency: a CPU left
 // reserved there for a partition that never started still counts as claimed
 // by a sibling, and the next container that wants it is rejected with EINVAL.
-// The undo takes back only what this call added — a re-run of a plan that is
-// already in place adds nothing, so it takes nothing back — and removes the
+// The undo takes back only what this call added (a re-run of a plan that is
+// already in place adds nothing, so it takes nothing back) and removes the
 // child only when this call created it. cgroup.subtree_control is left alone:
 // enabling cpuset is idempotent and another child may need it.
 func ApplyPartition(plan *cpuset.Plan) error {
@@ -562,8 +562,8 @@ func otherPartitions(root, dir, child string) ([]otherPartition, error) {
 // kernel owns the pseudo-files and unlinking one fails, so os.Remove is the
 // whole story on a real cgroup. The unit fixture is ordinary files, which
 // rmdir refuses while they are there, so those are taken out first and rmdir
-// is tried again. Anything that is not an ordinary file — a cgroup
-// pseudo-file, or a nested cgroup — is left for rmdir.
+// is tried again. Anything that is not an ordinary file (a cgroup
+// pseudo-file, or a nested cgroup) is left for rmdir.
 func removeChild(child string) error {
 	if err := os.Remove(child); err == nil || errors.Is(err, fs.ErrNotExist) {
 		return nil

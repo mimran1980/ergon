@@ -1,6 +1,6 @@
 # SBE compatibility profile (normative)
 
-ergon claims **wire compatibility** with official SBE layouts for the shapes
+ergon claims wire compatibility with official SBE layouts for the shapes
 exercised by the dual-encode parity suite (`sbe_tool_wire_parity_test` and
 multi-schema parity), not unqualified “implements every SBE edge case in every
 venue schema.”
@@ -83,7 +83,7 @@ output in `type_mapping_test`, `source_trait_test` and `claim_send_test`.
 
   | Wire value | Error |
   |---|---|
-  | integer or `char` scalar, or integer array element, outside a **declared** `minValue` / `maxValue` | `ValueOutOfRange` |
+  | integer or `char` scalar, or integer array element, outside a declared `minValue` / `maxValue` | `ValueOutOfRange` |
   | enum discriminant that is neither a `validValue` nor the enum's null | `UnknownEnum` |
   | set bit that no `choice` declares | `UnknownSetBits` |
   | `AnyMessage::Unknown` | `UnknownTemplate` |
@@ -109,7 +109,7 @@ output in `type_mapping_test`, `source_trait_test` and `claim_send_test`.
 - Every optional SBE XML extension used by every market data venue.
 - Constant set or composite fields. ergon rejects them; sbe-tool accepts them
   but gives them no block space and still reads them from the wire.
-- Self-describing total message length on the wire (SBE has none — use
+- Self-describing total message length on the wire (SBE has none; use
   `decode_frame` with an external frame length when framing is external).
 
 ## Constructor trust boundary
@@ -121,9 +121,9 @@ Three tiers (see book [Trust Boundary](../book/src/sbe/core-concepts/trust-bound
 | Checked | `try_wrap`, `try_wrap_and_apply_header`, `try_decode` | `Result::Err` |
 | Trusted | `wrap`, `wrap_and_apply_header` | **panic** after extent proof |
 | Trusted hybrid | `decode` | **panic** if short; **`Err`** on wrong template/schema |
-| Unchecked | `unsafe fn *_unchecked` | **UB** — caller proves extent |
+| Unchecked | `unsafe fn *_unchecked` | **UB**: caller proves extent |
 | Unchecked hybrid | `unsafe decode_unchecked` | **UB** on OOB extent; **`Err`** on wrong template/schema |
 
-Offsets are **message start** (first byte of the header), not sbe-tool’s body
+Offsets are the message start (first byte of the header), not sbe-tool’s body
 offset. Safe constructors prove header + fixed body before unchecked field
 accessors; `AnyMessage::decode` matches `try_decode`.

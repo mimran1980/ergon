@@ -34,7 +34,7 @@ pub(crate) fn absent_tail_length(
     }
 }
 
-/// `self.acting_version` — the reader for every decoder except the memoized
+/// `self.acting_version`: the reader for every decoder except the memoized
 /// wrapper.
 pub(crate) fn own_acting_version() -> proc_macro2::TokenStream {
     quote::quote! { self.acting_version }
@@ -162,6 +162,16 @@ pub(crate) fn generate_owner_consuming_stages(
         );
         let slice_doc_tokens = crate::codegen::runtime::doc_lines_tokens(&slice_doc);
         let prefix_size_lit = syn::LitInt::new(&vd.prefix_size.to_string(), span);
+        // True when the length prefix does not fit at `offset`. A one-byte
+        // prefix needs only `offset < len`: identical for every offset,
+        // including `usize::MAX`, and two instructions cheaper.
+        let prefix_out_of_bounds = if vd.prefix_size == 1 {
+            quote::quote! { offset >= self.buf.len() }
+        } else {
+            quote::quote! {
+                offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len())
+            }
+        };
         let len_type_ident = syn::Ident::new(rust_type(vd.len_type), span);
         let len_from_endian = syn::Ident::new(
             match byte_order {
@@ -176,27 +186,14 @@ pub(crate) fn generate_owner_consuming_stages(
         // Only the entry decoder carries the `tail_end` one-shot cache, and it
         // holds the end of the *last* tail component. So the non-consuming
         // slice accessor can reuse it exactly when this var-data is both the
-        // first and the last tail of a group entry — the common
+        // first and the last tail of a group entry, the common
         // "group of records, one string each" shape. Mirrors the flat entry
         // accessor in `group_decoder.rs`; without it the two same-signature
         // methods on the same type differ only in that this one re-reads and
         // re-validates a length header the iterator already resolved.
         // The message-level cache lives on the opt-in memoized lane, not here.
         let slice_cached_tail = proc_macro2::TokenStream::new();
-        let mut max_check = proc_macro2::TokenStream::new();
-        if let Some(max) = vd.max_length {
-            let max_lit = syn::LitInt::new(&max.to_string(), span);
-            max_check.extend(quote::quote! {
-                if len > #max_lit {
-                    sbe_rt::cold();
-                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                        field: #vd_name_lit,
-                        length: len,
-                        max_length: #max_lit as u64,
-                    });
-                }
-            });
-        }
+        let max_lit = super::runtime::var_data_max_lit(vd.max_length);
         let absent_vardata = if vd.since_version > 0 {
             let since_lit = syn::LitInt::new(
                 &vd.since_version.to_string(),
@@ -226,7 +223,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 pub fn #into_ident(self) -> Result<(&'a [u8], #next_stage<'a>), sbe_rt::DecodeError> {
                     #absent_vardata
                     let offset = #se;
-                    if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
+                    if #prefix_out_of_bounds {
                         sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
@@ -241,11 +238,10 @@ pub(crate) fn generate_owner_consuming_stages(
                             self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
                         )
                     };
-                    // Direct integer read — avoids constructing the var-data
-                    // encoding struct while preserving its width and schema byte order.
+                    // Direct integer read: no var-data encoding struct, same
+                    // width and schema byte order.
                     let len = #len_type_ident::#len_from_endian(bytes) as u64;
-                    #max_check
-                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                         #vd_name_lit,
                         offset,
                         #prefix_size_lit,
@@ -268,7 +264,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     #slice_cached_tail
                     let offset = #se;
-                    if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
+                    if #prefix_out_of_bounds {
                         sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
@@ -281,11 +277,10 @@ pub(crate) fn generate_owner_consuming_stages(
                             self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
                         )
                     };
-                    // Direct integer read — avoids constructing the var-data
-                    // encoding struct while preserving its width and schema byte order.
+                    // Direct integer read: no var-data encoding struct, same
+                    // width and schema byte order.
                     let len = #len_type_ident::#len_from_endian(bytes) as u64;
-                    #max_check
-                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                         #vd_name_lit,
                         offset,
                         #prefix_size_lit,
@@ -367,10 +362,10 @@ pub(crate) fn generate_owner_consuming_stages(
         }
 
         // Optional-crate accessors. Emitted only when the *generator* was built
-        // with the matching feature — a consumer who did not ask for
-        // `compact_str` gets no `compact_str` code at all. (Emitting them
-        // unconditionally behind `#[cfg(feature = ...)]` put the gate on the
-        // consumer crate's own feature set, where it silently never matched.)
+        // with the matching feature, so a consumer who did not ask for
+        // `compact_str` gets no `compact_str` code at all. A
+        // `#[cfg(feature = ...)]` gate in the output would test the consumer
+        // crate's own features, which never match.
         {
             #[cfg(any(feature = "compact_str", feature = "smol_str", feature = "bytes"))]
             let into_ident = syn::Ident::new(&format!("into_{}", vd.accessor_snake), span);
@@ -453,12 +448,12 @@ pub(crate) fn generate_owner_consuming_stages(
     // Group tails come in two shapes, and the shape decides the API.
     //
     // Entries with no tails of their own have a fixed stride, so the next entry
-    // is `offset + acting_block_length` — knowing where an entry ends costs
+    // is `offset + acting_block_length`; knowing where an entry ends costs
     // nothing, and the group is a real `Iterator`.
     //
     // Entries that carry their own groups or var-data have no stride. The only
     // way to find entry N+1 is to measure entry N, and `Iterator::next` cannot
-    // learn that from the entry it already handed away — `Item` does not borrow
+    // learn that from the entry it already handed away: `Item` does not borrow
     // from the `&mut self` that produced it. An iterator would therefore have to
     // measure every entry before yielding it, and the caller's own walk of that
     // entry would repeat the traversal. So these keep the fused visit closure:
@@ -486,7 +481,7 @@ pub(crate) fn generate_owner_consuming_stages(
         let pp = parent_pos_expr(i);
         // The group is not on the wire at this version: it occupies zero bytes
         // at `group_start`, which is therefore already the next tail cursor.
-        // Used by the methods that return the *following stage* — `skip_*` and
+        // Used by the methods that return the following stage: `skip_*` and
         // the dynamic-entry `into_*(visit)`. The iterator `into_*` returns an
         // iterator instead, so it takes `versioned_wrap` below.
         let absent_stage_guard = (since_version > 0).then(|| {
@@ -548,7 +543,7 @@ pub(crate) fn generate_owner_consuming_stages(
             ts.extend(quote::quote! {
                 impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
                     // Internal implementation detail of the fused `into_*`
-                    // method on the preceding stage — not part of the public
+                    // method on the preceding stage, not part of the public
                     // API. Consumes every remaining entry in one pass and
                     // returns the next parent stage.
                     //
@@ -577,10 +572,10 @@ pub(crate) fn generate_owner_consuming_stages(
                         let block_length = self.acting_block_length;
                         while self.count > 0 {
                             let available = self.buf.len().saturating_sub(self.offset);
-                            if self.min_entry_extent > available {
+                            if block_length > available {
                                 return Err(E::from(sbe_rt::DecodeError::BufferTooShort {
                                     field: #g_name_lit,
-                                    needed: self.min_entry_extent,
+                                    needed: block_length,
                                     available,
                                 }));
                             }
@@ -740,9 +735,11 @@ pub(crate) fn generate_owner_consuming_stages(
         });
         // Entries with tails have no stride, so the end of the group is only
         // knowable by walking them. Fixed-stride entries all occupy the acting
-        // block length, so the end is `count * block_length` — one multiply and
-        // one bounds check instead of a loop that the optimiser does not
-        // collapse.
+        // block length, so the end is `offset + count * block_length`, with no
+        // check: only `wrap_with_parent` (which proved `count * block_length`
+        // fits after the entries start) and `wrap_absent_parent` (count 0)
+        // build an attached group, and every cursor step (`next`, `skip_n`,
+        // `bulk_decode_into`, `rewind`) keeps that sum within the buffer.
         let skip_all_body = if tg.entries_have_tails {
             quote::quote! {
                 let mut offset = self.offset;
@@ -756,21 +753,8 @@ pub(crate) fn generate_owner_consuming_stages(
             }
         } else {
             quote::quote! {
-                let span = self
-                    .count
-                    .checked_mul(self.acting_block_length)
-                    .ok_or(sbe_rt::DecodeError::BufferTooShort {
-                        field: #g_name_lit,
-                        needed: usize::MAX,
-                        available: self.buf.len().saturating_sub(self.offset),
-                    })?;
-                let end = self.offset.checked_add(span).filter(|e| *e <= self.buf.len()).ok_or(
-                    sbe_rt::DecodeError::BufferTooShort {
-                        field: #g_name_lit,
-                        needed: span,
-                        available: self.buf.len().saturating_sub(self.offset),
-                    },
-                )?;
+                let end = self.offset + self.count * self.acting_block_length;
+                debug_assert!(end <= self.buf.len(), "fixed-stride group extent was proven at wrap");
                 Ok(self.into_parent_stage(end))
             }
         };
@@ -787,12 +771,12 @@ pub(crate) fn generate_owner_consuming_stages(
                     }
                 }
                 // Internal implementation detail of `skip_*` / `Iter::finish`
-                // on the preceding stage — not part of the public API. Scans
+                // on the preceding stage, not part of the public API. Scans
                 // past any unread entries (including nested tails) in wire
                 // order and returns the next decoder stage.
                 //
-                // Only an *attached* group — one reached through its
-                // message's tail — can complete into a message stage. A
+                // Only an attached group (one reached through its
+                // message's tail) can complete into a message stage. A
                 // standalone [`Self::wrap`] has no parent to return to.
                 #[inline]
                 fn skip_all(self) -> Result<#next_stage<'a>, sbe_rt::DecodeError> {
@@ -821,7 +805,7 @@ pub(crate) fn generate_owner_consuming_stages(
 
     // Following-tail methods on each fixed-stride group iterator: skip unread
     // entries, then delegate, so callers rarely name `finish()`. Dynamic groups
-    // have no iterator — their `into_*(visit)` already returns the next stage.
+    // have no iterator; their `into_*(visit)` already returns the next stage.
     for (gi, tg) in groups.iter().enumerate() {
         if tg.entries_have_tails {
             continue;
@@ -998,14 +982,11 @@ pub(crate) fn generate_decoder_consuming_stages(
         .var_data
         .iter()
         .map(|vd| {
-            let (type_pascal, prefix_size, len_field, len_type) =
-                get_vardata_info(elements, &vd.type_name);
+            let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             OwnerTailVarData {
                 accessor_snake: to_snake_case(&vd.name),
                 field_pascal: to_pascal_case(&vd.name),
-                type_pascal,
                 prefix_size,
-                len_field,
                 len_type,
                 max_length: vd.max_length,
                 name: vd.name.clone(),
@@ -1092,14 +1073,11 @@ pub(crate) fn generate_entry_consuming_stages(
         .var_data
         .iter()
         .map(|vd| {
-            let (type_pascal, prefix_size, len_field, len_type) =
-                get_vardata_info(elements, &vd.type_name);
+            let (_, prefix_size, _, len_type) = get_vardata_info(elements, &vd.type_name);
             OwnerTailVarData {
                 accessor_snake: to_snake_case(&vd.name),
                 field_pascal: to_pascal_case(&vd.name),
-                type_pascal,
                 prefix_size,
-                len_field,
                 len_type,
                 max_length: vd.max_length,
                 name: vd.name.clone(),

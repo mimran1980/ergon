@@ -7,11 +7,6 @@
 # devRoot is the host's /dev as the DaemonSet mounts it (hostPath /dev at
 # /host/dev): the plugin stats the PHC and PM QoS nodes there and grants them
 # under their /dev/... names.
-#
-# schedFifo stays "off": RT scheduling is deliberately not built. It is
-# quoted: YAML 1.1 turns an unquoted off into the boolean false, and
-# sigs.k8s.io/yaml then hands the plugin the string "false", which is not
-# a legal value. seccomp.ioUring accepts both spellings; schedFifo does not.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,6 +28,5 @@ data:
       rtPrio: "50"
     seccomp:
       ioUring: allow
-    schedFifo: "off"
     ptp: "auto"
     hugepagesAeronDir: "/dev/hugepages/aeron"

@@ -22,7 +22,7 @@
 //! // Generator::new(config).generate(&schema)
 //! ```
 
-use crate::ir::{ByteOrder, Ir};
+use crate::ir::Ir;
 
 /// Parsed + resolved SBE schema ready for [`crate::Generator`].
 ///
@@ -37,18 +37,15 @@ pub struct Schema {
 }
 
 impl Schema {
-    /// Create schema metadata from identity fields.
-    ///
-    /// The resulting schema has an empty token IR. Use this when you
-    /// plan to set the tokens manually, or for testing.
-    #[must_use]
+    /// An empty little-endian schema for codegen unit tests.
+    #[cfg(test)]
     pub(crate) fn new(package: impl Into<String>, id: u16, version: u16) -> Self {
         Self {
             ir: Ir {
                 package: package.into(),
                 id,
                 version,
-                byte_order: ByteOrder::LittleEndian,
+                byte_order: crate::ir::ByteOrder::LittleEndian,
                 description: None,
                 semantic_version: None,
                 header_type: "messageHeader".to_string(),
@@ -101,22 +98,6 @@ mod tests {
         assert_eq!(schema.ir.id, 99);
         assert_eq!(schema.ir.version, 3);
         assert_eq!(schema.ir.header_type, "customHeader");
-
-        Ok(())
-    }
-
-    #[test]
-    fn schema_new_has_correct_ir_defaults() -> Result<(), Box<dyn std::error::Error>> {
-        use crate::ir::ByteOrder;
-        let schema = Schema::new("pkg", 1, 0);
-        assert_eq!(schema.ir.package, "pkg");
-        assert_eq!(schema.ir.id, 1);
-        assert_eq!(schema.ir.version, 0);
-        assert_eq!(schema.ir.byte_order, ByteOrder::LittleEndian);
-        assert!(schema.ir.description.is_none());
-        assert!(schema.ir.semantic_version.is_none());
-        assert_eq!(schema.ir.header_type, "messageHeader");
-        assert!(schema.ir.tokens.is_empty());
 
         Ok(())
     }

@@ -1,4 +1,4 @@
-# Shared CPUs for Helper Threads (`k8s/nri-shared-cpus`)
+# Shared CPUs for helper threads (`k8s/nri-shared-cpus`)
 
 How to install and use `k8s/nri-shared-cpus` on a Kubernetes node.
 
@@ -90,10 +90,9 @@ Chart digest
 `repository:tag`, and the default tag is image `0.1.3`.
 
 The chart renders every field `config.File` accepts, with
-`seccomp.ioUring`, `ptp` and `schedFifo` quoted `"off"`. The plugin leaves
+`seccomp.ioUring` and `ptp` quoted `"off"`. The plugin leaves
 them off. A later edit of the ConfigMap can turn a key on, and the pod
 still has to opt in. Aeron's C media driver does not use io_uring.
-`SCHED_FIFO` stays off.
 
 `admission.create` defaults to false and renders a ConfigMap whose
 `data.owner` is `external`. Set it true to install the two named admission
@@ -158,7 +157,7 @@ sample does not ask for those grants.
 
 Not yet run on kind.
 
-The 18-step `test/e2e.sh` is a different run. It builds
+The 19-step `test/e2e.sh` is a different run. It builds
 `ergon-shared-cpus:dev` from this tree. It does not pull the public chart.
 
 ## What it gives
@@ -178,6 +177,30 @@ asking 100 on a node with two shared CPUs gets one of them; 1,001 to 2,000
 gets both. Pods given the same shared CPU split it by their cgroups'
 `cpu.weight` (from the `cpu` request), not by `M`. The lab's scale step
 checks this; not yet run.
+
+<div class="ergon-anim" data-anim="shared-cpus-allocation" data-title="How helper threads get a shared CPU without touching the exclusive ones"></div>
+
+*Animation, in words:* an illustrative 8-CPU node has CPU 0 for NIC
+interrupts, CPUs 1 and 2 as the shared CPUs, and CPUs 3 to 7 in the static
+CPU manager's pool; the millicpu values are illustrative and the selection
+follows `internal/assign/assign.go`. Pod A (`cpu: 2`, 250 m) gets exclusive
+CPUs 3 and 4 from the kubelet. `Need(250)` is 1; `Choose` finds no
+remembered set, sorts the shared CPUs by load (both 0, ties to the lower
+number) and picks CPU 1; `Hold` books 250 m there. The cgroup gets
+`1,3-4`, the env lists the two sets apart. Pod B (`cpu: 2`, 1,500 m) gets 5
+and 6; `Need(1500)` is 2, so it takes both shared CPUs and `Split` books
+750 m on each: CPU 1 reads 1,000 m, which is accounting, not a cap. Before
+A's program starts, the hook sets 1 ns timer slack on the container's init
+and pins it to CPU 1; the app's later threads copy both, and the hot thread
+pins itself to index 0 of `ERGON_ISOLATED_CPUS`, CPU 3. A's container
+stops: `Release` drops its 250 m and keeps its remembered set. Pod C
+(`cpu: 1`, 250 m) breaks the 750 m tie to CPU 1. A restarts with a new
+container ID and the same key, and `Choose` returns the remembered CPU 1
+without sorting, although CPU 2 is lighter. Deleting pod A calls
+`ForgetPod`, which clears the remembered set; otherwise only a plugin
+restart does, since `Synchronize` rebuilds the table from live containers. A side panel
+shows the idle rows of the timer-slack table below. Operation counts come
+from the code; they are not timings.
 
 ### Timer slack
 
@@ -270,10 +293,10 @@ later step names one of them.
 nohz_full=2-5 rcu_nocbs=2-5 isolcpus=managed_irq,domain,2-5
 ```
 
-**kubelet** — `reservedSystemCPUs: "0,1"` (shared + IRQ) with the policy
+**kubelet**: `reservedSystemCPUs: "0,1"` (shared + IRQ) with the policy
 above. Restart kubelet and check it took.
 
-**containerd** — NRI on (`disable = false`) and the default validator on.
+**containerd**: NRI on (`disable = false`) and the default validator on.
 The validator is what makes an unmet `required-plugins` annotation fail the
 create instead of starting the pod half-granted. Leave
 `required_plugins` empty: a node-wide list would also block kube-system
@@ -287,7 +310,7 @@ that the boot line leaves on ([what reached it, and the fix](https://github.com/
 | setting | value | why | note |
 |---|---|---|---|
 | `/sys/kernel/mm/transparent_hugepage/enabled` | `never` (`madvise` still runs `khugepaged`) | `khugepaged` calls `lru_add_drain_all`: a kworker on every CPU with queued pages | or `transparent_hugepage=never` on the boot line |
-| `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer: a nohz kick and a reschedule IPI, and the tick kept on | kernel 6.12+; debugfs, so lost at reboot: a oneshot unit after `sys-kernel-debug.mount`; safe only where nothing real-time runs on those CPUs (not with `ergon-cpus --fifo`) |
+| `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer: a nohz kick and a reschedule IPI, and the tick kept on | kernel 6.12+; debugfs, so lost at reboot: a oneshot unit after `sys-kernel-debug.mount`; safe only where nothing real-time runs on those CPUs |
 
 Apply both at every boot from a oneshot unit, and check them read-only
 after it runs.
@@ -372,8 +395,6 @@ seccomp:
 ptp: "auto"              # default "off". Without it, a pod asking for
                          # ptp.ergon.io/<ctr>: "auto" is refused. "auto" is
                          # the NIC's PHC, or give a /dev/ptp* path the node has
-schedFifo: "off"         # off by default; its one A/B was mixed (see
-                         # Kubernetes HFT tuning, SCHED_FIFO)
 ```
 
 Rules:
@@ -455,14 +476,13 @@ stay as they were at create.
 | `oversubscription` | `1` | 1–100. Capacity is `len(sharedCpus) x 1000 x` this; the max is 100,000 device IDs (the kubelet's 4 MiB gRPC limit) |
 | `namespaces` | empty | the allowlist. Empty refuses every opt-in. Each must be a valid namespace name |
 | `defaultAffinity` | `shared` | `shared` injects the hook that starts every thread on the shared CPUs. `all` injects nothing; use the `ergon-cpus` wrapper (see Bottlerocket below) |
-| `hookPath` | `/opt/ergon/bin/ergon-cpus` | where the daemon writes the hook on the node. Must be a clean absolute path ending in `/ergon-cpus` — the daemon writes it as root, so the name is fixed |
+| `hookPath` | `/opt/ergon/bin/ergon-cpus` | where the daemon writes the hook on the node. Must be a clean absolute path ending in `/ergon-cpus`; the daemon writes it as root, so the name is fixed |
 | `annotationOptIn` | `false` | allow the pod annotation `cpu-shared.ergon.io/<container>` as a fallback when the device plugin is not used |
 | `metricsAddress` | `:9466` | serves `/metrics`, `/healthz` and `/readyz` |
 | `rlimits.memlock`, `.nofile`, `.rtPrio`, `.nice` | unset | the ceiling a pod may ask for by kind. `"inf"` or a positive count. The pod asks for kinds, never values |
 | `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
 | `seccompProfilePath` | `/etc/ergon-shared-cpus/ergon-io-uring.json` | the shipped io_uring profile on the node, the fallback for a pod that cannot take the NRI grant |
 | `devRoot` | `/dev` | where this process sees the host's `/dev`. The DaemonSet mounts it read-only at `/host/dev` so the plugin can stat the PHC and PM QoS nodes; granted paths stay `/dev/...` |
-| `schedFifo` | `off` | `off`, or `thread` (the hot thread only, never the container). Quote the value: unquoted `off` is a YAML boolean |
 | `ptp` | `off` | `off`, `auto`, or a `/dev/ptp*` path the node has. `auto` grants the NIC's PHC |
 | `hugepagesAeronDir` | unset | absolute `AERON_DIR` to export when the pod mounts a sized hugetlbfs |
 
@@ -486,8 +506,9 @@ into booleans.
 Unknown fields and out-of-range values are refused at start, each naming its
 field: `oversubscription` outside 1–100, a `namespaces` entry that is not a
 namespace name, `hookPath` not ending in `/ergon-cpus`, an `rlimits` value
-that is neither `inf` nor a positive count, `schedFifo` / `ptp` /
-`seccomp.ioUring` outside their sets.
+that is neither `inf` nor a positive count, `ptp` /
+`seccomp.ioUring` outside their sets. A `schedFifo` key from an older release
+is refused the same way.
 
 ## Pod
 
@@ -643,7 +664,7 @@ mkdir -p "$ERGON_HUGEPAGES_DIR/aeron"
 export AERON_DIR="$ERGON_HUGEPAGES_DIR/aeron"
 ```
 
-An unsized hugetlbfs — what `emptyDir: {medium: HugePages}` gives you — is
+An unsized hugetlbfs (what `emptyDir: {medium: HugePages}` gives you) is
 rejected by Aeron. That is why the size comes from the annotation.
 
 **Affinity variables:**
@@ -713,9 +734,56 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
 |---|---|---|
 | plugin down at create | NRI makes no change | `required-plugins.noderesource.dev` makes the create fail; the wrapper refuses without `ERGON_SHARED_CPUS`; the resource does not allocate |
 | kubelet restart, plugin up | the re-write keeps the union | the plugin re-widens in `UpdateContainer` |
-| kubelet restart, plugin down | cpuset shrinks to the exclusive CPUs; helpers fall onto them | demonstrated by `test/e2e.sh` step 9. Recovery does not prove the contract held during the outage |
+| kubelet restart, plugin down | cpuset shrinks to the exclusive CPUs; helpers fall onto them until the plugin is back | nothing prevents it. The pod detects it and leaves Ready (below); `Synchronize` re-widens on reconnect |
 | host drift | a new hot create is refused | the plugin stays connected. `/healthz` stays up. This is not a liveness restart |
 | hook binary missing | the create fails | the DaemonSet installs the binary before it connects |
+
+### Running pods during a plugin outage
+
+`required-plugins` protects creation, not a pod that is already running.
+While the plugin is down, a kubelet restart rewrites the cpuset to the
+exclusive CPUs only. Every helper thread moves onto them and competes with
+the loop until the plugin reconnects.
+
+The contract:
+
+- **Detection is in the pod.** Placement holds while
+  `cpuset.cpus.effective` contains `ERGON_ISOLATED_CPUS` and
+  `ERGON_SHARED_CPUS`. In a cpu-partition pod the partition holds the
+  exclusive CPUs, and the probe also requires the `ergon-isolated` child's
+  `cpuset.cpus.partition` to read `isolated`, not `isolated invalid`.
+  During the outage nothing on the node is running to report a shrunk
+  cpuset.
+- **Pod spec.** Start the app as
+  `ergon-cpus --ready-addr :8086 -- <app>` and add an `httpGet` readiness
+  probe on `:8086/placement` (`periodSeconds: 1`, `failureThreshold: 1`).
+  The admission policy denies exec probes on hot pods; an `httpGet` probe
+  runs from the kubelet. The endpoint answers `503 placement broken: <reason>`
+  while a list is missing or the partition is invalid, and
+  `200 placement verified` otherwise. The endpoint listens on every
+  interface (the kubelet probes the pod IP) and returns the CPU lists; on a
+  `hostNetwork` pod choose a port that is free on the node.
+- **App.** While the endpoint answers 503, stop the work that needs the
+  exclusive CPUs. A helper thread can poll it on localhost or make the same
+  comparison itself; the hot thread never does.
+- **Node.** On reconnect the plugin's `Synchronize` re-widens every
+  managed container and counts it in
+  `ergon_shared_cpus_rewidened_total{event="sync"}`. The counter belongs
+  to the plugin process, starts at 0 and goes up only when a container had
+  lost its shared CPUs. Alert on
+  `ergon_shared_cpus_rewidened_total{event="sync"} > 0` (or on the plugin's
+  `sync: re-widen` log line), not on `increase()`: the re-widen comes right
+  after a new plugin pod connects, usually before its first scrape, and
+  `increase()` ignores a new series' first sample. The alert keeps firing
+  until that plugin pod restarts.
+  The pod is Ready again only once its cpuset holds both lists. In the
+  e2e the helper was back on its shared CPU by then.
+
+`--ready-addr` is not in the published 0.1.3 image. It ships in the next
+release; until then build `ergon-cpus` from the source tree.
+
+`test/e2e.sh` steps 9, 10 and 18 check this on kind and time it
+([plugin outage timings](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#plugin-outage-timings-kind)).
 
 ## Limits and what is not verified
 

@@ -1,12 +1,12 @@
 # The actual working loop
 
-The primary agent interface was **Claude Code CLI**, often connected to custom
+The primary agent interface was Claude Code CLI, often connected to custom
 models rather than a Claude model. Claude Code was useful because I wanted to
 learn the tool used at work and because its endpoint configuration let me run
 DeepSeek and GLM through the same agent workflow.
 
-The work ran on a Mac mini at home. I connected with JetBrains **RustRover
-Remote Development**, the Claude Code app, and ordinary SSH. I used
+The work ran on a Mac mini at home. I connected with JetBrains RustRover
+Remote Development, the Claude Code app, and ordinary SSH. I used
 [Herdr](https://herdr.dev/), an agent-aware persistent terminal multiplexer,
 so the Claude Code session survived disconnects and I could reattach from
 another device.

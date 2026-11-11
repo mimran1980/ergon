@@ -24,12 +24,12 @@ for entry in ignores:
     advisory = entry.get("id") if isinstance(entry, dict) else entry
     crate = advisory_crates.get(advisory) if isinstance(advisory, str) else None
     if crate is None:
-        print(f"check-stale-deny-ignores: FAIL — no crate mapping for {advisory!r}")
+        print(f"check-stale-deny-ignores: FAIL: no crate mapping for {advisory!r}")
         failed = True
         continue
     if crate not in packages:
         print(
-            f"check-stale-deny-ignores: FAIL — {advisory} ignores {crate}, "
+            f"check-stale-deny-ignores: FAIL: {advisory} ignores {crate}, "
             "which is in no Cargo.lock"
         )
         failed = True

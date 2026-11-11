@@ -16,9 +16,34 @@ mod nested {
     include!(concat!(env!("OUT_DIR"), "/nested.rs"));
 }
 
+mod zero_length_header {
+    include!(concat!(env!("OUT_DIR"), "/zero_length_header.rs"));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{big_endian, little_endian, nested};
+    use super::{big_endian, little_endian, nested, zero_length_header};
+
+    /// A zero-length header and body make every length guard see N = 0: an
+    /// offset past the buffer must be an error, never a pointer offset out
+    /// of the allocation.
+    #[test]
+    fn zero_length_frame_rejects_offset_past_buffer() -> Result<(), Box<dyn std::error::Error>> {
+        use zero_length_header::{AnyMessage, EmptyDecoder, EmptyEncoder};
+        let buf = [0u8; 4];
+        let mut out = [0u8; 4];
+        for offset in [5usize, 100, usize::MAX] {
+            assert!(EmptyDecoder::try_decode(&buf, offset).is_err());
+            assert!(AnyMessage::try_decode(&buf, offset).is_err());
+            assert!(AnyMessage::decode_frame(&buf, offset, 0).is_err());
+            assert!(EmptyEncoder::try_wrap_and_apply_header(&mut out, offset).is_err());
+            assert!(EmptyEncoder::try_wrap(&mut out, offset).is_err());
+        }
+        EmptyDecoder::try_decode(&buf, 4)?;
+        AnyMessage::try_decode(&buf, 4)?;
+        AnyMessage::decode_frame(&buf, 4, 0)?;
+        Ok(())
+    }
 
     #[test]
     fn little_endian_fixed_codec() -> Result<(), Box<dyn std::error::Error>> {

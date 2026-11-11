@@ -148,7 +148,7 @@ fn ten_pow(n: u32) -> Option<i128> {
 }
 
 /// Parse a decimal string exactly using rust_decimal, returning (mantissa, exponent).
-/// Invalid input returns an error — never silently converts to zero.
+/// Invalid input returns an error and never silently converts to zero.
 pub fn parse_decimal_exact(s: &str) -> Result<WireDecimal, DecimalConvertError> {
     let d = rust_decimal::Decimal::from_str(s).map_err(|_| DecimalConvertError::OutOfRange)?;
     let mantissa: i128 = d.mantissa();

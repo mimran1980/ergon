@@ -4,10 +4,10 @@ Runnable code: [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/
 
 - [Aeron try_claim](recipes/aeron-try-claim.md)
 - [Display / Debug](recipes/display-debug.md)
-- [Schema Descriptions → Rustdoc](recipes/schema-rustdoc.md)
+- [Schema descriptions as rustdoc](recipes/schema-rustdoc.md)
 - [Domain DTOs](recipes/domain-dtos.md)
-- [App Types on Composites](recipes/app-types-composites.md)
-- [Timestamp Conversions](recipes/timestamps.md)
+- [App types on composites](recipes/app-types-composites.md)
+- [Timestamp conversions](recipes/timestamps.md)
 
 ## Quick reference
 
@@ -16,7 +16,7 @@ Runnable code: [sbe-feature-tour](https://github.com/mimran1980/ergon/tree/main/
 ```rust,no_run
 {{#include ../../../samples/sbe-feature-tour/src/lib.rs:encode_sample_car}}
 ```
-*(From `sbe-feature-tour` — known-count groups with chaining, tested in CI.)*
+*(From `sbe-feature-tour`: known-count groups with chaining, tested in CI.)*
 
 **Unknown size:** count back-patched after the closure (streaming producers).
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-bench-historic.sh — enforce ergo historic regression baselines.
+# check-bench-historic.sh: enforce ergo historic regression baselines.
 #
 # Compares current Criterion estimates for ergo-specific benchmarks against
 # stored baselines in `sbe/benchmarks/ergo-historic-baseline.env`. Fails if
@@ -59,7 +59,7 @@ while IFS='=' read -r key value; do
     # A missing estimate means the bench did not run or was renamed; passing
     # would let the gate report success with nothing compared.
     if ! current=$(get_estimate "$criterion_dir_key" 2>/dev/null) || [[ -z "$current" ]]; then
-        echo "  FAIL $key — no current estimate (bench did not run or was renamed)"
+        echo "  FAIL $key: no current estimate (bench did not run or was renamed)"
         failures=$((failures + 1))
         continue
     fi

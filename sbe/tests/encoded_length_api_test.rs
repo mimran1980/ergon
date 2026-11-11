@@ -151,7 +151,6 @@ let mut buf = &mut buf_storage[..len];
         .description(desc)?;
         assert_eq!(len, complete.encoded_length_with_header());
         assert_eq!(len, complete.as_bytes_with_header().len());
-        println!("PASS: direct_flatgroup_exact_length = {len}");
         "#,
     );
     Ok(())
@@ -227,7 +226,6 @@ fn conformance_matrix_flatgroup() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     compile_and_run_generated_tests("matrix_fg", &src, &tests)?;
-    println!("PASS: conformance_matrix_flatgroup — {} tests", tests.len());
     Ok(())
 }
 
@@ -315,7 +313,6 @@ let mut buf = &mut buf_storage[..len];
         let mut tiny = [0u8; 4]; // header=8, block=8 — 4 is too short
         let result = FlatGroupEncoder::try_wrap_and_apply_header(&mut tiny, 0);
         assert!(result.is_err(), "too-short buffer must fail");
-        println!("PASS: one_byte_short_buffer_fails");
         "#,
     );
     Ok(())
@@ -333,7 +330,6 @@ fn endianness_generates_identical_structure() -> Result<(), Box<dyn std::error::
         le_count, be_count,
         "LE and BE schemas must generate same number of EncodedLength references"
     );
-    println!("PASS: endianness_generates_identical_structure");
     Ok(())
 }
 
@@ -357,7 +353,6 @@ fn ragged_too_few_entries_rejected() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             panic!("expected GroupCountMismatch");
         }
-        println!("PASS: ragged_too_few_entries_rejected");
         "#,
     );
     Ok(())
@@ -374,7 +369,6 @@ fn direct_helper_overflow_detected() -> Result<(), Box<dyn std::error::Error>> {
             u16::MAX, u16::MAX, usize::MAX,
         );
         assert!(result.is_err(), "checked arithmetic overflow must return Err");
-        println!("PASS: direct_helper_overflow_detected");
         "#,
     );
     Ok(())
@@ -397,7 +391,6 @@ fn production_schemas_generate_valid_rust() -> Result<(), Box<dyn std::error::Er
         let (_s, src) = generate(&path, &format!("prod_{schema_name}"));
         syn::parse_file(&src)
             .map_err(|e| format!("{} generated invalid Rust: {e}", schema_name))?;
-        eprintln!("OK {schema_name}: parses");
     }
     Ok(())
 }

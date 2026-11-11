@@ -84,9 +84,6 @@ type Decision struct {
 type Grants struct {
 	// Rlimits are the POSIX rlimits to add (from the plugin config).
 	Rlimits []latency.Rlimit
-	// SchedFifo is the SCHED_FIFO priority the hot thread may take, or 0.
-	// The plugin never sets a container-wide realtime policy.
-	SchedFifo int
 	// SeccompMode is latency.ModeIOUring or latency.ModeRuntimeDefault.
 	SeccompMode string
 	// Seccomp is the policy to apply, or nil for "leave the request's".
@@ -152,7 +149,7 @@ func Admit(cfg *config.Config, r Request) (*Decision, error) {
 		return nil, refuse(7, "env-by-hand", "%s is set by hand; request %s (the device plugin annotation is missing; containerd >= 2.0 is needed)", names.EnvMilli, names.Resource)
 	default:
 		// No shared-CPU opt-in. The latency-pod grants (rlimits, seccomp,
-		// NUMA, ptp, sched-fifo, hugepages, cpu-partition, cpuqos) are opt-in
+		// NUMA, ptp, hugepages, cpu-partition, cpuqos) are opt-in
 		// by their own annotations and do not need the millicpu resource.
 		// Honour them, and refuse the ones this node cannot give (fail closed).
 		g, err := resolveGrants(cfg, &r)

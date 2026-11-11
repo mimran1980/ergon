@@ -8,8 +8,8 @@ use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
     collect_description, element_children, is_primitive_name, opt_u16_attr, opt_usize_attr,
-    parse_deprecated_attr, parse_presence, parse_primitive_type, preceding_xml_comments,
-    reject_duplicate_type_name, string_attr, structural, u16_attr, validate_sbe_name,
+    parse_deprecated_attr, parse_presence, parse_primitive_type, reject_duplicate_type_name,
+    string_attr, structural, validate_sbe_name,
 };
 use super::error::Fault;
 use super::registry::{
@@ -24,8 +24,8 @@ pub(crate) fn parse_types_node(
     tokens: &mut Vec<Token>,
     warn_state: &WarnState,
 ) -> Result<(), Fault> {
-    // Pass 1: typedefs, enums, sets (no composites — so composite `<ref>` can
-    // resolve targets that appear later in the same `<types>` block).
+    // Pass 1: typedefs, enums and sets, but not composites, so a composite
+    // `<ref>` can resolve targets that appear later in the same `<types>` block.
     let mut composite_nodes = Vec::new();
     for type_child in element_children(node) {
         match type_child.tag_name().name() {
@@ -57,10 +57,10 @@ pub(crate) fn parse_types_node(
                 composite_nodes.push(type_child);
             }
             "enum" => {
-                parse_enum(warn_state, type_child, registry, tokens)?;
+                parse_enum(type_child, registry, tokens)?;
             }
             "set" => {
-                parse_set(warn_state, type_child, registry, tokens)?;
+                parse_set(type_child, registry, tokens)?;
             }
             other => {
                 return Err(Fault::invalid(
@@ -188,7 +188,7 @@ pub(crate) fn parse_type_element(
     };
 
     // Constant `<type>`: body text, or `valueRef` (e.g. TimeUnit.nanosecond) as in
-    // value-ref-schema.xml — same options sbe-tool accepts for constant fields.
+    // value-ref-schema.xml, the same options sbe-tool accepts for constant fields.
     let constant_value = if presence == Presence::Constant {
         let from_text = node
             .text()
@@ -291,7 +291,7 @@ pub(crate) fn parse_composite(
         if tag == "enum" {
             let enum_name = string_attr(child, "name", "composite nested enum @name")?;
             if !registry.registry.contains_key(&enum_name) {
-                parse_enum(warn_state, child, registry, tokens)?;
+                parse_enum(child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(resolved) = resolve_type_to_tokens(
@@ -310,7 +310,7 @@ pub(crate) fn parse_composite(
         if tag == "set" {
             let set_name = string_attr(child, "name", "composite nested set @name")?;
             if !registry.registry.contains_key(&set_name) {
-                parse_set(warn_state, child, registry, tokens)?;
+                parse_set(child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             if let Some(resolved) = resolve_type_to_tokens(
@@ -378,8 +378,8 @@ pub(crate) fn parse_composite(
             continue;
         }
 
-        // SBE `<ref name="x" type="T"/>` — detect self-cycles; expand when T is
-        // already registered (forward refs are resolved via later field use).
+        // SBE `<ref name="x" type="T"/>`: reject self-cycles and expand when T
+        // is already registered (later field use resolves forward refs).
         if tag == "ref" {
             let member_name = string_attr(child, "name", "composite ref @name")?;
             validate_sbe_name(child, &member_name, "composite ref @name")?;
@@ -572,7 +572,6 @@ pub(crate) fn parse_composite(
 }
 
 pub(crate) fn parse_enum(
-    warn_state: &WarnState,
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
     tokens: &mut Vec<Token>,
@@ -677,8 +676,8 @@ pub(crate) fn parse_enum(
                 }
             }
             // Enum values must lie within the encoding type's min/max when set.
-            // Signed min/max are stored as two's-complement `u64` bits — compare
-            // as `i64` so `int8` `-1` is inside `-5..=5`.
+            // Signed min/max are stored as two's-complement `u64` bits, so
+            // compare as `i64`: `int8` `-1` is inside `-5..=5`.
             if let Some(parsed_val) = parse_u64_val(val_text, Some(encoding_type))
                 && let Err(why) =
                     value_in_declared_range(encoding_type, parsed_val, encoding_min, encoding_max)
@@ -712,7 +711,6 @@ pub(crate) fn parse_enum(
 }
 
 pub(crate) fn parse_set(
-    warn_state: &WarnState,
     node: Node<'_, '_>,
     registry: &mut TypeRegistry,
     tokens: &mut Vec<Token>,

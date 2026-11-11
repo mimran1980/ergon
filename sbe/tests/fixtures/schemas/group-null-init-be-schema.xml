@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Every optional field shape at message, group-entry and nested-group-entry
+     level: group entries must write the same null image fixed() writes.
+     Used by group_null_init_test and the sbe-tool wire-parity test. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="group_null_init_be"
+                   id="78"
+                   version="1"
+                   semanticVersion="1.0"
+                   description="Group entry null images"
+                   byteOrder="bigEndian">
+    <types>
+        <composite name="messageHeader" description="Message identifiers and length of message root">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <type name="OptI32" primitiveType="int32" presence="optional"/>
+        <type name="OptU8x4" primitiveType="uint8" length="4" presence="optional"/>
+        <type name="OptU16x2" primitiveType="uint16" length="2" presence="optional"/>
+        <type name="OptI32x4" primitiveType="int32" length="4" presence="optional"/>
+        <type name="OptText" primitiveType="char" length="12" presence="optional"/>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="Buy">0</validValue>
+            <validValue name="Sell">1</validValue>
+        </enum>
+        <composite name="Pair">
+            <type name="lo" primitiveType="uint32" presence="optional"/>
+            <type name="hi" primitiveType="uint32"/>
+        </composite>
+        <composite name="Outer">
+            <ref name="inner" type="Pair"/>
+            <type name="tag" primitiveType="uint8" presence="optional" nullValue="7"/>
+        </composite>
+    </types>
+    <sbe:message name="Msg" id="1">
+            <field name="req" id="1" type="uint32"/>
+            <field name="optScalar" id="2" type="OptI32"/>
+            <field name="optEnum" id="3" type="Side" presence="optional"/>
+            <field name="optSmall" id="4" type="OptU8x4"/>
+            <field name="optPair" id="5" type="OptU16x2"/>
+            <field name="optWide" id="6" type="OptI32x4"/>
+            <field name="optText" id="7" type="OptText"/>
+            <field name="optComp" id="8" type="Pair" presence="optional"/>
+            <field name="optNest" id="9" type="Outer" presence="optional"/>
+            <field name="optLate" id="10" type="OptU16x2" sinceVersion="1"/>
+        <group name="rows" id="20" dimensionType="groupSizeEncoding">
+            <field name="req" id="1" type="uint32"/>
+            <field name="optScalar" id="2" type="OptI32"/>
+            <field name="optEnum" id="3" type="Side" presence="optional"/>
+            <field name="optSmall" id="4" type="OptU8x4"/>
+            <field name="optPair" id="5" type="OptU16x2"/>
+            <field name="optWide" id="6" type="OptI32x4"/>
+            <field name="optText" id="7" type="OptText"/>
+            <field name="optComp" id="8" type="Pair" presence="optional"/>
+            <field name="optNest" id="9" type="Outer" presence="optional"/>
+            <field name="optLate" id="10" type="OptU16x2" sinceVersion="1"/>
+            <group name="cells" id="30" dimensionType="groupSizeEncoding">
+            <field name="req" id="1" type="uint32"/>
+            <field name="optScalar" id="2" type="OptI32"/>
+            <field name="optEnum" id="3" type="Side" presence="optional"/>
+            <field name="optSmall" id="4" type="OptU8x4"/>
+            <field name="optPair" id="5" type="OptU16x2"/>
+            <field name="optWide" id="6" type="OptI32x4"/>
+            <field name="optText" id="7" type="OptText"/>
+            <field name="optComp" id="8" type="Pair" presence="optional"/>
+            <field name="optNest" id="9" type="Outer" presence="optional"/>
+            <field name="optLate" id="10" type="OptU16x2" sinceVersion="1"/>
+            </group>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

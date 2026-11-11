@@ -6,13 +6,12 @@
 //! start. Every warning line that is printed ends with how to silence it.
 //!
 //! `require` is a readiness gate, not a blanket refusal. It refuses on a
-//! **warning** (a check fired) and on an **unproven** check whose job is to
-//! prove a property of this pod or process
-//! ([`unknown_stops_require`]):
-//! starting on an unproven isolation claim is the false pass the check
-//! exists to stop. An unknown of a check whose subsystem the node may not
-//! have — PSI, a NUMA node, a NIC knob — is printed and allowed through,
-//! because refusing there would stop every start on such a host.
+//! warning (a check fired) and on an unproven check whose job is to prove a
+//! property of this pod or process ([`unknown_stops_require`]): starting on an
+//! unproven isolation claim is the false pass the check exists to stop. An
+//! unknown from a check whose subsystem the node may lack (`memory.high`, a
+//! NUMA node, a NIC knob) is printed and allowed through, because refusing
+//! there would stop every start on such a host.
 
 use std::fmt;
 
@@ -24,13 +23,12 @@ pub const HOST_CHECKS_ENV: &str = "ERGON_HOST_CHECKS";
 /// What every printed warning line ends with.
 pub const SILENCE: &str = "(ERGON_HOST_CHECKS=off silences host-check warnings)";
 
-/// The checks whose unknown result does **not** stop a
-/// [`HostCheckPolicy::Require`] start: each reads a subsystem the node may
-/// not have (THP, tmpfs, NUMA, PSI and `memory.high`, a NIC knob, the time
-/// daemon a pod cannot see, node-wide noise read where the node lets a
-/// process see it: debugfs, other PID namespaces, steal accounting), so
-/// absent evidence is a host without it, not a
-/// gap in a proof.
+/// The checks whose unknown result does not stop a
+/// [`HostCheckPolicy::Require`] start. Each reads a subsystem the node may
+/// not have (THP, tmpfs, NUMA, `memory.high`, a NIC knob, the time daemon a
+/// pod cannot see, or node-wide noise such as debugfs, other PID namespaces
+/// and steal accounting where the node lets a process see it), so missing
+/// evidence means a host without it, not a gap in a proof.
 const SUBSYSTEM_CHECKS: [&str; 21] = [
     "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "T20", "T21",
     "K6", "K7", "N1", "N2", "N3", "N4", "M4",
@@ -40,11 +38,11 @@ const SUBSYSTEM_CHECKS: [&str; 21] = [
 /// [`HostCheckPolicy::Require`] start.
 ///
 /// A check that proves a property of this pod or process (its CPUs are its
-/// own and isolated, no CPU quota, its helpers have a core) **blocks** when
-/// it cannot be answered: unproven is not "fine". A check of a subsystem the
-/// node may not have (T3, T4, T5, T6, T11, T13-T21, K6, K7, N1-N4, M4) does
-/// not.
-/// Every other id blocks, a caller's own included: unclassified fails closed.
+/// own and isolated, no CPU quota, its helpers have a core) blocks when it
+/// cannot be answered, because unproven is not fine. A check of a subsystem
+/// the node may not have (T3, T4, T5, T6, T11, T13-T21, K6, K7, N1-N4, M4)
+/// does not. Every other id blocks, a caller's own included, so an
+/// unclassified id fails closed.
 #[must_use]
 pub fn unknown_stops_require(id: &str) -> bool {
     !SUBSYSTEM_CHECKS.contains(&id)
@@ -59,8 +57,8 @@ pub enum HostCheckPolicy {
     /// Print the warning lines (the default).
     #[default]
     On,
-    /// Print them, and make a warning an error at start. An **unproven** check
-    /// is an error too, but only where the check must prove something: see
+    /// Print them, and make a warning an error at start. An unproven check is
+    /// an error too, but only where the check must prove something: see
     /// [`unknown_stops_require`].
     Require,
 }

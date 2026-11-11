@@ -27,7 +27,7 @@ received a correction. This was less theatrical and much more effective.
 
 At this stage I learned that I needed to inspect the artefact closest to the
 contract. For `ergo-sbe`, that was normally the emitted Rust, the calling API,
-the encoded bytes, or the benchmark—not the syntax-tree construction that
+the encoded bytes, or the benchmark, not the syntax-tree construction that
 produced it. I could identify a bad offset or ugly repeating-group API quickly
 in generated code. The same mistake was much harder to see by mentally
 executing hundreds of lines of `syn` and `quote`.

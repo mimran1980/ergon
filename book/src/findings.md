@@ -1,7 +1,7 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:3aedf3b36913743a573a0d5963220518a655eae3702ea21973369270f9d6702f -->
-# Latency Findings at a Glance
+<!-- Generated page: edits here are overwritten by the next export. sha256:115c9b799e48215ba91333fba320f61292a7d33a3a419d888b383a432507ae77 -->
+# Latency findings at a glance
 
-What every benchmark taught us; the short answer is the first table.
+What the benchmarks showed. The short answer is the first table.
 
 Terms: [ergon-io glossary](io/overview.md#glossary),
 [md-dpdk glossary](md-dpdk/overview.md#glossary). A *spy* reads a
@@ -383,7 +383,7 @@ single-read max exists ([clocks](deploy/clocks.md)).
 | Driver threading modes are level | true only at 1 stream; at 32–128 streams p50 +1.9 to +130.8 µs (maxima 94 µs to 16.2 ms, set by path outages, not ranked) | [comparison](transports/comparison.md) |
 | Kernel UDP beats DPDK on AWS throughput | partial TX accepts duplicated frames; both reach 15.17 M msg/s at 32 B | [md-dpdk](md-dpdk/overview.md) |
 | A 20 µs conductor park fixes Azure loss | an 80 KiB window stops it; the park only buys back rate | [md-dpdk config](md-dpdk/configuration.md) |
-| A custom counter clock disciplined to UTC is needed | it tied quanta on read cost; worst residual 9,443 ns (`c7i`, from chrony's frequency steps); removed | [clock history](https://github.com/mimran1980/ergon/blob/main/docs/history/ergon-clock-BENCHMARKS.md) |
+| A custom counter clock disciplined to UTC is needed | it tied quanta on read cost; worst residual 9,443 ns (`c7i`, from chrony's frequency steps); removed | [clock history](https://github.com/mimran1980/ergon/blob/336a73d24db90d6cf4c365758384288f6f0d6353/docs/history/ergon-clock-BENCHMARKS.md) |
 | The x86 SBE encode losses are the codec | harness fairness defects; at or near 1.00 after the fix | [SBE benchmarks](sbe/benchmarks.md) |
 
 ## Still open

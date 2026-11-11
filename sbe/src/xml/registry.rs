@@ -6,9 +6,6 @@ use roxmltree::Node;
 
 use crate::ir::{Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 
-use super::error::Fault;
-use super::warn::{WarnState, warn_once};
-
 pub(crate) struct TypeRegistry {
     pub(crate) registry: HashMap<String, Vec<Token>>,
     pub(crate) encodings: HashMap<String, Encoding>,
@@ -62,8 +59,8 @@ impl TypeRegistry {
     /// Rebuild a registry from an already-parsed schema's flat token stream,
     /// so a second schema can resolve its composite/enum/set types without
     /// re-declaring or re-`<include>`-ing them. Bare top-level `<type>`
-    /// typedefs don't round-trip through `Ir` (they're inlined and dropped
-    /// during parsing) — only composites, enums, and sets are recovered here.
+    /// typedefs do not round-trip through `Ir` (parsing inlines and drops
+    /// them), so only composites, enums, and sets are recovered here.
     pub(crate) fn from_parsed_schema(ir: &Ir) -> Self {
         let mut registry = Self::new();
         let mut i = 0;

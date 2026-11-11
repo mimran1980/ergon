@@ -2,7 +2,7 @@
 name = "cluster-ha-orderbook"
 version = "0.1.0"
 edition = "2024"
-description = "HA sample: AppMessage books via ergo-aeron-cluster try_claim + never-stale book"
+description = "HA sample: full L2 snapshots via ergo-aeron-cluster try_claim + epoch/sequence recovery contract"
 publish = false
 
 [dependencies]
@@ -24,11 +24,11 @@ test-harness = [
 ergo-sbe = { path = "../../sbe" }
 
 [dependencies.rusteron-media-driver]
-version = "0.2.16"
+version = "0.2.18"
 optional = true
 
 [dependencies.rusteron-client]
-version = "0.2.16"
+version = "0.2.18"
 optional = true
 
 [dependencies.serial_test]

@@ -19,7 +19,7 @@ cargo test -p ergo-sbe --test sbe_tool_multi_schema_wire_parity_test --test sbe_
 
 Requires Java + Gradle (submodule build).
 
-The script regenerates all 46 packages from the pinned submodule (sbe-tool
+The script regenerates all 48 packages from the pinned submodule (sbe-tool
 1.41.0) without modifying the submodule. The 1.40.2 to 1.41.0 range does not
 change the Rust generator, so this tree was left as generated from 1.40.2. Three packages receive documented compile-only Rust
 keyword repairs after generation (`basic_types`, `code_generation`, and

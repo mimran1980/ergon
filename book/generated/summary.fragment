@@ -1,15 +1,17 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:d665ce80af94b0fdda06bcb822643d7700f99c919e98a2fc337c83c5803ca829 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:8d53cb946403b4845f620754da707321485cffb86edffbd5d4b92acb41d39c79 -->
 <!-- generated:begin ergon-io -->
 
 # ergon-io
 
-- [Busy-Spin Network I/O](./io/overview.md)
-  - [Backends and Configuration](./io/backends.md)
+- [Busy-spin network I/O](./io/overview.md)
+  - [Backends and configuration](./io/backends.md)
   - [WebSocket](./io/websocket.md)
   - [HTTP client](./io/http-client.md)
+    - [HTTP/2](./io/http2.md)
   - [Framed TCP](./io/framed-tcp.md)
   - [UDP](./io/udp.md)
-  - [Rate Limits and Errors](./io/rate-limits.md)
+  - [Request/response](./io/request-response.md)
+  - [Rate limits and errors](./io/rate-limits.md)
   - [Kubernetes](./io/kubernetes.md)
 
 <!-- generated:end ergon-io -->
@@ -17,7 +19,7 @@
 
 # ergon-md-dpdk (experimental)
 
-- [DPDK Transport: Proof of Concept](./md-dpdk/overview.md)
+- [DPDK transport: proof of concept](./md-dpdk/overview.md)
   - [Configuration](./md-dpdk/configuration.md)
 
 <!-- generated:end ergon-md-dpdk -->
@@ -25,16 +27,17 @@
 
 # Transports
 
-- [Which Transport When](./transports/choose.md)
-- [Aeron Client](./transports/aeron-client.md)
-  - [Note: Many Streams](./transports/aeron-many-streams.md)
-- [Transport Latency Comparison](./transports/comparison.md)
-- [Latency Findings at a Glance](./findings.md)
+- [Which transport when](./transports/choose.md)
+- [Aeron client](./transports/aeron-client.md)
+  - [Note: many streams](./transports/aeron-many-streams.md)
+  - [MDC and MDS](./transports/mdc-mds.md)
+- [Transport latency comparison](./transports/comparison.md)
+- [Latency findings at a glance](./findings.md)
 
 <!-- generated:end transports -->
 <!-- generated:begin samples -->
 
-- [Kubernetes Quickstart](./samples/k8s-quickstart.md)
-- [Low-Latency Kubernetes](./samples/low-latency-k8s.md)
+- [Kubernetes quickstart](./samples/k8s-quickstart.md)
+- [Low-latency Kubernetes](./samples/low-latency-k8s.md)
 
 <!-- generated:end samples -->

@@ -1,4 +1,4 @@
-//! RFQ (Request for Quote) cluster client — ported from the
+//! RFQ (Request for Quote) cluster client, ported from the
 //! Aeron Cookbook RFQ example (`aeron-io/aeron-cookbook-code`).
 //!
 //! Uses **ergo-sbe-generated** codecs from vendored `schemas/protocol-codecs.xml`

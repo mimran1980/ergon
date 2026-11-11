@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         client.poll(&mut listener, 10)?;
         if client.state() == SessionState::Connected && client.leader_member_id() != leader {
             println!(
-                "\n=== Result: failover handled — now on leader member {} ===",
+                "\n=== Result: failover handled, now on leader member {} ===",
                 client.leader_member_id()
             );
             return Ok(());

@@ -52,10 +52,10 @@ AL2023; a helper's wake-up wait on the shared CPU is measured there.
 
 | Path | Crate | What it is |
 |---|---|---|
-| [`sbe/`](sbe/) | `ergo-sbe` | SBE schema XML → Rust codecs, generated in `build.rs` |
+| [`sbe/`](sbe/) | `ergo-sbe` | Generates Rust codecs from SBE schema XML in `build.rs` |
 | [`cluster/`](cluster/) | `ergo-aeron-cluster` | Aeron Cluster client. Experimental, not a production substitute |
 | [`tune/`](tune/) | `ergon-tune` | Reads the host's low-latency settings and reports findings; changes nothing |
-| [`k8s/nri-shared-cpus`](k8s/nri-shared-cpus/README.md) | Helm chart | Gives a pod its exclusive CPUs plus the node's shared CPUs. |
+| [`k8s/nri-shared-cpus`](k8s/nri-shared-cpus/README.md) | Helm chart | Gives a pod its exclusive CPUs plus the node's shared CPUs |
 | [`k8s/nri-latency-pods`](k8s/nri-latency-pods/) | node and admission setup | Node tuning, an admission policy and pod annotations for latency pods (EKS AL2023) |
 
 Unpublished support: `sbe/benchmarks`, `cluster-test-harness` and the sample

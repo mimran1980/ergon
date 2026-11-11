@@ -8,7 +8,7 @@
 //! transport. It then receives `NewLeaderEvent`, reconnects its ingress
 //! publication to the *new* leader (resolved by member id, not list
 //! position), returns to `Connected`, and completes a post-failover
-//! round trip. Every step is asserted — unlike `failover_demo`, which
+//! round trip. Every step is asserted, unlike `failover_demo`, which
 //! only prints.
 
 mod common;
@@ -33,7 +33,7 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
         "connected after handshake"
     );
 
-    // Kill whichever node actually won the initial election — don't assume
+    // Kill whichever node actually won the initial election; don't assume
     // node 0. (If we connected via REDIRECT, the leader may be node 1 or 2;
     // killing the wrong node would not exercise failover at all.)
     let initial_leader = client.leader_member_id();

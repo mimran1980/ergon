@@ -1,4 +1,4 @@
-//! ClaimPublisher tests — the typed publication seam.
+//! ClaimPublisher tests for the typed publication seam.
 //!
 //! All tests drive publication through `ClaimPublisher::publish` with the
 //! `RecordingPublication` adapter, then decode the captured claim bytes with

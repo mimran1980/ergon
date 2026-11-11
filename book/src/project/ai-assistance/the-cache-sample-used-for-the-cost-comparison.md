@@ -16,7 +16,7 @@ Combined, those samples contain:
 | Input cache hits | 2,225,207,680 | 98.6602% |
 | Input cache misses | 23,305,848 | 1.0333% |
 | Output | 6,911,504 | 0.3064% |
-| **Total** | **2,255,425,032** | **100%** |
+| **Total** | 2,255,425,032 | 100% |
 
 Scaling that exact mix to 14 billion tokens gives:
 
@@ -25,7 +25,7 @@ Scaling that exact mix to 14 billion tokens gives:
 | Input cache hits | 13,812.433168 MTok |
 | Input cache misses / cache writes | 144.665359 MTok |
 | Output | 42.901473 MTok |
-| **Total** | **14,000 MTok** |
+| **Total** | 14,000 MTok |
 
 The cost formula is:
 

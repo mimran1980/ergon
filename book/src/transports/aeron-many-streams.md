@@ -1,5 +1,5 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:a24fc53991de8885e93673f03fbea79f2c301701f19a450a8901448c055bacdf -->
-# Aeron with Many Streams
+<!-- Generated page: edits here are overwritten by the next export. sha256:e67c3214f86326e6329974f0e01f4d5e4416a1791131711255b56af3f33b80a4 -->
+# Aeron with many streams
 
 **Use a small number of Aeron streams: up to 8 per media driver, and 4 when
 every microsecond counts. Put many logical streams (one per symbol, account

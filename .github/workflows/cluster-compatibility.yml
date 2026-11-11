@@ -5,20 +5,41 @@ name: Cluster Compatibility
 # That is not hypothetical: 0.1.27 changed `sbe/src/codegen/` only, and this
 # workflow stayed silent on the release commit while the equivalent check ran
 # only in the local release gate. A gate that cannot fire is not a gate.
+# scripts/check-workflow-paths.sh fails when these filters miss an input.
 on:
   push:
     branches: [main]
     paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'sbe/Cargo.toml'
+      - 'sbe/src/**'
       - 'cluster/**'
       - 'cluster/schemas/**'
-      - 'sbe/src/**'
+      - 'cluster-test-harness/**'
+      - 'justfile'
+      - 'just/aeron.just'
+      - '.gitmodules'
+      - 'aeron'
       - '.github/workflows/cluster-compatibility.yml'
   pull_request:
     branches: [main]
     paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.cargo/**'
+      - 'sbe/Cargo.toml'
+      - 'sbe/src/**'
       - 'cluster/**'
       - 'cluster/schemas/**'
-      - 'sbe/src/**'
+      - 'cluster-test-harness/**'
+      - 'justfile'
+      - 'just/aeron.just'
+      - '.gitmodules'
+      - 'aeron'
       - '.github/workflows/cluster-compatibility.yml'
 
 jobs:

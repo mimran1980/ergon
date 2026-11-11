@@ -9,6 +9,8 @@
  *                            sched_getcpu() is in the shared list. Prints
  *                            "VIOLATION" on every check that fails and a
  *                            "SUMMARY" line on SIGTERM.
+ *                            PIN_TEST_HELPER_BURN_US makes the helper burn
+ *                            that much CPU each round (load).
  *   pin-test sample I SEC    pin to isolated index I and sample sched_getcpu()
  *                            for SEC seconds. Prints one SAMPLE line.
  *   pin-test probe           print the container's CPU view as key=value lines.
@@ -216,20 +218,40 @@ static void *report_tag(void *arg)
     return NULL;
 }
 
+static long long clock_ns(clockid_t id)
+{
+    struct timespec t;
+    clock_gettime(id, &t);
+    return (long long)t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
 static void *helper_main(void *arg)
 {
     const char *sh = (const char *)arg;
+    /* PIN_TEST_HELPER_BURN_US: CPU the helper burns each 10 ms round, the
+     * load that lands on the exclusive CPUs when the cpuset loses the shared
+     * ones. isolated_ns adds up the helper's CPU time in rounds that ended
+     * off the shared list. */
+    const char *burn_env = getenv("PIN_TEST_HELPER_BURN_US");
+    long long burn_ns = burn_env ? atoll(burn_env) * 1000LL : 0;
+    long long isolated_ns = 0;
     /* Created while the caller is still on the shared mask, so this mask is
      * the shared set. Printed once; the loop below only checks where it runs. */
     report_affinity("helper");
     report_allowed("helper");
+    printf("helper.burn_us=%lld\n", burn_ns / 1000);
     fflush(stdout);
     while (running) {
+        long long cpu0 = clock_ns(CLOCK_THREAD_CPUTIME_ID);
+        long long until = clock_ns(CLOCK_MONOTONIC) + burn_ns;
+        while (clock_ns(CLOCK_MONOTONIC) < until) {
+        }
         int now = sched_getcpu();
         checks++;
         if (!in_list(sh, now)) {
             violations++;
-            printf("VIOLATION helper on cpu %d, not in %s\n", now, sh);
+            isolated_ns += clock_ns(CLOCK_THREAD_CPUTIME_ID) - cpu0;
+            printf("VIOLATION helper on cpu %d, not in %s isolated_ns=%lld\n", now, sh, isolated_ns);
             fflush(stdout);
         }
         usleep(10000);

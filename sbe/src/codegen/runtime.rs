@@ -813,16 +813,47 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
-            /// Convert a wire var-data length without truncation and validate
-            /// the complete region with overflow-safe offset arithmetic.
+            /// Reject a wire var-data length above the schema maximum `MAX`.
+            /// The only place that test is made: [`checked_var_data_bounds`]
+            /// calls it, and getters call it directly on a length an
+            /// iterator's bounds-only extent already proved in the buffer.
             #[inline]
-            pub(crate) fn checked_var_data_bounds(
+            pub(crate) fn check_var_data_max<const MAX: u64>(
+                field: &'static str,
+                wire_length: u64,
+            ) -> Result<(), DecodeError> {
+                if wire_length > MAX {
+                    cold();
+                    return Err(DecodeError::InvalidVarDataLength {
+                        field,
+                        length: wire_length,
+                        max_length: MAX,
+                    });
+                }
+                Ok(())
+            }
+
+            /// Convert a wire var-data length without truncation and validate
+            /// the complete region with overflow-safe offset arithmetic. With
+            /// `CHECK_MAX`, first reject a length above the schema maximum
+            /// `MAX`, so a huge length in a short buffer reports the schema
+            /// bound. Every read of the field it returns, `verify`,
+            /// `encoded_length`, staged reads and skips pass `true`; a
+            /// random-access walk that only passes over the field to reach a
+            /// later one, and group iteration, pass `false`. `field` is the
+            /// schema name on walks and staged reads, the `snake_case` name
+            /// on getters and message-level `verify`.
+            #[inline]
+            pub(crate) fn checked_var_data_bounds<const CHECK_MAX: bool, const MAX: u64>(
                 field: &'static str,
                 offset: usize,
                 prefix_size: usize,
                 wire_length: u64,
                 buffer_length: usize,
             ) -> Result<(usize, usize), DecodeError> {
+                if CHECK_MAX {
+                    check_var_data_max::<MAX>(field, wire_length)?;
+                }
                 let length = usize::try_from(wire_length).map_err(|_| {
                     DecodeError::InvalidVarDataLength {
                         field,
@@ -908,13 +939,20 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             ) -> Result<(usize, usize), DecodeError> {
                 let count = checked_group_count("numInGroup", wire_count)?;
                 let block_length = checked_header_usize("blockLength", wire_block_length)?;
-                if count > 0 && block_length < min_fixed {
+                // Stride first: a short stride is rare even when the group is
+                // empty, so the count test leaves the hot path. Any group with
+                // an entry therefore has `block_length >= min_fixed`, which is
+                // what lets entry readers use the acting block length as the
+                // per-entry extent.
+                if block_length < min_fixed {
                     cold();
-                    return Err(DecodeError::BufferTooShort {
-                        field,
-                        needed: min_fixed,
-                        available: block_length,
-                    });
+                    if count > 0 {
+                        return Err(DecodeError::BufferTooShort {
+                            field,
+                            needed: min_fixed,
+                            available: block_length,
+                        });
+                    }
                 }
                 Ok((count, block_length))
             }
@@ -1341,6 +1379,14 @@ pub(crate) fn text_encoding_kind(character_encoding: Option<&str>) -> Option<Tex
     } else {
         None
     }
+}
+
+/// The `MAX` argument of `sbe_rt::checked_var_data_bounds` for a var-data
+/// field: its length type's `maxValue`, or no limit when the schema gives none.
+/// Every decode location takes it from here so the lanes cannot disagree.
+pub(crate) fn var_data_max_lit(max_length: Option<usize>) -> syn::LitInt {
+    let max = max_length.map_or(u64::MAX, |m| m as u64);
+    syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site())
 }
 
 pub(crate) fn to_snake_case(s: &str) -> String {
@@ -3006,6 +3052,7 @@ pub(crate) fn generate_any_message(
     let span = proc_macro2::Span::call_site();
     let header_type_ident = syn::Ident::new(&to_pascal_case(header_type), span);
     let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
+    let header_short = super::region_exceeds_buffer(header_size, "offset");
     let schema_id_lit = syn::LitInt::new(&schema_id.to_string(), span);
     let bl_ident = syn::Ident::new(&header_bl, span);
     let ti_ident = syn::Ident::new(&header_ti, span);
@@ -3280,7 +3327,7 @@ pub(crate) fn generate_any_message(
                 /// Dispatch a framed message with header + version-aware fixed-extent checks.
                 #[inline]
                 pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
-                    if #header_size_lit > buf.len().saturating_sub(offset) {
+                    if #header_short {
                         sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",

@@ -1,6 +1,6 @@
 # Road to 1.0
 
-Every published crate is 0.x alpha and **not production-ready**. This page
+Every published crate is 0.x alpha and not production-ready. This page
 gives the exit criteria for `ergo-sbe` and `ergo-aeron-cluster`: criteria, not
 a date.
 
@@ -15,38 +15,38 @@ a date.
 
 ## ergo-sbe (reaches 1.0 first)
 
-Ship a **1.0.0** of `ergo-sbe` only when **all** of the following hold:
+Ship 1.0.0 of `ergo-sbe` only when all of the following hold:
 
-1. **API freeze audit complete** — decisions in
+1. **API freeze audit complete**: decisions in
    [API freeze](../sbe/design-notes/api-freeze.md) are stable; no pending
    renames of generated stage / wrap / FixedFields surface without a major.
-2. **Parity gate** — every maintained ergon vs sbe-tool comparison passes
-   the benchmark gate in both LTO profiles for **three consecutive
-   releases**, with the gate output attached to each release. Ceilings and
+2. **Parity gate**: every maintained ergon vs sbe-tool comparison passes
+   the benchmark gate in both LTO profiles for three consecutive
+   releases, with the gate output attached to each release. Ceilings and
    the inconclusive rule:
    [`sbe/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md#the-gate).
-3. **Wire compatibility** — dual-encode parity tests and golden API shape
+3. **Wire compatibility**: dual-encode parity tests and golden API shape
    remain green; no deliberate wire break without a major.
-4. **Trust boundary** — fuzz corpus on decode entry stays green in CI;
+4. **Trust boundary**: fuzz corpus on decode entry stays green in CI;
    Miri fixtures for unaligned paths stay green; no known P0 safety issues
    open.
-5. **Docs** — book chapters for migration (sbe-tool), trust boundaries,
+5. **Docs**: book chapters for migration (sbe-tool), trust boundaries,
    buffer sizing, and type-state design notes are published and linked from
    the crate README.
-6. **External signal** — at least one external user (or production pilot)
+6. **External signal**: at least one external user (or production pilot)
    has reported wire + latency results against their own schema, or an
    equivalent published case study in the repo.
 
-Until then the disclaimer stays, but it **points here** instead of reading
+Until then the disclaimer stays, but it points here instead of reading
 as a permanent warning.
 
 ## ergo-aeron-cluster (separate clock)
 
-Cluster 1.0 is **not** tied to sbe 1.0. Additional criteria (illustrative):
+Cluster 1.0 is not tied to sbe 1.0. Additional criteria (illustrative):
 
 - Stable session lifecycle and error types under multi-node test harness
 - Documented Aeron version matrix and rusteron compatibility
-- Codec generation locked to a **released** `ergo-sbe` major
+- Codec generation locked to a released `ergo-sbe` major
 - Separate performance gate (`just bench-cluster`) with recorded baselines
 
 Cluster may remain `0.x` after sbe 1.0.
@@ -59,10 +59,10 @@ Cluster may remain `0.x` after sbe 1.0.
 
 ## Tracking
 
-- Release process: [Verification & Release](verification.md).
+- Release process: [Verification and release](verification.md).
 - Changelog: repository root `CHANGELOG.md`.
-- External pilot: [External Schema Pilot](external-pilot.md).
-- Cluster compatibility: [Cluster Compatibility](../cluster/compatibility.md).
+- External pilot: [External schema pilot](external-pilot.md).
+- Cluster compatibility: [Cluster compatibility](../cluster/compatibility.md).
 - Generated API snapshots: `scripts/check-generated-public-api.sh` diffs
   generated codec surfaces against `api/generated/*.txt`, so every surface
   change is reviewed. It tracks changes; it does not forbid them.
@@ -79,10 +79,10 @@ A claimed 1.0 streak tag must be an ancestor of `main`
 
 | Criterion | Status |
 |-----------|--------|
-| 1. API-freeze audit | **Open.** Generated-API snapshot diffs (`api/generated/`) track every surface change. |
-| 2. Parity gate | **Open.** Needs three consecutive releases on `main` with gate output attached. |
-| 3. Wire compatibility | Dual-encode parity tests run in CI. FIX SBE conformance: suite tests 1–3 run in CI; the RLValidator leg does not ([External pilot](external-pilot.md)). |
+| 1. API-freeze audit | Open. Generated-API snapshot diffs (`api/generated/`) track every surface change. |
+| 2. Parity gate | Open. Needs three consecutive releases on `main` with gate output attached. |
+| 3. Wire compatibility | Dual-encode parity tests run in CI. FIX SBE conformance: suite tests 1–3 run in CI; the RLValidator leg runs weekly and in `just release`, not per push ([External pilot](external-pilot.md)). |
 | 4. Trust boundary | Fuzz + Miri fixtures exist; any open P0 is blocking. |
 | 5. Docs | Book + migration pages published. |
-| 6. External signal | **Open.** In-repo FIX SBE is internal evidence, not an external user. See [external-pilot.md](external-pilot.md). |
+| 6. External signal | Open. In-repo FIX SBE is internal evidence, not an external user. See [external-pilot.md](external-pilot.md). |
 | Cluster 1.0 | Separate clock; [compatibility](../cluster/compatibility.md) + `just bench-cluster` exist. |

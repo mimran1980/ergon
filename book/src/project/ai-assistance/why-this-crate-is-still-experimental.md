@@ -7,8 +7,8 @@ system merely because it had many unit tests. If I apply that standard to
 somebody else's library, I must apply it to mine.
 
 One thing I valued in the Java ecosystem was that mature projects often had
-visible institutional signals—long histories, broad production use, or
-governance under organisations such as Apache. The quality of an arbitrary Rust
+visible institutional signals (long histories, broad production use, or
+governance under organisations such as Apache). The quality of an arbitrary Rust
 crate can be much harder to infer from its presentation. That makes explicit
 evidence and an honest maturity label more important, not less.
 

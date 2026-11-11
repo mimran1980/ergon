@@ -16,7 +16,7 @@ check-nri-unit:
 check-nri-cgroup:
     bash k8s/nri-shared-cpus/scripts/check-cgroup.sh
 
-# The 18-step kind e2e. Needs Docker and >= 6 CPUs. Deletes everything it creates
+# The 19-step kind e2e (E2E_OUTAGE_CYCLES sets step 18's timed outage count). Needs Docker and >= 6 CPUs. Deletes everything it creates
 test-nri-e2e:
     bash k8s/nri-shared-cpus/test/e2e.sh
 
@@ -24,7 +24,7 @@ test-nri-e2e:
 check-nri-chart:
     helm lint k8s/nri-shared-cpus/charts/ergon-shared-cpus
     helm template ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus \
-        --set config.sharedCpus=2 --set 'config.namespaces={trading}' >/dev/null
+        --set-string config.sharedCpus=2 --set 'config.namespaces={trading}' >/dev/null
 
 # Build the image locally as ergon-shared-cpus:dev. Not pushed anywhere
 build-nri-image:
@@ -35,15 +35,18 @@ build-nri-image-multiarch:
     docker buildx build --platform linux/amd64,linux/arm64 \
         -t ergon-shared-cpus:dev k8s/nri-shared-cpus
 
-# The Azure latency lab without a cloud: the script against fake az/ssh, the
-# lab's functions on fixtures, and the gap probe's unit tests. Needs ruby, jq
+# The lab's quiet-settings functions and the probe's unit tests
 test-nri-lab:
-    bash k8s/nri-shared-cpus/lab/test/test-lab.sh
+    bash k8s/nri-shared-cpus/lab/test/test-lib.sh
     cargo test --manifest-path k8s/nri-shared-cpus/lab/gapprobe/Cargo.toml
-
-# The latency lab's plan, size and price: no cloud call
-plan-nri-lab:
-    DRY_RUN=1 bash k8s/nri-shared-cpus/lab/azure-vm.sh
 
 # The full local gate before anything is published: units, cgroup lane, chart, image
 check-nri-all: check-nri check-nri-chart build-nri-image
+
+# Install the PUBLISHED chart and image (oci://ghcr.io/mimran1980/charts/ergon-shared-cpus,
+# the version pinned in examples/try/run.sh) into a throwaway kind cluster, not the
+# source-built ones the other nri lanes use. Needs Docker with >= 6 CPUs, kind, helm,
+# kubectl and registry access; it deletes the cluster it creates. Part of `just release`,
+# not of `release-check` (a hosted runner has 4 CPUs).
+test-nri-published:
+    bash k8s/nri-shared-cpus/examples/try/run.sh

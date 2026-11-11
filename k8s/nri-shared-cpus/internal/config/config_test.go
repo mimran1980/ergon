@@ -60,6 +60,10 @@ func TestParseRejects(t *testing.T) {
 		// an unrelated node file (e.g. /etc/passwd).
 		{"sharedCpus: \"0\"\nhookPath: /etc/passwd\n", "hookPath"},
 		{"sharedCpus: \"0\"\nunknownField: 1\n", "unknownField"},
+		// schedFifo was removed: a node config that still sets it is
+		// refused, not ignored, so nobody believes a grant is on.
+		{"sharedCpus: \"0\"\nschedFifo: \"off\"\n", "schedFifo"},
+		{"sharedCpus: \"0\"\nschedFifo: thread\n", "schedFifo"},
 		{"sharedCpus: \"0\"\nsharedCpus: \"1\"\n", "sharedCpus"},
 		{"sharedCpus: [0]\n", "sharedCpus"},
 	}
@@ -144,7 +148,7 @@ func TestCheckHost(t *testing.T) {
 // TestCheckHostWarnsWithoutTheExclusiveFeature: a kernel that provides no
 // cpuset.cpus.exclusive cannot host a remote partition, so every cpu-partition
 // opt-in is refused. That is a warning, not an error: shared-only pods work
-// without it. The filesystem is the authority, not the version string — the
+// without it. The filesystem is the authority, not the version string. The
 // same release is used below for both a kernel that has the file (a backport)
 // and one that does not, so a version gate would get one of them wrong.
 func TestCheckHostWarnsWithoutTheExclusiveFeature(t *testing.T) {

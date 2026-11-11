@@ -1,6 +1,6 @@
 # AI assistance: how `ergo-sbe` was built
 
-`ergo-sbe` was developed with **heavy AI assistance**. Most of the implementation,
+`ergo-sbe` was developed with heavy AI assistance. Most of the implementation,
 tests, benchmarks, samples, and documentation were written by coding agents. I
 did very little direct coding.
 
@@ -48,11 +48,11 @@ whether you continue evaluating the crate:
 |---|---|
 | How much was written by AI? | Most of the implementation, tests, benchmarks, samples, and documentation. I did very little direct coding. |
 | What was the human contribution? | More than a decade of SBE experience, the product requirements, API judgment, domain corrections, acceptance criteria, and release decisions. |
-| What received human review? | Primarily the generated Rust API and source, encoded bytes, test failures, and benchmark results—not an exhaustive line-by-line audit of the `syn`/`quote` generator internals. |
+| What received human review? | Primarily the generated Rust API and source, encoded bytes, test failures, and benchmark results, not an exhaustive line-by-line audit of the `syn`/`quote` generator internals. |
 | What independently constrains the output? | Official `sbe-tool` byte-for-byte comparisons, Java-produced fixtures, upstream schemas, compile-fail proofs, property tests, exact-length checks, allocation tests, and performance gates. |
 | Is it production-proven? | No. It remains experimental 0.x software. Production users should validate their own schemas, versions, message shapes, and traffic. |
-| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately **14 billion tokens** (estimated from provider dashboards). The combined ledger on 2026-10-21 is **76.10 billion tokens** (76,095,756,856): the other machine's `ccusage` high-water mark plus this MacBook's local `ccusage`. A run on either machine alone will not match that total (see [cumulative token usage](ai-assistance/cumulative-token-usage-since-2026-06-28.md#cumulative-token-usage-since-2026-06-28)). |
-| What did it cost? | **~$261 actual out-of-pocket** (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). The combined ledger's own API-rate total is **$19,731.14**. The same measured mix, priced on one Anthropic model at the public card checked on 2026-10-21 with 5-minute cache writes, is **$12,708.01 on Sonnet 5.5** and **$25,416.02 on Opus 5.5**. With my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing, so the real cost at work would be lower still. The [single-provider what-if](ai-assistance/what-if-all-tokens-through-a-single-provider.md#what-if-all-tokens-through-a-single-provider) shows the input, output, and cache arithmetic. |
+| What did development consume? | Roughly one month of intensive work. The initial `0.1.0` release used approximately 14 billion tokens (estimated from provider dashboards). The combined ledger on 2026-11-05 is 86.98 billion tokens (86,979,781,620): each machine's `ccusage` high-water mark (a Mac mini and a MacBook), with the Claude Code transcripts copied between them counted once. A run on either machine alone will not match that total (see [cumulative token usage](ai-assistance/cumulative-token-usage-since-2026-06-28.md#cumulative-token-usage-since-2026-06-28)). |
+| What did it cost? | ~$261 actual out-of-pocket (DeepSeek PAYG $77.39 + GLM plan $114 + subscriptions $70). The combined ledger's own API-rate total is $24,273.94. The same measured mix, priced on one Anthropic model at the public card checked on 2026-10-21 with 5-minute cache writes, is $15,062.68 on Sonnet 5.5 and $30,125.35 on Opus 5.5. With my work Claude Enterprise subscription the Claude portion would be covered by the seat licence rather than per-token billing, so the real cost at work would be lower still. The [single-provider what-if](ai-assistance/what-if-all-tokens-through-a-single-provider.md#what-if-all-tokens-through-a-single-provider) shows the input, output, and cache arithmetic. |
 | Which model did most of the work? | DeepSeek: V4 Flash handled much of the early UltraMode/subagent work; the later sequential development stayed primarily on V4 Pro. |
 
 
@@ -64,7 +64,7 @@ whether you continue evaluating the crate:
 4. [What I was trying to build](ai-assistance/what-i-was-trying-to-build.md#what-i-was-trying-to-build)
 5. [Why I chose it as an AI experiment](ai-assistance/why-i-chose-it-as-an-ai-experiment.md#why-i-chose-it-as-an-ai-experiment)
 6. [Authorship](ai-assistance/authorship-what-was-mine-and-what-was-generated.md#authorship-what-was-mine-and-what-was-generated)
-7. [What I reviewed—and what I did not](ai-assistance/what-i-reviewedand-what-i-did-not.md#what-i-reviewedand-what-i-did-not)
+7. [What I reviewed, and what I did not](ai-assistance/what-i-reviewedand-what-i-did-not.md#what-i-reviewed-and-what-i-did-not)
 8. [The actual working loop](ai-assistance/the-actual-working-loop.md#the-actual-working-loop)
 9. [How the project evolved](ai-assistance/how-the-project-evolved.md#how-the-project-evolved)
 10. [What the Git history shows](ai-assistance/what-the-git-history-shows.md#what-the-git-history-shows)

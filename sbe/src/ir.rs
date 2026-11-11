@@ -5,12 +5,12 @@
 //! messages, fields, composites, enums, sets, groups, and var-data; [`Encoding`]
 //! holds wire layout. [`crate::resolve_schema`] fills offsets and defaults.
 //!
-//! Most application code never inspects IR directly — use generated codecs.
+//! Application code uses the generated codecs and rarely needs the IR.
 
 /// Byte order declared by the schema; applies to every primitive encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ByteOrder {
-    /// Little-endian — the SBE default.
+    /// Little-endian, the SBE default.
     LittleEndian,
     /// Big-endian.
     BigEndian,
@@ -23,7 +23,7 @@ pub enum Signal {
     BeginMessage,
     /// Closes a message definition.
     EndMessage,
-    /// Opens a field — a message field or a composite member.
+    /// Opens a field: a message field or a composite member.
     BeginField,
     /// Closes a field.
     EndField,
@@ -59,7 +59,7 @@ pub enum Presence {
     Required,
     /// May be absent; encoded as the type's null value.
     Optional,
-    /// Not encoded — the value is fixed by the schema.
+    /// Not encoded; the schema fixes the value.
     Constant,
 }
 

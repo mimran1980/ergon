@@ -19,7 +19,7 @@ directory that produced it.
 | `just bench-cluster` | `target/criterion` (LTO), `target/bench-no-lto/criterion` (no-LTO) | yes |
 
 Each profile directory has a `run-manifest.json` with run id, profile, commit,
-rustc, target, host and repeat count. The gate fails closed when any of the
+rustc, target, host, repeat count and, for the cluster suite, arm order. The gate fails closed when any of the
 first six is missing (`scripts/check-bench-gate.sh:96`). Quote a ratio with its
 run id, commit, host, rustc and profile, or do not quote it.
 
@@ -145,8 +145,10 @@ closed. Both profiles block.
 | Step | What the gate does | Source |
 |---|---|---|
 | Repeat | Each profile runs 5 times (`BENCH_REPEATS`) | `scripts/run-sbe-bench.sh:183`, `justfile:536` |
+| Arm order (cluster only) | Each cluster invocation runs twice, arms in registration order and then reversed (`ERGON_BENCH_ARM_ORDER`, snapshotted to `repeats/<k>` and `repeats-reversed/<k>`). A pair's ratio in invocation *k* is the geometric mean of the two orders' ratios, the A/A controls are combined the same way, and a run whose manifest does not say `arm_order: paired` is refused | `justfile` (`bench-cluster`), `check-bench-gate.sh` (`repeated_estimates`, `verify_arm_order`) |
 | Estimate | Criterion's **mean**. Every gated group samples flat, which writes no regression slope | `check-bench-gate.sh:217` |
 | Range | Highest and lowest ratio across the repeats, and the union of their confidence intervals | `check-bench-gate.sh:338-341` |
+| Report (cluster only) | n, mean, and batch-mean min, p50, p99, p99.99 and max per arm over every invocation and arm order, from `estimates.json` and `sample.json` (a sample is a batch of 10,000 operations, so a max is the slowest batch's per-operation mean, not one message's latency); invocations that kept no `sample.json` are named; with the gate's output, each pair as PASS, INCONCLUSIVE (passes the gate, not parity) or FAIL | `scripts/bench-cluster-report.py` |
 | Pass | Highest ratio ≤ ceiling | |
 | Inconclusive (passes) | Highest ratio > ceiling, and the CI union overlaps the A/A control's band | `check-bench-gate.sh:354`, `:439-447` |
 | Fail | Highest ratio > ceiling, and the CI union lies outside the A/A band, or no A/A band was measured | |
@@ -195,16 +197,125 @@ Callgrind, reports Ir, branches and mispredicts **per operation**, and
 disassembles with `llvm-objdump`. The registry is
 `sbe/benchmarks/src/bin/perf_probe.rs` (copy: `probes.tsv`); unknown or
 drifted probe names fail. The lane fails when ergon's Ir/op exceeds
-sbe-tool's. It needs Linux, Valgrind and `llvm-objdump`, and fails closed
-elsewhere. `iai-callgrind` was removed for RUSTSEC-2026-0173.
+sbe-tool's, except for `decode_full_message`, `decode_full_message_ordered`
+and `extended_group_with_data`. There ergon's checked decode uses
+overflow-checked offsets and returns a typed error where sbe-tool's slice
+indexing panics, and checks each var-data length against the schema
+`maxValue`, which sbe-tool does not; wall-clock still favours ergon. Each
+exception is capped at the exact measured ratio in
+`scripts/compare-sbe-probe-pairs.py`, so one more ergon instruction, or one
+fewer sbe-tool instruction, fails. It needs Linux, Valgrind and
+`llvm-objdump`, and fails closed elsewhere. `iai-callgrind` was removed for RUSTSEC-2026-0173.
+
+Probes with no sbe-tool pair, such as `decode_vardata`, have no ceiling, so
+compare them with the previous run by hand. Skipping a group checks each
+entry's var-data length against `maxValue`: one branch per var-data entry
+(`decode_vardata`: 61 to 64 branches/op for its three fuel-figures entries,
+266 to 267 Ir/op on x86, both profiles).
 
 ## Compare against your previous release
 
 The sbe-tool ceiling does not catch a regression against your own earlier
-release: two releases can both pass 1.00 while the second is slower. Before a
-release, check out the previous tag in a worktree, run the same benchmarks on
-the same host, and compare Criterion's estimates. Investigate a shift larger
-than the confidence intervals before publishing.
+release: two releases can both pass 1.00 while the second is slower.
+`just bench-ab <base> <branch> [--suite sbe|cluster] [--rounds N]`
+(`scripts/bench-ab.sh`) compares two commits on one host.
+
+One build's round-to-round spread is not the noise a comparison must clear.
+Rebuilding unchanged code moves code and constant data, and rows whose timed
+loops were byte-identical have moved by several percent between builds. So the tool
+measures three arms, each a detached worktree under the output directory
+(`wt/arm0`, `wt/arm1`, `wt/arm2`: equal-length paths) with its own target
+directory:
+
+| Arm | What it is |
+|---|---|
+| `base` | the base commit |
+| `base-rebuilt` | the base commit plus a layout salt before the first item of the suite's bench sources: an unused static, which moves constant data, and an unused `Bencher::iter` instance. rustc emits upstream generic instances first, sorted by symbol name, and the salt's sorts before the suite's own, so the instances after it, where the timed closures are inlined, start at other addresses. How far depends on the salt's size and the alignment padding after it, and loop alignment inside a function can still keep a loop where it was within its line. It changes no behaviour |
+| `branch` | the commit under test |
+
+All three are built first, outside the bench lock (`BENCH_AB_BUILD_WRAPPER`
+may name a build-slot limiter). A salt check then compares the symbol tables
+of base and base-rebuilt. Bar the salt's own, both must hold the same timed
+`Bencher::iter` symbols (a symbol in one binary only fails the check), and
+every one in every bench binary and profile must have moved by other than
+whole cache lines of the host (128 bytes on Apple Silicon; `getconf`
+elsewhere, 64 when it reports nothing usable). There are fewer symbols than
+`b.iter` call sites: LLVM merges identical timed loops (the A/A control
+copies and some warmup arms) into one, which then runs both, so checking the
+survivor checks both. With merging disabled
+(`RUSTC_BOOTSTRAP=1 RUSTFLAGS=-Zmerge-functions=disabled`) every call site has
+its own symbol. The tool tries the salt sizes in `BENCH_AB_SALT_SIZES` (default
+`6 8 3 4 32 1 2 5 7 10`; positive integers only, else exit 2) in turn,
+rebuilding base-rebuilt for each, logs every check, and refuses the run
+(exit 4) when no size moves them all. An A/A control that leaves the timed
+code where it was samples no code placement. `--salt-only` builds base and
+base-rebuilt, runs the salt check and stops.
+What holds per host, checked with `--salt-only` on real builds of both
+profiles (2026-11-08):
+
+| Host | `--suite sbe` | `--suite cluster` |
+|---|---|---|
+| Apple Silicon Mac (128-byte line) | passes at salt size 6 | passes at salt size 6 |
+| x86 Linux (64-byte line) | size 6 and 8 each leave one binary unmoved; size 3 passes | exits 4: every size in the default list shifts all 14 timed symbols by whole multiples of 64 bytes (size 10: 1984 bytes) |
+
+On x86 the timed functions are 16-byte aligned, not 64 (`nm`: 11 of 14 cluster
+symbols sit on a 64-byte boundary in base, 3 do not); why the cluster shift is
+always a whole number of lines is not established. Run cluster A/B comparisons
+on the Mac, and on Linux settle cluster rows with instruction counts
+(`just bench-cluster-instructions`) instead.
+
+Each round then runs every arm once, from a 6-round cycle; `--rounds` must be
+a multiple of 3 (default 3), else exit 2. Rounds 1-3 rotate
+the arm order: every arm runs once in every position, but within a round each
+arm always follows the same other arm. Rounds 4-6 run the reversed rotations,
+ordered so no arm runs twice in a row across a round boundary: after 6 rounds
+every arm has run twice in every position and twice right after each other
+arm. Each run holds the bench lock (`BENCH_LOCK`, default `tmp/.mac-bench.lock`
+in the main checkout), with `uptime` logged before and after. A run takes the
+profiles and `BENCH_REPEATS` invocations (default 5) of `just bench` or
+`just bench-cluster`, but runs the arm's bench binaries directly from copies
+under `bin/<slot>/<profile>/`, with the same working directory and arguments
+for every arm and an environment of only `HOME`, `PATH`, an equal-length
+`CRITERION_HOME`, `DYLD_FALLBACK_LIBRARY_PATH` and `LD_LIBRARY_PATH` (both the
+binary's own directory, which holds a copy of the Aeron client library the
+cluster bench loads) and, for the cluster suite, `ERGON_BENCH_ARM_ORDER`. Paths
+differ between arms only in the equal-length slot name. Neither cargo, the
+arm's runner nor its gate runs. Each run's Criterion repeats are copied out as
+soon as it ends. The tool deletes nothing: worktrees and results stay under
+`--out` (default `target/bench-ab/<stamp>-<suite>`), and the run refuses an
+existing one.
+
+`scripts/bench-ab-judge.py` reads every `sample.json`, skips `warmup` arms, and
+prints n, min, p50, p99, p99.99 and max per arm, pooled over rounds and repeats
+(batch means, as in the cluster report). Per profile and scenario:
+
+| Term | Meaning |
+|---|---|
+| within | spread of the base arm's per-round p50s |
+| A/A | \|p50(base-rebuilt) − p50(base)\| / p50(base) |
+| noise | max(within, A/A) |
+| change | (p50(branch) − p50(base)) / p50(base) |
+
+| Verdict | When |
+|---|---|
+| UNSTABLE | A/A > 3 %: unchanged code moved past the cap, so the row is not judged either way. It is not a pass either: settle it with instruction counts or more rounds |
+| FAIL | change > noise and change > the floor (`--floor`, default 1 %), or change > 3 % |
+| PASS | otherwise |
+
+The `old` column shows the rule this replaces (change above the within-build
+spread, or above 3 %). The run exits 1 on any FAIL; 2 on missing evidence (an
+arm, round, profile or row absent from any run, or an empty sample), on bad
+arguments, when an arm failed to build or copy, and when a bench binary exited
+non-zero but the judge returned 0 (a FAIL or UNSTABLE verdict keeps its own
+code); 3 when no row FAILs but some are UNSTABLE; 4 when no salt size passes
+the salt check; else 0.
+Investigate a FAIL before publishing; give every max a cause.
+`scripts/tests/test-bench-ab.sh` proves the judge passes, fails, marks rows
+UNSTABLE and fails closed; that the salt check refuses a salt that left any
+timed symbol unmoved or moved it by whole lines only, or a symbol in one
+binary only, and takes an unusable line size as 64; the arm order's position
+and predecessor balance; and that `--rounds` other than a multiple of 3 and
+bad `BENCH_AB_SALT_SIZES` exit 2.
 
 ## Diagnostics (not gated)
 
@@ -229,6 +340,7 @@ result is recorded in this repository.
 ```sh
 just bench                 # SBE parity suite and gate, both profiles
 just bench-cluster         # cluster codec gate, both profiles
+just bench-ab <base> <branch>   # base vs branch with an A/A rebuild of base
 just bench-groups
 just bench-diagnostics
 just bench-instructions    # Linux + Valgrind

@@ -165,6 +165,20 @@ endian = ["all_reference_message_headers_follow_schema_byte_order"]
 versioning = []
 
 [[case]]
+key = "group_null_init_be"
+exact_encode = ["group_null_init_be_entries_match_sbe_tool_nullify"]
+cross_decode = ["group_null_init_be_entries_match_sbe_tool_nullify"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
+key = "group_null_init_le"
+exact_encode = ["group_null_init_le_entries_match_sbe_tool_nullify"]
+cross_decode = ["group_null_init_le_entries_match_sbe_tool_nullify"]
+endian = ["all_reference_message_headers_follow_schema_byte_order"]
+versioning = []
+
+[[case]]
 key = "group_with_data"
 exact_encode = [
     "group_with_data_message1",

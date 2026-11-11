@@ -15,7 +15,7 @@ use common::{Capture, await_echo, connect_own_driver, launch_own_driver};
 const AERON_MARK_FILE_LIVENESS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Kill the two non-leader nodes of a 3-node cluster so the surviving
-/// leader loses quorum (1 of 3). The cluster must then STOP serving — a
+/// leader loses quorum (1 of 3). The cluster must then STOP serving: a
 /// round trip that still succeeded would mean a lone minority node is
 /// accepting writes (split-brain / data-loss risk).
 #[test]
@@ -50,7 +50,7 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
     std::thread::sleep(Duration::from_secs(8));
 
     // After quorum loss the cluster must NOT echo. await_echo errors on
-    // timeout — a successful return here would be the failure we're guarding
+    // timeout, so a successful return here would be the failure we're guarding
     // against.
     let result = await_echo(
         &mut client,
@@ -59,9 +59,7 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
         Duration::from_secs(10),
     );
     let Err(stopped) = result else {
-        return Err(
-            "cluster still served a round trip after quorum loss — expected no echo".into(),
-        );
+        return Err("cluster still served a round trip after quorum loss, expected no echo".into());
     };
     eprintln!("quorum loss correctly stopped serving: {stopped}");
     let _ = client.close();
@@ -74,7 +72,7 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
 /// client connects to the restarted one.
 ///
 /// (The launcher runs with `dirDeleteOnStart`, so B is a fresh-cluster
-/// restart — it does not recover A's replicated log. That persistence
+/// restart: it does not recover A's replicated log. That persistence
 /// path is out of scope for the client test harness.)
 #[test]
 #[serial]

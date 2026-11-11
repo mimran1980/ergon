@@ -1,0 +1,5 @@
+# Generated book assets (under book/src) and the sha256 in each file's header.
+# Do not edit; the next export rewrites them.
+anim/connect-gate.js	15df979bb3a817e32b57e4dc0073620e4e82b510ce3ea6f53f87250ff9b9acb8
+anim/udp-rx-batch.js	f6a11f8d1aa8d3caa2128f261bdded255dc3e179aea1980752e556fe82151713
+anim/ws-receive-paths.js	4473ad88c4bc8e7aa120d2787af27641ba556e31dd17bb7a275254e1a4eb1ae6

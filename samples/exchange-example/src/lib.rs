@@ -1,4 +1,4 @@
-//! ergon IPC sample — exercise codegen + Aeron IPC + domain objects.
+//! ergon IPC sample: exercises codegen, Aeron IPC and domain objects.
 //!
 //! Demonstrates:
 //! - Multi-schema generate (normalized AppMessage + Bitget/Binance spot fixtures)
@@ -7,7 +7,7 @@
 //! - Decimal adapter and domain-object mapping
 //! - Three-thread architecture: producer, SHARED driver, consumer
 
-// Generated codecs under `src/generated/` (gitignored) — IDE can go-to-def.
+// Generated codecs under `src/generated/` (gitignored), so the IDE can go to definition.
 // rustfmt skips them: the build script rewrites them on every regeneration.
 #[allow(
     dead_code,
@@ -61,7 +61,7 @@ pub mod market;
 pub mod orderbook;
 pub mod publication;
 
-// Application-side TryFromSbe adapter for rust_decimal — a domain-mapping
+// Application-side TryFromSbe adapter for rust_decimal, a domain-mapping
 // example showing how generated conversion traits can be implemented for
 // external types without modifying the generator.
 impl_sbe_decimal_for_rust_decimal!();

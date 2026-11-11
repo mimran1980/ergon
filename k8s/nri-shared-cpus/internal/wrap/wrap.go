@@ -311,33 +311,3 @@ func execPath(name string) (string, error) {
 	}
 	return "", fmt.Errorf("%s is not on PATH (%s)", name, path)
 }
-
-// SetFifo puts the calling thread on SCHED_FIFO at the given priority. It
-// needs RLIMIT_RTPRIO > 0 or CAP_SYS_NICE; the NRI plugin grants the rlimit
-// so the pod spec stays unprivileged. A failure is typed so the caller can
-// name the fix. The policy survives exec (it is per-thread).
-func SetFifo(prio int) error {
-	if prio < 1 || prio > 99 {
-		return fmt.Errorf("SCHED_FIFO priority %d is outside 1..99", prio)
-	}
-	attr := unix.SchedAttr{
-		Size:     unix.SizeofSchedAttr,
-		Policy:   unix.SCHED_FIFO,
-		Priority: uint32(prio),
-	}
-	if err := unix.SchedSetAttr(0, &attr, 0); err != nil {
-		return fmt.Errorf("SCHED_FIFO %d: %w (need RLIMIT_RTPRIO or CAP_SYS_NICE; ask for %s)",
-			prio, err, "sched-fifo.ergon.io")
-	}
-	return nil
-}
-
-// CurrentPolicy reports the calling thread's scheduling policy and priority.
-// Policy is one of the SCHED_* constants. Used by tests and by `show`.
-func CurrentPolicy() (uint32, uint32, error) {
-	attr, err := unix.SchedGetAttr(0, 0)
-	if err != nil {
-		return 0, 0, err
-	}
-	return attr.Policy, attr.Priority, nil
-}

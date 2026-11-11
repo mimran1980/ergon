@@ -312,7 +312,7 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// ── T-18: unchecked text accessors keep structural bounds fallible ─────
+// ── Unchecked text accessors keep structural bounds fallible ─────
 
 #[test]
 fn as_str_unchecked_returns_result_and_rejects_truncated() -> Result<(), Box<dyn Error>> {

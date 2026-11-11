@@ -140,8 +140,6 @@ fn respond_schema1_body() -> String {
             &[(17560, 300)],
         )?;
         assert_eq!(out1.as_slice(), golden1, "test1 ergon vs RL");
-        println!("PASS: fix-sbe-conformance test1 byte-identical to RL UnderTest");
-
         let out2 = respond(
             inject2,
             "OR000001",
@@ -154,7 +152,6 @@ fn respond_schema1_body() -> String {
             &[(17560, 300)],
         )?;
         assert_eq!(out2.as_slice(), golden2, "test2 ergon vs RL");
-        println!("PASS: fix-sbe-conformance test2 (later-schema inject) byte-identical to RL");
     "#,
     );
     code
@@ -198,7 +195,6 @@ fn respond_schema3_body() -> String {
             .reject_text(reject)?;
         let len = complete.encoded_length_with_header();
         assert_eq!(&buf[..len], golden3, "test3 ergon vs RL");
-        println!("PASS: fix-sbe-conformance test3 (var-data) byte-identical to RL");
     "#,
     );
     code
@@ -303,7 +299,6 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
             .current_dir(&conf)
             .status()?;
         assert!(status.success(), "RLValidator failed for test{n}");
-        println!("PASS: RLValidator accepted test{n}");
     }
     Ok(())
 }

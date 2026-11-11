@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-sbe-bench.sh — the single producer/consumer for `just bench`.
+# run-sbe-bench.sh: the single producer/consumer for `just bench`.
 #
 # One `just bench` invocation owns exactly one unique result root. Both
 # optimisation profiles are derived from that same run id, so the gate can
@@ -20,7 +20,7 @@ criterion_dir_for() { printf '%s/%s/criterion' "$(run_root_for "$1")" "$2"; }
 
 # Build artefacts are shared per profile, NOT per run. Provenance is carried by
 # the Criterion output (run manifest + per-estimate run id), so a shared target
-# directory cannot weaken the gate — while a per-run one would leave a full
+# directory cannot weaken the gate, while a per-run one would leave a full
 # multi-gigabyte build tree behind on every invocation and force a cold rebuild
 # each time. The LTO profile is the ordinary bench profile, so it builds in the
 # ordinary target directory (CARGO_TARGET_DIR, else target/), where `just test`
@@ -136,7 +136,7 @@ case "${1:-}" in
     exit 0
     ;;
 --stamp)
-    # `--stamp <criterion-dir> <run-id> <profile>` — exposed for fixtures/tests.
+    # `--stamp <criterion-dir> <run-id> <profile>`, exposed for fixtures and tests.
     stamp_profile "${2:?dir}" "${3:?run id}" "${4:?profile}"
     exit 0
     ;;
@@ -164,7 +164,7 @@ for profile in "${PROFILES[@]}"; do
     mkdir -p "$criterion_dir"
 
     echo ""
-    echo "=== SBE perf parity — $profile ==="
+    echo "=== SBE perf parity ($profile) ==="
     # The profile selects environment, never whether the benchmark runs: both
     # profiles execute the same unconditional command, so neither can be
     # quietly skipped (and the test-policy checker can see that).
@@ -191,7 +191,7 @@ for profile in "${PROFILES[@]}"; do
     # foreign evidence; the gate refuses a mixed one, so clear it here.
     rm -rf "$criterion_dir/repeats"
     for k in $(seq 1 "$repeats"); do
-        echo "=== SBE perf parity — $profile — invocation $k/$repeats ==="
+        echo "=== SBE perf parity ($profile), invocation $k/$repeats ==="
         # Bounds the snapshot to what this invocation is about to write: the
         # Criterion home can also hold other benches' groups, and Criterion
         # leaves `new/` in place for groups a run does not touch.
@@ -206,7 +206,7 @@ for profile in "${PROFILES[@]}"; do
     stamp_profile "$criterion_dir" "$RUN_ID" "$profile"
 
     echo ""
-    echo "=== Gate — $profile (blocking) ==="
+    echo "=== Gate ($profile, blocking) ==="
     # Both profiles are blocking: a regression that only appears without LTO is
     # still a regression for every downstream consumer that does not use LTO.
     # Keep the gate's stdout beside the run it graded: the release ships

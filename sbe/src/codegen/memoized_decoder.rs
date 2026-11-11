@@ -1,8 +1,8 @@
-//! `{Name}MemoizedDecoder` — the opt-in progressive tail cache.
+//! `{Name}MemoizedDecoder`: the opt-in progressive tail cache.
 //!
 //! Produced by consuming `{Name}Decoder::memoized(self)`. It wraps the base
 //! decoder and adds a progressive `Cell` cache of discovered dynamic-tail
-//! ends, so reading tails out of order — or reading one twice — walks the
+//! ends, so reading tails out of order, or reading one twice, walks the
 //! wire at most once. Construction is O(1) and allocates nothing;
 //! undiscovered slots are never read.
 //!
@@ -31,7 +31,7 @@ use super::{to_pascal_case, to_snake_case};
 /// Emit `memoized()` plus the `{Name}MemoizedDecoder` wrapper.
 ///
 /// Fixed-block messages have no dynamic tails to memoize, so nothing is
-/// emitted for them — the base decoder is already the whole story.
+/// emitted for them.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn generate_memoized_decoder(
     msg: &MessageStructure,
@@ -207,8 +207,7 @@ pub(crate) fn generate_memoized_decoder(
         let prefix_lit = syn::LitInt::new(&prefix_size.to_string(), span);
         let slot_lit = syn::LitInt::new(&vd_idx.to_string(), span);
         let tail_ident = quote::format_ident!("tail_offset_{vd_idx}");
-        let max = vd.max_length.unwrap_or(0);
-        let max_lit = syn::LitInt::new(&max.to_string(), span);
+        let max_lit = super::runtime::var_data_max_lit(vd.max_length);
         let version_check = version_guard(vd.since_version, &vd_snake, span);
         if let Some(ref desc) = vd.description {
             impl_body.extend(doc_attr_tokens(desc));
@@ -231,18 +230,10 @@ pub(crate) fn generate_memoized_decoder(
                 #version_check
                 let offset = self.#tail_ident()?;
                 let buf = self.inner.buf;
+                // A slot is published only after a walk or a read that
+                // checked the bounds and the schema maximum.
                 if let Some(end) = self.cache.end_of(#slot_lit) {
-                    let data_start = offset + #prefix_lit;
-                    let wire_length = (end - data_start) as u64;
-                    if wire_length > #max_lit as u64 {
-                        sbe_rt::cold();
-                        return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                            field: stringify!(#vd_ident),
-                            length: wire_length,
-                            max_length: #max_lit as u64,
-                        });
-                    }
-                    return Ok(&buf[data_start..end]);
+                    return Ok(&buf[offset + #prefix_lit..end]);
                 }
                 if offset + #prefix_lit > buf.len() {
                     sbe_rt::cold();
@@ -255,15 +246,7 @@ pub(crate) fn generate_memoized_decoder(
                 let bytes: [u8; #prefix_lit] = read_bytes::<#prefix_lit>(buf, offset);
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
-                if wire_length > #max_lit as u64 {
-                    sbe_rt::cold();
-                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                        field: stringify!(#vd_ident),
-                        length: wire_length,
-                        max_length: #max_lit as u64,
-                    });
-                }
-                let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                     stringify!(#vd_ident),
                     offset,
                     #prefix_lit,

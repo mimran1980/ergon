@@ -2370,9 +2370,15 @@ fn overlapping_fixed_field_offsets_are_rejected() -> Result<(), Box<dyn std::err
     ];
 
     for (name, schema) in cases {
-        assert!(
-            parse(crate::SchemaSource::xml(&schema)).is_err(),
-            "{name} overlapping offsets must be rejected"
+        let Err(ParseError::Resolve { error, .. }) = parse(crate::SchemaSource::xml(&schema))
+        else {
+            return Err(format!("{name} overlapping offsets must be rejected").into());
+        };
+        // In every case `b` is the member whose offset clashes with `a`.
+        assert_eq!(
+            error.to_string(),
+            "overlapping offsets or invalid alignment at offset 2 of `b`",
+            "{name}"
         );
     }
 

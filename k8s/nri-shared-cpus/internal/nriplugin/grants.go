@@ -3,7 +3,6 @@
 package nriplugin
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/mimran1980/ergon/k8s/nri-shared-cpus/internal/config"
@@ -23,7 +22,6 @@ import (
 //	seccomp.ergon.io/<container>:      "io-uring" | "runtime-default"
 //	numa.ergon.io/<container>:         "0" | "0,1" | "" (the NIC's node)
 //	ptp.ergon.io/<container>:          "off" | "auto" | /dev/ptpN
-//	sched-fifo.ergon.io/<container>:   "thread" | "off"
 //	hugepages.ergon.io/<container>:    "2M"
 //	cpu-partition.ergon.io/<container>:"isolated"
 //	cpuqos.ergon.io/<container>:       "<microseconds>" (x86 only)
@@ -79,29 +77,6 @@ func resolveGrants(cfg *config.Config, r *Request) (*Grants, error) {
 		g.NodeFacts = names.NodeFactsMountPoint
 	}
 
-	if fifoAsk, hasFifo := lookup(r, names.SchedFifoPrefix+r.Container); hasFifo {
-		switch fifoAsk {
-		case config.SchedFifoOff:
-			g.SchedFifo = 0
-		case config.SchedFifoThread:
-			if cfg.SchedFifo != config.SchedFifoThread {
-				return nil, refuse(0, "fifo-off",
-					"sched-fifo.ergon.io: %q is asked for but this node has schedFifo: off", config.SchedFifoThread)
-			}
-			// Priority comes from the rt-prio rlimit when present, else 50.
-			prio := 50
-			for _, rl := range g.Rlimits {
-				if rl.Type == "RLIMIT_RTPRIO" && rl.Soft != latency.Inf {
-					prio = int(rl.Soft)
-				}
-			}
-			g.SchedFifo = prio
-		default:
-			return nil, refuse(0, "bad-annotation", "sched-fifo.ergon.io: %q must be %q or %q",
-				fifoAsk, config.SchedFifoOff, config.SchedFifoThread)
-		}
-	}
-
 	// Item 1: a sized hugetlbfs mount for AERON_DIR. The size is the
 	// container's hugepages-2Mi limit, so two containers cannot overcommit.
 	if hugeAsk, hasHuge := lookup(r, names.HugepagesPrefix+r.Container); hasHuge {
@@ -145,7 +120,7 @@ func resolveGrants(cfg *config.Config, r *Request) (*Grants, error) {
 		g.CpuqosDevice = dev
 	}
 
-	if len(g.Rlimits) == 0 && g.SchedFifo == 0 && g.Seccomp == nil &&
+	if len(g.Rlimits) == 0 && g.Seccomp == nil &&
 		g.NumaMems == "" && g.PtpDevice == "" && g.CpuqosDevice == "" &&
 		g.Hugepage == nil && !g.CpuPartition && len(g.DpdkEnvs) == 0 {
 		return nil, nil
@@ -172,7 +147,6 @@ func GrantEnv(g *Grants, _ *config.Config) []latency.KV {
 	}
 	return latency.GrantEnv(latency.EnvGrant{
 		Rlimits:      g.Rlimits,
-		SchedFifo:    g.SchedFifo,
 		SeccompMode:  g.SeccompMode,
 		NumaNodes:    g.NumaMems,
 		PtpDevice:    g.PtpDevice,
@@ -182,14 +156,6 @@ func GrantEnv(g *Grants, _ *config.Config) []latency.KV {
 		HugepageEnvs: g.HugepageEnvs,
 		DpdkEnvs:     g.DpdkEnvs,
 	})
-}
-
-// FormatSchedFifo renders the priority for ERGON_SCHED_FIFO, or "" for none.
-func FormatSchedFifo(prio int) string {
-	if prio <= 0 {
-		return ""
-	}
-	return strconv.Itoa(prio)
 }
 
 // SysctlRefusal names the node setting for a candidate-7 request. The plugin

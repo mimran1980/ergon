@@ -392,10 +392,9 @@ pub fn tool_probe_decode_session_event(buf: &[u8]) -> u64 {
     for _ in 0..OPERATIONS {
         let buf = black_box(buf);
         let block = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::BLOCK_LENGTH;
-        // Same extent check ergon `wrap()` performs — equal work, both arms.
-        if buf.len() < HDR + block {
-            continue;
-        }
+        // Same extent check ergon `wrap()` performs, with the same outcome
+        // (panic): a `continue` here would give this arm a second back-edge.
+        assert!(buf.len() >= HDR + block, "buffer too short for message body");
         let mut dec = SessionEventDecoder::default().wrap(
             ReadBuf::new(buf),
             HDR,
@@ -407,12 +406,19 @@ pub fn tool_probe_decode_session_event(buf: &[u8]) -> u64 {
         let ltid = dec.leadership_term_id();
         let lmid = dec.leader_member_id();
         let code = dec.code();
-        let coords = dec.detail_decoder();
-        let (off, len) = coords;
-        let detail_len = if len > 1_073_741_824 || off.saturating_add(len) > buf.len() {
+        // The three gates ergon `detail_slice()` applies, each failing closed
+        // to 0 as the ergon arm's `Err(_) => 0` does: length prefix in
+        // bounds, schema maxValue, data in bounds.
+        let detail_len = if buf.len() < HDR + block + 4 {
             0
         } else {
-            dec.detail_slice(coords).len()
+            let coords = dec.detail_decoder();
+            let (off, len) = coords;
+            if len > 1_073_741_824 || off.saturating_add(len) > buf.len() {
+                0
+            } else {
+                dec.detail_slice(coords).len()
+            }
         };
         checksum = checksum
             .wrapping_add(cid as u64)

@@ -1,25 +1,25 @@
 //! Multi-member ingress endpoint maps (`"0=host:port,1=host:port"`).
 //!
-//! Used for first-connect when [`crate::SessionBuilder::ingress_endpoints`] is
-//! set, and for leader resolution after redirect / `NewLeaderEvent`.
+//! The first connect uses the map when [`crate::SessionBuilder::ingress_endpoints`]
+//! is set, and leader resolution uses it after a redirect or `NewLeaderEvent`.
 
 use crate::ClusterError;
 
 /// One `(member_id, host:port)` entry from a Java-style endpoints map.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IngressEndpoint {
-    /// Cluster member id (from the endpoints map key).
+    /// The cluster member id, the map key.
     pub member_id: i32,
-    /// `host:port` (no `aeron:` prefix).
+    /// `host:port`, without an `aeron:` prefix.
     pub endpoint: String,
 }
 
-/// Parse `"0=host:9002,1=host:9003"` into ordered entries.
+/// Parses `"0=host:9002,1=host:9003"` into entries ordered by member id.
 ///
 /// # Errors
 ///
-/// [`ClusterError::ConnectFailed`] when the map is empty or an entry is not
-/// `<member id>=<host:port>`.
+/// [`ClusterError::ConnectFailed`] when the map is empty, an entry is not
+/// `<member id>=<host:port>`, or a member id repeats.
 pub fn parse_ingress_endpoints(map: &str) -> Result<Vec<IngressEndpoint>, ClusterError> {
     if map.trim().is_empty() {
         return Err(ClusterError::connect("ingress_endpoints is empty"));
@@ -48,7 +48,6 @@ pub fn parse_ingress_endpoints(map: &str) -> Result<Vec<IngressEndpoint>, Cluste
         out.push(IngressEndpoint { member_id, endpoint });
     }
     out.sort_by_key(|e| e.member_id);
-    // Detect duplicate member IDs after sorting.
     for w in out.windows(2) {
         if w[0].member_id == w[1].member_id {
             return Err(ClusterError::connect(format!(

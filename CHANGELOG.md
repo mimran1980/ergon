@@ -2,14 +2,107 @@
 
 ## [Unreleased]
 
+## [0.1.39] — 2026-11-11
+
+### Added
+
+- `ergon-cpus --ready-addr HOST:PORT` serves a placement readiness endpoint
+  beside the command. Point an `httpGet` readiness probe at it, and a running
+  pod leaves Ready while a kubelet restart during a plugin outage has taken its
+  shared CPUs away. It is Ready again only once the plugin has re-widened the
+  cpuset.
+
 ### Changed
 
+- `just bench-cluster`'s report shows n, mean, min, p50, p99, p99.99 and max
+  per arm, labelled as batch-mean percentiles (not per-message tails), names
+  invocations that kept no samples, and lists each pair as PASS, INCONCLUSIVE
+  or FAIL: an inconclusive pair passes the gate but is not parity. It warns
+  when the gate's output is empty, unfinished or miscounted. Both profiles'
+  gates run before the recipe fails.
+- Generator configuration errors name the option, its value and the reason
+  (`invalid configuration option '<option>' = '<value>': <reason>`), and an
+  invalid module name says it must be one Rust identifier that is not a keyword.
+- Breaking: `ResolveError::InvalidOffset` has a `field` member, and its message
+  names the field or composite member whose offset clashes.
+- rusteron 0.2.18 throughout, from 0.2.16 (still Aeron 1.54.0). Fragment
+  handlers in the samples take the header by reference (`&AeronHeader`), as
+  rusteron 0.2.17 requires.
+- The `cluster-ha-orderbook` sample says what its wire carries: full L2
+  snapshots (no deltas) stamped with the publisher's leadership term. Its book
+  rejects stale-term, replayed and session-down frames, and serves nothing from
+  the first observed session loss until a snapshot from the new term arrives.
 - `ergon-tune` findings name their evidence by lab run id (for example
   `flags-aws-20261015T070339Z`) instead of a `git show` path.
+- `ergon-tune` K6 checks `memory.high` only. It no longer reads PSI
+  (`cpu.pressure`, `memory.pressure`), whose any-non-zero warning had no
+  measured threshold.
+- Breaking: remove `ergon-cpus --fifo`, the `sched-fifo.ergon.io` annotation,
+  `ERGON_SCHED_FIFO` and the `schedFifo` setting. Its one A/B was mixed, and
+  the loop's `nohz_full` CPU took 533-947 timer interrupts a second under it.
+  A node config or chart values that still set `schedFifo` is refused.
+
+- Breaking: `ergo-aeron-cluster` `AeronCluster::close` leaves the session
+  `Closed`, as Java's `close()` does, instead of `PendingClose` until the next
+  poll. `PendingClose` now means only that the cluster closed the session or
+  the ingress reached its maximum position.
+
+### Removed
+
+- The `just plan-nri-lab` recipe and the Azure latency-lab scripts behind it.
+  `just test-nri-lab` now runs the lab's quiet-settings test and the gap
+  probe's unit tests.
+
+### Fixed
+
+- `ergo-sbe`: `verify`, `encoded_length` (message and group entry),
+  `as_body_bytes` / `as_bytes_with_header`, `skip_<group>` / `skip_n` and the
+  memoized lane now reject a var-data length above the schema `maxValue` with
+  `InvalidVarDataLength` wherever it is, even when the buffer holds every
+  byte; previously they passed over it and returned `Ok`. `verify` reports it
+  as `VerifyError::DecodeError`. On these paths and on every read of the field
+  itself, the maximum is checked before the buffer length, so a huge length in
+  a short buffer is `InvalidVarDataLength`, not `BufferTooShort`. A
+  random-access read that only passes over an earlier field, group iteration
+  and `scan_entry_at` still check bounds only.
+- `ergo-sbe`: when every `messageHeader` field is constant (a zero-length
+  header), `try_decode` and `AnyMessage::try_decode` panicked on an offset
+  past the end of the buffer instead of returning `BufferTooShort`. The
+  encoder's `try_wrap` and `try_wrap_and_apply_header` (and their panicking
+  `wrap` forms) likewise accepted such an offset when the header and fixed
+  block are both empty. Every one now rejects it.
+- `ergo-sbe`: a new group entry (`add()`, `add_checked()`, `start_entry()`)
+  writes the full schema null image for every optional field, the image
+  `fixed()` writes for `None`. Optional enums, fixed arrays and composites in
+  a group entry were left with whatever the buffer held, and an optional array
+  of up to 8 bytes had the scalar null spread across its width (`uint8[4]`
+  null 255 was written `FF 00 00 00`) instead of the element null in every
+  slot.
+- `ergo-aeron-cluster`: `close` sends its `SessionCloseRequest` only while
+  connected, and retries it up to three times under back pressure, as Java's
+  client does. A single refused offer lost it, so the cluster closed the
+  session by timeout instead of at the client's request; a session that had
+  lost its leader sent it to the dead leader.
+- `ergo-aeron-cluster`: an egress frame of another SBE schema reaches
+  `EgressListener::on_extension_message` instead of failing the poll with
+  `ProtocolError`, and connect skips one instead of failing, as Java's client
+  does.
+- `ergo-aeron-cluster`: connect sends its `SessionConnectRequest` once, as
+  Java's client does. It re-sent it every quarter of the message timeout while
+  waiting for an answer, and each copy opened another session on the cluster,
+  which the service saw open and later time out.
+- `ergo-aeron-cluster`: a `SessionEvent(ERROR)` answering the connect (the
+  cluster's session limit, a client version it does not accept) fails the
+  connect at once with `ConnectFailed` and the cluster's detail, instead of
+  after the whole message timeout.
 
 ### Docs
 
 - Book (deployment, tuning) and the Kubernetes READMEs cite lab runs by id.
+- Book: a Performance at a glance page (codec cost, individual-message latency,
+  failover, host scheduling gaps), generated from the benchmark artifacts in
+  the repository by `just perf-page` and checked in `just preflight`. A
+  measurement with no artifact reads "not measured".
 
 ## [0.1.38] — 2026-10-31
 

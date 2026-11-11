@@ -1,6 +1,6 @@
 //! Approved runtime configuration constants.
 
-/// Aeron IPC channel for both streams — rusteron's zero-cost `c"aeron:ipc"`.
+/// Aeron IPC channel for both streams, rusteron's zero-cost `c"aeron:ipc"`.
 /// Do not invent another local `c"aeron:ipc"` constant.
 pub use rusteron_client::AERON_IPC_STREAM as CHANNEL;
 /// AppMessage-wrapped L2Book/Trade stream.

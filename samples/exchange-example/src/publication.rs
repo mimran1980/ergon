@@ -1,4 +1,4 @@
-//! `ClaimPublisher` — typed SBE publication seam.
+//! `ClaimPublisher`, the typed SBE publication seam.
 //!
 //! Hides exact length computation, `try_claim_owned`, direct SBE encoding
 //! into the claim, commit, and classified drop counters. Backpressure is one

@@ -455,7 +455,7 @@ func (p *Plugin) applyGrants(adj *api.ContainerAdjustment, g *Grants, d *Decisio
 	}
 	p.log.Info("grants", append(logArgs,
 		"rlimits", len(g.Rlimits), "seccomp", g.SeccompMode, "numa", g.NumaMems,
-		"ptp", g.PtpDevice, "sched_fifo", g.SchedFifo, "cpuqos", g.CpuqosDevice,
+		"ptp", g.PtpDevice, "cpuqos", g.CpuqosDevice,
 		"hugepages", g.Hugepage != nil, "partition", g.CpuPartition,
 		"dpdk_pair", len(g.DpdkEnvs) > 0)...)
 	return nil
@@ -634,7 +634,7 @@ func (p *Plugin) hold(id, name string, pod *api.PodSandbox, s setup) {
 
 // holdPresent records the shared CPUs the container actually has, the way
 // Synchronize does: its recorded set clipped to what is in its cpuset now.
-// Used when that recorded set is outside today's sharedCpus — it keeps what it
+// Used when that recorded set is outside today's sharedCpus: it keeps what it
 // holds and is never widened back in, but the load it does carry still counts.
 func (p *Plugin) holdPresent(id, name string, pod *api.PodSandbox, s setup, cpus string) {
 	current, err := cpuset.Parse(cpus)

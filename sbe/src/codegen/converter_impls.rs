@@ -92,7 +92,7 @@ fn domain_bodies(
 /// A domain accessor is `Option`-wrapped exactly when the raw accessor it
 /// delegates to is: a field gated by `sinceVersion` returns `Option` (absent
 /// before its version), and a primitive/enum with `presence="optional"`
-/// null-maps to `Option`. A *composite* with `presence="optional"` does NOT —
+/// null-maps to `Option`. A composite with `presence="optional"` does not:
 /// there is no null image for a composite, so the raw `_value()` accessor
 /// stays plain and wrapping it here would produce a type mismatch
 /// (`Some`/`None` on a non-`Option`). Shared by the message-level and
@@ -110,7 +110,7 @@ pub(crate) fn is_optional_domain_field(
         FieldType::Primitive(_, None) => {
             f.since_version > 0 || f.presence == crate::ir::Presence::Optional
         }
-        // An enum carries absence *in band* — an optional enum has a
+        // An enum carries absence in band: an optional enum has a
         // `NullVal` variant, so its accessor stays plain unless
         // `null_as_option` maps that variant to `None`.
         FieldType::Enum { name, .. } => {
@@ -133,8 +133,8 @@ fn pascal_type(name: &str, span: proc_macro2::Span) -> syn::Type {
 }
 
 /// The wire type a converter converts from/to. A fixed array field's wire type
-/// is `[T; N]`, not the element type — generating converters against `T` for an
-/// array field produces a module that does not compile.
+/// is `[T; N]`, not the element type; converters generated against `T` for an
+/// array field would not compile.
 fn primitive_wire_type(rust_name: &str, length: Option<usize>) -> syn::Type {
     let elem = syn::Ident::new(rust_name, proc_macro2::Span::call_site());
     match length {
@@ -175,18 +175,11 @@ pub(crate) fn generate_converter_impls(
         if is_constant && !constant_converts(f) {
             continue;
         }
-        // Determine if this field has a conversion, and what the wire type is.
-        let (type_name, wire_type_ident): (String, syn::Type) = match &f.field_type {
-            FieldType::Composite { name, .. } => (name.clone(), pascal_type(name, span)),
-            FieldType::Enum { name, .. } => (name.clone(), pascal_type(name, span)),
-            FieldType::Set { name, .. } => (name.clone(), pascal_type(name, span)),
-            FieldType::Primitive(pt, length) => {
-                let rust_name = rust_type(*pt);
-                (
-                    rust_name.to_string(),
-                    primitive_wire_type(rust_name, *length),
-                )
-            }
+        let wire_type_ident: syn::Type = match &f.field_type {
+            FieldType::Composite { name, .. }
+            | FieldType::Enum { name, .. }
+            | FieldType::Set { name, .. } => pascal_type(name, span),
+            FieldType::Primitive(pt, length) => primitive_wire_type(rust_type(*pt), *length),
         };
         let has_conversion = field_has_conversion_free(f, conversions);
         if !has_conversion {
@@ -266,12 +259,11 @@ pub(crate) fn generate_converter_impls(
             }
 
             // The encoder setter always takes the domain value directly. The
-            // raw `*_wire` setter it delegates to takes the plain wire type —
+            // raw `*_wire` setter it delegates to takes the plain wire type;
             // `Option`/null handling lives in `fixed(&FixedFields)`, which
             // writes the schema null image for `None`. Wrapping the domain
-            // value in `Option` here produced a type mismatch on optional
+            // value in `Option` here would not type-check on optional
             // primitives (`self.ts_wire(Option<u64>)` against `ts_wire(u64)`).
-            // Absence is expressed on the raw path, not the domain setter.
             if !is_constant {
                 encoder_methods.extend(quote::quote! {
                     #manual_impl_doc
@@ -517,7 +509,7 @@ pub(crate) fn generate_converter_impls(
         // ordinary field setters: these methods delegate to the raw `*_wire`
         // setters, which live on concrete impls (a generic `impl<H, F>` cannot
         // resolve them), and the fixed-phase copy is what gives a domain-typed
-        // field a route to a terminal method — `fixed()` accepts wire values
+        // field a route to a terminal method: `fixed()` accepts wire values
         // only, so conversions cannot go through it.
         quote::quote! {
             impl<'a> #decoder_ident<'a> {

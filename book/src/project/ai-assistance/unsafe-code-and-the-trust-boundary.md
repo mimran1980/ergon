@@ -6,11 +6,11 @@ the project.
 Official-style codecs often separate checked setup from a trusted hot path. For
 **0.1.10** I wanted:
 
-- unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the **checked**
-  lane — they return `Result`, validate extents once, then enter a private
+- unsuffixed `wrap` / `wrap_and_apply_header` / `decode` as the checked
+  lane: they return `Result`, validate extents once, then enter a private
   zero-check core (`try_wrap*` aliases are removed);
 - public constructor `*_unchecked` twins only if measured keep rules
-  pass (at the time **keep=false** — cores stay module-private); and
+  pass (at the time keep=false; cores stay module-private); and
 - no repeated dynamic bounds check for every constant schema offset after the
   required block length has already been proved on the checked entry path.
 
@@ -28,7 +28,7 @@ required by the borrowing model or where a repeatable hot-path benchmark
 justifies the additional audit burden.
 
 One retained example came from the Cluster codec benchmark. Generated setters
-using checked slice ranges produced regressions around **1.19×** and **1.28×**
+using checked slice ranges produced regressions around 1.19× and 1.28×
 relative to the reference path. After the wrapping boundary had already proved
 the fixed block was present, using `get_unchecked_mut` for compile-time offsets
 restored parity.
@@ -36,7 +36,7 @@ restored parity.
 The policy is not “unsafe is fast.” It is:
 
 > If the invariant can be stated and established, and the benchmark shows a
-> meaningful need—or Rust borrowing requires the internal operation—unsafe may
+> meaningful need, or Rust borrowing requires the internal operation, unsafe may
 > be justified. Otherwise use safe Rust.
 
 The existence of a safe public API does not remove the need to audit internal

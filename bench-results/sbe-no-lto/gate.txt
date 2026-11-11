@@ -1,0 +1,32 @@
+=== SBE bench gate (strict, tolerance 0) ===
+  provenance ok: run b20261106T083837Z-61963-af10a56ac3fb profile no-lto commit af10a56ac3fb36e99c332e6e53aa3d38a5131393 rustc rustc 1.99.0 (b940084d7 2026-09-28) target aarch64-apple-darwin host Apple M4
+  repeats ok: 5 independent invocations
+  A/A null (parity/control/aa_encode_throughput): ratio CI [0.9932, 1.0123] — envelope over every invocation of the harness control; a pair inside it has no established winner
+  decode_scalar (ergo-sbe/sbe-tool)             0.8771–0.9117 (max 1.00)  ok
+      ratio CI [0.8731, 0.9282]  resolved  outside A/A null band  over 5 repeats (last 507.9921 / 579.1699 = 0.8771)
+  decode_array (ergo-sbe/sbe-tool)              0.5827–0.5897 (max 1.00)  ok
+      ratio CI [0.5809, 0.5915]  resolved  outside A/A null band  over 5 repeats (last 500.3141 / 858.5830 = 0.5827)
+  decode_composite (ergo-sbe/sbe-tool)          0.6106–0.6145 (max 1.00)  ok
+      ratio CI [0.6097, 0.6150]  resolved  outside A/A null band  over 5 repeats (last 248.0816 / 406.3244 = 0.6106)
+  decode_full_message (ergo-sbe/sbe-tool)       0.7582–0.7744 (max 1.00)  ok
+      ratio CI [0.7572, 0.7751]  resolved  outside A/A null band  over 5 repeats (last 10666.2510 / 13773.6017 = 0.7744)
+  decode_full_message_ordered (ergo-sbe/sbe-tool) 0.7563–0.7758 (max 1.00)  ok
+      ratio CI [0.7556, 0.7806]  resolved  outside A/A null band  over 5 repeats (last 10685.7249 / 13773.6017 = 0.7758)
+  decode_entry_point (ergo-sbe/sbe-tool)        0.7567–0.7740 (max 1.00)  ok
+      ratio CI [0.7557, 0.7798]  resolved  outside A/A null band  over 5 repeats (last 780.7039 / 1031.3981 = 0.7569)
+  encode_scalar_header_and_body (ergo-sbe/sbe-tool) 0.6740–0.6952 (max 1.00)  ok
+      ratio CI [0.6683, 0.6959]  resolved  outside A/A null band  over 5 repeats (last 1445.9947 / 2080.1121 = 0.6952)
+  encode_scalar_body_only (ergo-sbe/sbe-tool)   0.7229–0.7521 (max 1.00)  ok
+      ratio CI [0.7135, 0.7616]  resolved  outside A/A null band  over 5 repeats (last 288.7838 / 394.1569 = 0.7327)
+  encode_throughput_10k (ergo-sbe/sbe-tool)     0.8748–0.8814 (max 1.00)  ok
+      ratio CI [0.8725, 0.8889]  resolved  outside A/A null band  over 5 repeats (last 6514.5447 / 7399.3209 = 0.8804)
+  throughput_batch_10k (ergo-sbe/sbe-tool)      0.9018–0.9210 (max 1.00)  ok
+      ratio CI [0.8988, 0.9253]  resolved  outside A/A null band  over 5 repeats (last 8504.1447 / 9430.4469 = 0.9018)
+  wire_parity_encode_full (ergo-sbe/sbe-tool)   0.7453–0.7509 (max 1.00)  ok
+      ratio CI [0.7437, 0.7526]  resolved  outside A/A null band  over 5 repeats (last 4523.6453 / 6024.5893 = 0.7509)
+  extended_optional_enum_nullify (ergo-sbe/sbe-tool) 0.8860–0.8883 (max 1.00)  ok
+      ratio CI [0.8813, 0.8964]  resolved  outside A/A null band  over 5 repeats (last 776.7139 / 876.6626 = 0.8860)
+  extended_group_with_data (ergo-sbe/sbe-tool)  0.8060–0.8591 (max 1.00)  ok
+      ratio CI [0.7902, 0.8752]  resolved  outside A/A null band  over 5 repeats (last 4819.2841 / 5979.5637 = 0.8060)
+
+PASS: all maintained ratios are within strict ceilings

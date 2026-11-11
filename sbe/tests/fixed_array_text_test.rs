@@ -1,4 +1,4 @@
-//! T-11: `*_str` is encoding-gated; ASCII rejects non-ASCII before write.
+//! `*_str` is encoding-gated; ASCII rejects non-ASCII before write.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 

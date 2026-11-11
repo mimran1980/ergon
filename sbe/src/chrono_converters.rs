@@ -1,9 +1,10 @@
-//! Chrono timestamp converters — feature-gated behind `chrono`.
+//! Chrono timestamp converters (feature `chrono`).
 //!
-//! Wire all SBE timestamp fields as `i64` (nanoseconds since epoch for
-//! `UTCTimestamp`, microseconds for `UTCTimestampMicros`, etc.). These
-//! converters bridge to [`chrono::DateTime`] and [`chrono::NaiveDateTime`]
-//! so `with_domain_type` produces `DateTime<Utc>` / `NaiveDateTime` fields.
+//! SBE timestamp fields are `i64` on the wire (nanoseconds since the epoch
+//! for `UTCTimestamp`, microseconds for `UTCTimestampMicros`, and so on).
+//! These converters map them to [`chrono::DateTime`] and
+//! [`chrono::NaiveDateTime`], so `with_domain_type` produces `DateTime<Utc>`
+//! or `NaiveDateTime` fields.
 //!
 //! # Usage (build.rs)
 //!

@@ -24,8 +24,8 @@ fn main() -> Result<(), ergo_aeron_cluster::ClusterError> {
 Connection remains poll-driven internally; the crate does not require Tokio or
 another async runtime. `AsyncClusterConnect` is a poll-driven Aeron state
 machine, not a Rust `Future`. When the application owns the poll loop, the
-shortest supported path is `SessionBuilder` → `connect_async` → `default_idle`
-→ `poll_connect_until_done` → `finish`:
+shortest supported path calls `SessionBuilder`, `connect_async`, `default_idle`,
+`poll_connect_until_done` and `finish` in that order:
 
 ```rust,no_run
 use ergo_aeron_cluster::{default_idle, poll_connect_until_done, SessionBuilder};
@@ -70,8 +70,29 @@ let session = SessionBuilder::default()
     .egress_channel("aeron:udp?endpoint=localhost:9020")?;
 ```
 
-The grammar is `member_id=host:port` pairs separated by commas — no `aeron:`
+The grammar is `member_id=host:port` pairs separated by commas, with no `aeron:`
 prefix, member IDs need not be sorted or contiguous. The setter parses and
 validates eagerly: a missing `=`, non-numeric member ID, empty endpoint,
 empty map, or duplicate member ID fails immediately at the call site rather
 than at `validate()` or the first `poll()`.
+
+The fan-out sends one `SessionConnectRequest`, not one per member, as Java's
+client does: a second copy reaching the leader would leave a session behind.
+
+<div class="ergon-anim" data-anim="fanout-connect" data-title="Multi-member ingress: connect to all, keep the leader's"></div>
+
+*Animation, in words:* with three endpoints, `connect` (and `connect_async`)
+starts an async add of
+one ingress publication per member. It takes the first publication that
+connects (here member 0, a follower; illustrative) and sends one
+`SessionConnectRequest` with a fresh correlation id (7) on it alone. The
+follower answers `SessionEvent(REDIRECT)` echoing 7 and naming leader member 2.
+The client drops member 0's publication, closes member 1's, and keeps member
+2's, which has been connecting since the start, so no new add is needed
+(when the redirect names the same endpoint string as the map). It
+sends a new request with id 8 once that publication connects; only a
+`SessionEvent` or `Challenge` echoing the current id counts. The leader
+answers `SessionEvent(OK)` echoing 8, and the client keeps only the leader's
+publication: one session, two round trips (one if the first member to
+connect leads). When the leader is already known, a single
+`ingress_channel` is cheaper: the other publications exist only to be closed.

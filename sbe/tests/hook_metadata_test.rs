@@ -161,8 +161,8 @@ fn enum_discriminant_above_i64_max_reaches_hook() -> Result<(), Box<dyn std::err
 }
 
 /// Composite metadata must list real primitive members with correct Rust
-/// types and report nested composites/enums by type name — the earlier code
-/// omitted the primitive and mislabelled the container and enum ref as `u8`.
+/// types and report nested composites/enums by type name, never omit the
+/// primitive or label the container and enum ref as `u8`.
 #[test]
 fn composite_hook_reports_real_fields_not_containers() -> Result<(), Box<dyn std::error::Error>> {
     let captured = capture_all()?;
@@ -174,7 +174,7 @@ fn composite_hook_reports_real_fields_not_containers() -> Result<(), Box<dyn std
         })
         .expect("Outer composite context must be emitted");
 
-    // The real primitive field must be present with its true type — not omitted.
+    // The real primitive field must be present with its true type.
     assert!(
         outer.contains(&("real_field".to_string(), "i64".to_string())),
         "primitive member real_field must be reported as i64, got: {outer:?}"
@@ -189,8 +189,8 @@ fn composite_hook_reports_real_fields_not_containers() -> Result<(), Box<dyn std
         outer.contains(&("flag".to_string(), "Flag".to_string())),
         "enum ref must be reported as Flag, got: {outer:?}"
     );
-    // Nothing in this composite is a u8 — a stray u8 means a container/ref
-    // leaked through as a mislabelled field (the old bug).
+    // Nothing in this composite is a u8, so a stray u8 means a container or
+    // ref leaked through as a mislabelled field.
     assert!(
         !outer.iter().any(|(_, ty)| ty == "u8"),
         "no member should be mislabelled u8, got: {outer:?}"
@@ -205,7 +205,7 @@ fn composite_hook_reports_real_fields_not_containers() -> Result<(), Box<dyn std
 }
 
 /// Message decoder hook metadata must report groups and var-data as real Rust
-/// types, classified by [`ergo_sbe::FieldKind`] — never the sentinels `"group"`
+/// types, classified by [`ergo_sbe::FieldKind`], never the sentinels `"group"`
 /// / `"data"`.
 #[test]
 fn message_decoder_hook_reports_group_and_data_as_real_types()
@@ -252,7 +252,7 @@ fn message_decoder_hook_reports_group_and_data_as_real_types()
 
 /// `DomainStruct` hooks must fire for the top-level DTO *and* each generated
 /// `*EntryDomain`; the top-level context must include group and var-data
-/// fields — the serde test only had a fixed-only DTO.
+/// fields, which a fixed-only DTO does not exercise.
 #[test]
 fn domain_hook_covers_message_group_and_vardata() -> Result<(), Box<dyn std::error::Error>> {
     let captured = capture_all()?;
@@ -269,8 +269,8 @@ fn domain_hook_covers_message_group_and_vardata() -> Result<(), Box<dyn std::err
         .find(|(n, _)| *n == "MsgDomain")
         .map(|(_, f)| *f)
         .expect("top-level MsgDomain hook must fire");
-    // Group field is present, and its Rust type names the ACTUAL generated
-    // entry-DTO struct (prefixed with the message name) — a bare
+    // The group field is present, and its Rust type names the generated
+    // entry-DTO struct (prefixed with the message name); a bare
     // `Vec<LevelsEntryDomain>` would name a type that does not exist.
     assert!(
         msg.iter()

@@ -1,4 +1,4 @@
-# Busy-Spin Loop
+# Busy-spin loop
 
 One thread, pinned to one CPU, never sleeps. Each turn it polls every
 source once, does the application's work, and fires due timers. Everything
@@ -15,6 +15,31 @@ that can block or take long runs on another thread.
 
 The application is one struct the loop hands every event to. The loop owns
 the sources, the clock and the timers; the struct owns the state.
+
+<div class="ergon-anim" data-anim="busy-spin-turn" data-title="One turn of the busy-spin loop"></div>
+
+*Animation, in words:* two turns of the ring, with illustrative counts. Turn
+1: network I/O reads two packets (at most the read burst), the handlers run
+and queue `m1`. Aeron in has five fragments waiting but `FRAGMENT_LIMIT` is
+3, so it reads three and the other two stay in the image; the handler queues
+`m2` and `m3`. Aeron out commits `m1`, then `m2` gets `BackPressured`, a
+retryable error, so the loop stops offering and keeps `m2` and `m3`. Timers
+read the TSC once and compare: nothing is due (quanta's median batch on
+c7i.2xlarge is 15.99 ns a read, slowest batch 16.95 ns; the slowest single
+read is not recorded ([clocks](clocks.md))). Turn 2: the socket has
+nothing, so the read returns at once; Aeron in reads the two leftover
+fragments; Aeron out commits `m2` then `m3`, in queue order; a timer is due
+and its work runs. Never in the loop: allocation (reserved before it),
+blocking calls, connects and TLS handshakes (a helper thread), and host
+checks (the housekeeping thread), those threads on a CPU other than the
+loop's. Why it wins: each step is bounded and back-pressure carries over instead of
+waiting; on one Azure Cobalt VM with helpers off its CPU the loop measured
+p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, the max being the
+hypervisor's 3.5 to 5.5 µs floor ([shared CPUs](shared-cpus.md)). When it loses: it burns a whole
+CPU even when idle, a `cpu: 1` pod puts the helpers on the loop's CPU, and
+polling many sources every turn adds up: plain `recv-busy` at 64 sockets
+costs about 0.6 µs a socket a poll on Graviton ([findings](../findings.md)). The
+animation shows order, not timings.
 
 ## Never inside the loop
 

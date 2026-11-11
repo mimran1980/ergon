@@ -153,7 +153,7 @@ plugin_logs() { kube logs -n ergon-system -l app=ergon-shared-cpus --tail=120 2>
 # Docker Desktop) and then refuse to start: the CRI sandbox store lists a
 # sandbox whose metadata is gone, and every start fatals with
 # "failed to get metadata for stored sandbox ... not found". Only then is it
-# safe to wipe containerd's state — a wipe on a healthy node deletes live
+# safe to wipe containerd's state: a wipe on a healthy node deletes live
 # sandbox metadata and causes the same fatal. Wiping all of
 # /var/lib/containerd drops the images too; kind load redoes them. Static
 # pods come back from /etc/kubernetes/manifests.
@@ -246,7 +246,9 @@ cleanup() {
 
 # The node is usable when it is Ready and containerd answers.
 node_ready() {
-    kube get node -o jsonpath='{.items[0].conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True
+    local ready
+    ready=$(kube get node -o jsonpath='{.items[0].conditions[?(@.type=="Ready")].status}' 2>/dev/null) || return 1
+    grep -q True <<<"$ready"
 }
 
 # recover_containerd wipes /var/lib/containerd, which drops the images that
@@ -773,10 +775,7 @@ step8_rlimits() {
     check "rt-prio 50 (a limit value only)" grep -q "50" <<<"$ul"
     check "ERGON_RLIMIT_MEMLOCK=inf" \
         kube exec rlimits-yes -n "$NS" -- sh -c 'test "$ERGON_RLIMIT_MEMLOCK" = inf'
-    # RT scheduling is not built: nothing may change the scheduler and no FIFO
-    # env may appear.
-    check "no ERGON_SCHED_FIFO (RT scheduling is not built)" \
-        kube exec rlimits-yes -n "$NS" -- sh -c 'test -z "${ERGON_SCHED_FIFO:-}"'
+    # RT scheduling is not built: nothing may change the scheduler.
     local pol
     pol=$(kube exec rlimits-yes -n "$NS" -- chrt -p 1 2>/dev/null)
     say "  $pol"

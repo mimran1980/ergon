@@ -3,7 +3,7 @@ name = "sbe-codegen-examples"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Generator-API examples — how to call ergo-sbe as a library to generate and inspect codecs"
+description = "Generator API examples: how to call ergo-sbe as a library to generate and inspect codecs"
 
 [dependencies]
 ergo-sbe = { path = "../../sbe" }

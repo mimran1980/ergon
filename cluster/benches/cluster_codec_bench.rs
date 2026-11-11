@@ -29,8 +29,9 @@
 //! header: ergon `wrap_and_apply_header` ↔ sbe-tool `wrap(8)` then
 //! `header(0).parent()` **before** body setters (official order).
 //!
-//! Acceptance: 5-run median ergon/sbe-tool ratio ≤ 1.00 on every **maintained**
-//! case:
+//! Acceptance: the ergon/sbe-tool ratio, over 5 invocations each taken in both
+//! arm orders (see `Pair`), within its ceiling in `check-bench-gate.sh` on every
+//! **maintained** case:
 //! - encode: session message header, keep-alive, **claim_shaped** (body + app)
 //! - decode: session message header, session event (equal-work audit)
 //!
@@ -45,23 +46,44 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
+use criterion::{Bencher, Criterion, SamplingMode, Throughput, criterion_group, criterion_main, measurement::WallTime};
 
 /// sbe-tool 1.39.0 reference runtime — Criterion-private (forbid production imports).
 mod reference_sbe;
+
+/// The decode pairs' per-message arm bodies, shared with the outcome-parity test.
+mod decode_arms;
 
 /// Sampling shared with the SBE parity suite. Criterion's default `Linear` mode
 /// ramps a sample to tens of milliseconds of work; under that mode one arm of
 /// an A/A pair took long-sample spikes and the other did not. Flat mode over a
 /// short budget keeps samples under a few milliseconds. The rationale and the
 /// A/A evidence are in `perf_parity_bench`'s `parity_criterion`.
-fn parity_group<'a>(
-    c: &'a mut Criterion,
-    name: &str,
-) -> criterion::BenchmarkGroup<'a, criterion::measurement::WallTime> {
+fn parity_group<'c, 'f>(c: &'c mut Criterion, name: &str) -> Pair<'c, 'f> {
     let mut group = c.benchmark_group(name);
     group.sampling_mode(SamplingMode::Flat);
-    group
+    Pair {
+        group,
+        arms: Vec::with_capacity(2),
+    }
+}
+
+type Arm<'f> = Box<dyn FnMut(&mut Bencher<'_, WallTime>) + 'f>;
+
+/// One head-to-head group. Its arms run in the order `ERGON_BENCH_ARM_ORDER`
+/// names: unset or `forward` as registered, `reversed` backwards. Whichever arm
+/// of a Criterion group runs first is measured differently from the one after
+/// it, and the pairs are close enough for that to decide a verdict, so
+/// `just bench-cluster` takes every invocation in both orders and the gate
+/// combines the two ratios (`scripts/check-bench-gate.sh`, `verify_arm_order`).
+/// The A/A controls go through the same wrapper, so their band describes the
+/// same measurement.
+///
+/// Arms are held until [`Pair::finish`], so anything an arm borrows must be
+/// declared before the group.
+struct Pair<'c, 'f> {
+    group: criterion::BenchmarkGroup<'c, WallTime>,
+    arms: Vec<(&'static str, Arm<'f>)>,
 }
 
 const BATCH_SIZE: usize = 10_000;
@@ -70,7 +92,7 @@ const HDR: usize = 8;
 
 /// Per-slot buffer view shared by both arms of every encode pair.
 ///
-/// The extent is proved once — by the allocation (`BATCH_SIZE * slot`) and the
+/// The extent is proved once — by the allocation (`BATCH_SIZE * SLOT`) and the
 /// parity assert in the gated function — and the timed region must not re-prove
 /// it. A safe `buf[off..off + slot]` index emits a bounds check every
 /// iteration, and rustc does not fuse that check the same way twice: on aarch64
@@ -107,6 +129,31 @@ fn assert_body_parity(case: &str, ergo: &[u8], sbe_tool: &[u8], body_len: usize)
         &sbe_tool[HDR..HDR + body_len],
         "{case}: body bytes differ"
     );
+}
+
+// Below the parity helpers on purpose: `fairness_policy_test` requires an exact
+// assertion before the file's first `.bench_*` call.
+impl<'f> Pair<'_, 'f> {
+    fn throughput(&mut self, throughput: Throughput) {
+        self.group.throughput(throughput);
+    }
+
+    fn bench_function(&mut self, id: &'static str, arm: impl FnMut(&mut Bencher<'_, WallTime>) + 'f) {
+        self.arms.push((id, Box::new(arm)));
+    }
+
+    fn finish(self) {
+        let Self { mut group, mut arms } = self;
+        match std::env::var("ERGON_BENCH_ARM_ORDER").as_deref() {
+            Err(std::env::VarError::NotPresent) | Ok("forward") => {}
+            Ok("reversed") => arms.reverse(),
+            other => panic!("ERGON_BENCH_ARM_ORDER must be `forward` or `reversed`, got {other:?}"),
+        }
+        for (id, mut arm) in arms {
+            group.bench_function(id, |b| arm(b));
+        }
+        group.finish();
+    }
 }
 
 fn assert_session_message_header_encode_parity() {
@@ -208,9 +255,12 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
     assert_session_message_header_encode_parity();
     let mut g = parity_group(c, "cluster/encode/session_message_header");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
-    let slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH;
+    // `const`, not a captured `let`. Arms are boxed `dyn FnMut` (see `Pair`), so
+    // a captured length is an opaque load and sbe-tool's `put_bytes_at` keeps a
+    // bounds check per field that ergon's unchecked setters do not: unequal loops.
+    const SLOT: usize = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH;
     g.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * slot];
+        let mut buf = vec![0u8; BATCH_SIZE * SLOT];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -219,19 +269,19 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * slot;
+                let off = i * SLOT;
                 let term = black_box((i % 1000) as i64);
                 let session = black_box(42_i64);
                 let timestamp = black_box(0_i64);
                 // SAFETY: each slice is `HDR + BLOCK_LENGTH` (`ENCODED_LENGTH`),
-                // within the `BATCH_SIZE * slot` allocation, and disjoint across
+                // within the `BATCH_SIZE * SLOT` allocation, and disjoint across
                 // iterations. `wrap` proves that extent and then panics; sbe-tool
                 // `wrap` does not, so the panic check is unequal work. The parity
                 // assert above already ran `wrap` on this shape. The slice length
                 // stays visible so both arms can drop per-field checks; the values
                 // are opaque so neither arm folds 42 and 0 into a constant vector
                 // store.
-                let view = unsafe { slot_slice(base, off, slot) };
+                let view = unsafe { slot_slice(base, off, SLOT) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_unchecked(view, 0)
                 }
@@ -243,7 +293,7 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
         });
     });
     g.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * slot];
+        let mut buf = vec![0u8; BATCH_SIZE * SLOT];
         b.iter(|| {
             unsafe {
                 core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
@@ -251,13 +301,13 @@ fn bench_encode_msg_header_ergo(c: &mut Criterion) {
             use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * slot;
+                let off = i * SLOT;
                 let term = black_box((i % 1000) as i64);
                 let session = black_box(42_i64);
                 let timestamp = black_box(0_i64);
-                // SAFETY: same extent proof as the ergo arm — `BATCH_SIZE * slot`
+                // SAFETY: same extent proof as the ergo arm — `BATCH_SIZE * SLOT`
                 // allocation, disjoint per iteration.
-                let wb = WriteBuf::new(unsafe { slot_slice(base, off, slot) });
+                let wb = WriteBuf::new(unsafe { slot_slice(base, off, SLOT) });
                 let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, HDR);
                 enc.leadership_term_id(term);
                 enc.cluster_session_id(session);
@@ -274,9 +324,10 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
     assert_session_keep_alive_encode_parity();
     let mut g = parity_group(c, "cluster/encode/session_keep_alive");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
-    let slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
+    // `const`, not a captured `let`: see `bench_encode_msg_header_ergo`.
+    const SLOT: usize = HDR + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
     g.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * slot];
+        let mut buf = vec![0u8; BATCH_SIZE * SLOT];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -285,17 +336,17 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * slot;
+                let off = i * SLOT;
                 let term = black_box(5_i64);
                 let session = black_box((i % 100) as i64);
                 // SAFETY: each slice is `HDR + BLOCK_LENGTH` (`ENCODED_LENGTH`),
-                // within the `BATCH_SIZE * slot` allocation, and disjoint across
+                // within the `BATCH_SIZE * SLOT` allocation, and disjoint across
                 // iterations. `wrap` proves that extent and then panics; sbe-tool
                 // `wrap` does not, so the panic check is unequal work. The parity
                 // assert above already ran `wrap` on this shape. The slice length
                 // stays visible so both arms can drop per-field checks; the values
                 // are opaque so neither arm folds 5 into a constant store.
-                let view = unsafe { slot_slice(base, off, slot) };
+                let view = unsafe { slot_slice(base, off, SLOT) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap_unchecked(view, 0)
                 }
@@ -306,7 +357,7 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
         });
     });
     g.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * slot];
+        let mut buf = vec![0u8; BATCH_SIZE * SLOT];
         b.iter(|| {
             unsafe {
                 core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
@@ -314,12 +365,12 @@ fn bench_encode_keep_alive_ergo(c: &mut Criterion) {
             use reference_sbe::{WriteBuf, session_keep_alive_codec::SessionKeepAliveEncoder};
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * slot;
+                let off = i * SLOT;
                 let term = black_box(5_i64);
                 let session = black_box((i % 100) as i64);
-                // SAFETY: same extent proof as the ergo arm — `BATCH_SIZE * slot`
+                // SAFETY: same extent proof as the ergo arm — `BATCH_SIZE * SLOT`
                 // allocation, disjoint per iteration.
-                let wb = WriteBuf::new(unsafe { slot_slice(base, off, slot) });
+                let wb = WriteBuf::new(unsafe { slot_slice(base, off, SLOT) });
                 let mut enc = SessionKeepAliveEncoder::default().wrap(wb, HDR);
                 enc.leadership_term_id(term);
                 enc.cluster_session_id(session);
@@ -350,9 +401,9 @@ fn bench_aa_control_keep_alive(c: &mut Criterion) {
     assert_session_keep_alive_encode_parity();
     let mut g = parity_group(c, "cluster/control/aa_encode_keep_alive");
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
-    let slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
+    const SLOT: usize = HDR + ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::BLOCK_LENGTH;
     g.bench_function("arm_a", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * slot];
+        let mut buf = vec![0u8; BATCH_SIZE * SLOT];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -361,16 +412,16 @@ fn bench_aa_control_keep_alive(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * slot;
+                let off = i * SLOT;
                 let term = black_box(5_i64);
                 let session = black_box((i % 100) as i64);
                 // SAFETY: each slice is `HDR + BLOCK_LENGTH` (`ENCODED_LENGTH`),
-                // within the `BATCH_SIZE * slot` allocation, and disjoint across
+                // within the `BATCH_SIZE * SLOT` allocation, and disjoint across
                 // iterations. The parity assert above already ran `wrap` on this
                 // shape. The slice length stays visible so both arms can drop
                 // per-field checks; the values are opaque so neither arm folds 5
                 // into a constant store.
-                let view = unsafe { slot_slice(base, off, slot) };
+                let view = unsafe { slot_slice(base, off, SLOT) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap_unchecked(view, 0)
                 }
@@ -381,7 +432,7 @@ fn bench_aa_control_keep_alive(c: &mut Criterion) {
         });
     });
     g.bench_function("arm_b", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * slot];
+        let mut buf = vec![0u8; BATCH_SIZE * SLOT];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -390,16 +441,16 @@ fn bench_aa_control_keep_alive(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * slot;
+                let off = i * SLOT;
                 let term = black_box(5_i64);
                 let session = black_box((i % 100) as i64);
                 // SAFETY: each slice is `HDR + BLOCK_LENGTH` (`ENCODED_LENGTH`),
-                // within the `BATCH_SIZE * slot` allocation, and disjoint across
+                // within the `BATCH_SIZE * SLOT` allocation, and disjoint across
                 // iterations. The parity assert above already ran `wrap` on this
                 // shape. The slice length stays visible so both arms can drop
                 // per-field checks; the values are opaque so neither arm folds 5
                 // into a constant store.
-                let view = unsafe { slot_slice(base, off, slot) };
+                let view = unsafe { slot_slice(base, off, SLOT) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionKeepAliveEncoder::wrap_unchecked(view, 0)
                 }
@@ -422,11 +473,11 @@ fn bench_aa_control_keep_alive(c: &mut Criterion) {
 /// `fairness_policy_test::aa_control_arms_run_identical_work` for the lock.
 fn bench_aa_control_claim_shaped(c: &mut Criterion) {
     let mut g = parity_group(c, "cluster/control/aa_encode_claim_shaped");
-    let hdr_slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH; // 32
-    let total = hdr_slot + CLAIM_APP_PAYLOAD.len();
+    const HDR_SLOT: usize = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH; // 32
+    const TOTAL: usize = HDR_SLOT + CLAIM_APP_PAYLOAD.len();
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("arm_a", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * total];
+        let mut buf = vec![0u8; BATCH_SIZE * TOTAL];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -435,16 +486,16 @@ fn bench_aa_control_claim_shaped(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * total;
+                let off = i * TOTAL;
                 let term = black_box(5_i64);
                 let session = black_box(42_i64);
                 let timestamp = black_box(0_i64);
-                // SAFETY: `hdr_slot` is exactly `HDR + BLOCK_LENGTH`. The header
-                // and app regions are disjoint within one `total` slot, and slots
+                // SAFETY: `HDR_SLOT` is exactly `HDR + BLOCK_LENGTH`. The header
+                // and app regions are disjoint within one `TOTAL` slot, and slots
                 // are disjoint across iterations. The values are opaque so
                 // neither arm folds them into constant stores.
-                let hdr = unsafe { slot_slice(base, off, hdr_slot) };
-                let app = unsafe { slot_slice(base, off + hdr_slot, CLAIM_APP_PAYLOAD.len()) };
+                let hdr = unsafe { slot_slice(base, off, HDR_SLOT) };
+                let app = unsafe { slot_slice(base, off + HDR_SLOT, CLAIM_APP_PAYLOAD.len()) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_unchecked(hdr, 0)
                 }
@@ -457,7 +508,7 @@ fn bench_aa_control_claim_shaped(c: &mut Criterion) {
         });
     });
     g.bench_function("arm_b", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * total];
+        let mut buf = vec![0u8; BATCH_SIZE * TOTAL];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -466,16 +517,16 @@ fn bench_aa_control_claim_shaped(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * total;
+                let off = i * TOTAL;
                 let term = black_box(5_i64);
                 let session = black_box(42_i64);
                 let timestamp = black_box(0_i64);
-                // SAFETY: `hdr_slot` is exactly `HDR + BLOCK_LENGTH`. The header
-                // and app regions are disjoint within one `total` slot, and slots
+                // SAFETY: `HDR_SLOT` is exactly `HDR + BLOCK_LENGTH`. The header
+                // and app regions are disjoint within one `TOTAL` slot, and slots
                 // are disjoint across iterations. The values are opaque so
                 // neither arm folds them into constant stores.
-                let hdr = unsafe { slot_slice(base, off, hdr_slot) };
-                let app = unsafe { slot_slice(base, off + hdr_slot, CLAIM_APP_PAYLOAD.len()) };
+                let hdr = unsafe { slot_slice(base, off, HDR_SLOT) };
+                let app = unsafe { slot_slice(base, off + HDR_SLOT, CLAIM_APP_PAYLOAD.len()) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_unchecked(hdr, 0)
                 }
@@ -592,13 +643,9 @@ fn bench_decode_msg_header(c: &mut Criterion) {
                 core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
             }
             for _ in 0..BATCH_SIZE {
-                let d = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::wrap(
-                    black_box(&MSG_HDR_FIXTURE[..]),
-                    0,
-                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH,
-                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::SCHEMA_VERSION,
-                );
-                black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
+                decode_arms::ergo_session_message_header(black_box(&MSG_HDR_FIXTURE[..]), |v| {
+                    black_box(v);
+                });
             }
         });
     });
@@ -607,21 +654,10 @@ fn bench_decode_msg_header(c: &mut Criterion) {
             unsafe {
                 core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
             }
-            use reference_sbe::{ReadBuf, session_message_header_codec::SessionMessageHeaderDecoder};
             for _ in 0..BATCH_SIZE {
-                let buf = black_box(&MSG_HDR_FIXTURE[..]);
-                let block = ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::BLOCK_LENGTH;
-                // Same extent check ergon wrap() performs. No header identity.
-                if buf.len() < HDR + block {
-                    continue;
-                }
-                let d = SessionMessageHeaderDecoder::default().wrap(
-                    ReadBuf::new(buf),
-                    HDR,
-                    block as u16,
-                    ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderDecoder::SCHEMA_VERSION,
-                );
-                black_box((d.leadership_term_id(), d.cluster_session_id(), d.timestamp()));
+                decode_arms::tool_session_message_header(black_box(&MSG_HDR_FIXTURE[..]), |v| {
+                    black_box(v);
+                });
             }
         });
     });
@@ -665,61 +701,27 @@ fn bench_decode_session_event(c: &mut Criterion) {
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
+            // Same 64-byte alignment as the sbe-tool arm. The no-LTO
+            // ratio otherwise follows where the loop header lands.
+            unsafe {
+                core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+            }
             for _ in 0..BATCH_SIZE {
-                use ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder;
-                // Use wrap() — extent-only check, no header field validation.
-                // sbe-tool arm does equivalent manual checks.
-                let dec = SessionEventDecoder::wrap(
-                    black_box(&SESSION_EVENT_FIXTURE[..]),
-                    0,
-                    SessionEventDecoder::BLOCK_LENGTH,
-                    SessionEventDecoder::SCHEMA_VERSION,
-                );
-                let cid = dec.correlation_id();
-                let csid = dec.cluster_session_id();
-                let ltid = dec.leadership_term_id();
-                let lmid = dec.leader_member_id();
-                let code = dec.code();
-                // Slice only — matches sbe-tool `detail_slice`. `into_detail()`
-                // also constructs the next stage and is more work. `continue`
-                // matches the sbe-tool arm's fail-closed skip (no panic path).
-                let Ok(detail) = dec.detail_slice() else {
-                    continue;
-                };
-                black_box((cid, csid, ltid, lmid, code, detail));
+                decode_arms::ergo_session_event(black_box(&SESSION_EVENT_FIXTURE[..]), |v| {
+                    black_box(v);
+                });
             }
         });
     });
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            use reference_sbe::{ReadBuf, session_event_codec::SessionEventDecoder};
+            unsafe {
+                core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
+            }
             for _ in 0..BATCH_SIZE {
-                let buf = black_box(&SESSION_EVENT_FIXTURE[..]);
-                let block = ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::BLOCK_LENGTH;
-                // Same extent check ergon wrap() performs. No header identity.
-                if buf.len() < HDR + block {
-                    continue;
-                }
-                let mut dec = SessionEventDecoder::default().wrap(
-                    ReadBuf::new(buf),
-                    HDR,
-                    block as u16,
-                    ergo_aeron_cluster::cluster_codec_types::SessionEventDecoder::SCHEMA_VERSION,
-                );
-                // Field reads first (matches Ergo order: scalars then detail).
-                let cid = dec.correlation_id();
-                let csid = dec.cluster_session_id();
-                let ltid = dec.leadership_term_id();
-                let lmid = dec.leader_member_id();
-                let code = dec.code();
-                let coords = dec.detail_decoder();
-                // Equal-work var-data gates: length cap + slice bounds (Ergo into_detail).
-                let (off, len) = coords;
-                if len > 1_073_741_824 || off.saturating_add(len) > buf.len() {
-                    continue;
-                }
-                let detail = dec.detail_slice(coords);
-                black_box((cid, csid, ltid, lmid, code, detail));
+                decode_arms::tool_session_event(black_box(&SESSION_EVENT_FIXTURE[..]), |v| {
+                    black_box(v);
+                });
             }
         });
     });
@@ -772,47 +774,18 @@ fn bench_decode_new_leader(c: &mut Criterion) {
     g.bench_function("ergo-sbe", |b| {
         b.iter(|| {
             for _ in 0..BATCH_SIZE {
-                use ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder;
-                let dec = NewLeaderEventDecoder::wrap(
-                    black_box(fixture.as_slice()),
-                    0,
-                    NewLeaderEventDecoder::BLOCK_LENGTH,
-                    NewLeaderEventDecoder::SCHEMA_VERSION,
-                );
-                let csid = dec.cluster_session_id();
-                let ltid = dec.leadership_term_id();
-                let lmid = dec.leader_member_id();
-                let eps = dec.ingress_endpoints_slice().unwrap();
-                black_box((csid, ltid, lmid, eps));
+                decode_arms::ergo_new_leader_event(black_box(fixture.as_slice()), |v| {
+                    black_box(v);
+                });
             }
         });
     });
     g.bench_function("sbe-tool", |b| {
         b.iter(|| {
-            use reference_sbe::{ReadBuf, new_leader_event_codec::NewLeaderEventDecoder};
             for _ in 0..BATCH_SIZE {
-                let buf = black_box(fixture.as_slice());
-                let block = ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::BLOCK_LENGTH;
-                // Same extent check ergon wrap() performs. No header identity.
-                if buf.len() < HDR + block {
-                    continue;
-                }
-                let mut dec = NewLeaderEventDecoder::default().wrap(
-                    ReadBuf::new(buf),
-                    HDR,
-                    block as u16,
-                    ergo_aeron_cluster::cluster_codec_types::NewLeaderEventDecoder::SCHEMA_VERSION,
-                );
-                let csid = dec.cluster_session_id();
-                let ltid = dec.leadership_term_id();
-                let lmid = dec.leader_member_id();
-                let coords = dec.ingress_endpoints_decoder();
-                let (off, len) = coords;
-                if len > 1_073_741_824 || off.saturating_add(len) > buf.len() {
-                    continue;
-                }
-                let eps = dec.ingress_endpoints_slice(coords);
-                black_box((csid, ltid, lmid, eps));
+                decode_arms::tool_new_leader_event(black_box(fixture.as_slice()), |v| {
+                    black_box(v);
+                });
             }
         });
     });
@@ -828,39 +801,40 @@ const CLAIM_APP_PAYLOAD: [u8; 32] = [0xABu8; 32];
 
 fn bench_claim_shaped_write(c: &mut Criterion) {
     let mut g = parity_group(c, "cluster/encode/claim_shaped_header_plus_app");
-    let hdr_slot = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH; // 32
-    let total = hdr_slot + CLAIM_APP_PAYLOAD.len();
+    // `const`, not a captured `let`: see `bench_encode_msg_header_ergo`.
+    const HDR_SLOT: usize = HDR + ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::BLOCK_LENGTH; // 32
+    const TOTAL: usize = HDR_SLOT + CLAIM_APP_PAYLOAD.len();
     {
         use ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder as ErgoEncoder;
         use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder as ToolEncoder};
 
-        let mut ergo = vec![0u8; total];
-        let _ = ErgoEncoder::wrap(&mut ergo[..hdr_slot], 0)
+        let mut ergo = vec![0u8; TOTAL];
+        let _ = ErgoEncoder::wrap(&mut ergo[..HDR_SLOT], 0)
             .leadership_term_id(5)
             .cluster_session_id(42)
             .timestamp(0);
         let ergo_body = ErgoEncoder::BLOCK_LENGTH;
-        ergo[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+        ergo[HDR_SLOT..].copy_from_slice(&CLAIM_APP_PAYLOAD);
 
-        let mut sbe_tool = vec![0u8; total];
-        let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool[..hdr_slot]), HDR);
+        let mut sbe_tool = vec![0u8; TOTAL];
+        let mut tool = ToolEncoder::default().wrap(WriteBuf::new(&mut sbe_tool[..HDR_SLOT]), HDR);
         tool.leadership_term_id(5).cluster_session_id(42).timestamp(0);
         let tool_body = tool.encoded_length();
-        sbe_tool[hdr_slot..].copy_from_slice(&CLAIM_APP_PAYLOAD);
+        sbe_tool[HDR_SLOT..].copy_from_slice(&CLAIM_APP_PAYLOAD);
 
         assert_eq!(ergo_body, tool_body, "claim body length");
         assert_eq!(ergo_body, ErgoEncoder::BLOCK_LENGTH);
         assert_body_parity(
             "claim-shaped write",
-            &ergo[..hdr_slot],
-            &sbe_tool[..hdr_slot],
+            &ergo[..HDR_SLOT],
+            &sbe_tool[..HDR_SLOT],
             ergo_body,
         );
-        assert_eq!(&ergo[hdr_slot..], &sbe_tool[hdr_slot..], "claim app payload");
+        assert_eq!(&ergo[HDR_SLOT..], &sbe_tool[HDR_SLOT..], "claim app payload");
     }
     g.throughput(Throughput::Elements(BATCH_SIZE as u64));
     g.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * total];
+        let mut buf = vec![0u8; BATCH_SIZE * TOTAL];
         b.iter(|| {
             // Same 64-byte alignment as the sbe-tool arm. The no-LTO
             // ratio otherwise follows where the loop header lands.
@@ -869,20 +843,20 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
             }
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * total;
+                let off = i * TOTAL;
                 let term = black_box(5_i64);
                 let session = black_box(42_i64);
                 let timestamp = black_box(0_i64);
-                // SAFETY: `hdr_slot` is exactly `HDR + BLOCK_LENGTH`. The header
-                // and app regions are disjoint within one `total` slot, and slots
+                // SAFETY: `HDR_SLOT` is exactly `HDR + BLOCK_LENGTH`. The header
+                // and app regions are disjoint within one `TOTAL` slot, and slots
                 // are disjoint across iterations. `wrap` proves the header extent
                 // and then panics; sbe-tool `wrap` does not, so the panic check is
                 // unequal work. The parity assert above already ran `wrap` on this
                 // shape. The slice length stays visible so both arms can drop
                 // per-field checks; the values are opaque so neither arm folds them
                 // into constant stores.
-                let hdr = unsafe { slot_slice(base, off, hdr_slot) };
-                let app = unsafe { slot_slice(base, off + hdr_slot, CLAIM_APP_PAYLOAD.len()) };
+                let hdr = unsafe { slot_slice(base, off, HDR_SLOT) };
+                let app = unsafe { slot_slice(base, off + HDR_SLOT, CLAIM_APP_PAYLOAD.len()) };
                 let _ = unsafe {
                     ergo_aeron_cluster::cluster_codec_types::SessionMessageHeaderEncoder::wrap_unchecked(hdr, 0)
                 }
@@ -895,7 +869,7 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
         });
     });
     g.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * total];
+        let mut buf = vec![0u8; BATCH_SIZE * TOTAL];
         b.iter(|| {
             unsafe {
                 core::arch::asm!(".p2align 6", options(nomem, nostack, preserves_flags));
@@ -903,13 +877,13 @@ fn bench_claim_shaped_write(c: &mut Criterion) {
             use reference_sbe::{WriteBuf, session_message_header_codec::SessionMessageHeaderEncoder};
             let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * total;
+                let off = i * TOTAL;
                 let term = black_box(5_i64);
                 let session = black_box(42_i64);
                 let timestamp = black_box(0_i64);
                 // SAFETY: same extent and disjointness proof as the ergo arm.
-                let hdr = unsafe { slot_slice(base, off, hdr_slot) };
-                let app = unsafe { slot_slice(base, off + hdr_slot, CLAIM_APP_PAYLOAD.len()) };
+                let hdr = unsafe { slot_slice(base, off, HDR_SLOT) };
+                let app = unsafe { slot_slice(base, off + HDR_SLOT, CLAIM_APP_PAYLOAD.len()) };
                 let wb = WriteBuf::new(hdr);
                 let mut enc = SessionMessageHeaderEncoder::default().wrap(wb, HDR);
                 enc.leadership_term_id(term);

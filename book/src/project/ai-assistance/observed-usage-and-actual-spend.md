@@ -4,8 +4,8 @@ The most accurate data comes from `ccusage` (Claude Code + Codex agents only;
 Hermes and OpenCode are automation agents and excluded here). Snapshot from
 2026-08-07 (`ccusage` export since 2026-06-28). Note: this export was produced
 by a newer `ccusage` version with a different rate table and session
-attribution than the previous 2026-08-02 snapshot, so per-model figures differ
-— the current snapshot is authoritative.
+attribution than the previous 2026-08-02 snapshot, so per-model figures differ.
+The current snapshot is authoritative.
 
 ## ccusage API-level spend
 
@@ -22,9 +22,9 @@ attribution than the previous 2026-08-02 snapshot, so per-model figures differ
 | glm-5.2 | 19,826,248 | 2,577,598 | 0 | 1,868,156,352 | — | 1,890,560,198 | $524.82 |
 | gpt-5.5 | 1,781,759 | 117,119 | 0 | 18,613,504 | 31,270 | 20,543,652 | $21.73 |
 | gpt-5.6-sol | 33,916,058 | 3,205,179 | 0 | 970,537,472 | 1,524,674 | 1,009,183,383 | $758.17 |
-| **Total** | **159,052,174** | **32,893,371** | **18,203,535** | **17,914,836,171** | **1,555,944** | **18,126,541,195** | **$1,870.77** |
+| **Total** | 159,052,174 | 32,893,371 | 18,203,535 | 17,914,836,171 | 1,555,944 | 18,126,541,195 | $1,870.77 |
 
-That's **18 billion tokens** and **$1,870.77** in API charges at
+That's 18 billion tokens and $1,870.77 in API charges at
 enterprise/pay-as-you-go rates. The earlier 14-billion-token estimate was
 derived from provider dashboards and was an order-of-magnitude figure; the
 ccusage data is a precise ledger-level reconciliation across Claude Code and
@@ -36,11 +36,11 @@ Separate from the API charges above, these subscription fees were paid:
 
 | Provider | Spend | Notes |
 |---|---:|---|
-| GLM coding plan | $114 | Covers glm-4.7 and glm-5.2 API usage — the $533.23 in GLM API costs in the ccusage table is how the plan's included quota would be priced at PAYG rates |
+| GLM coding plan | $114 | Covers glm-4.7 and glm-5.2 API usage. The $533.23 in GLM API costs in the ccusage table is how the plan's included quota would be priced at PAYG rates |
 | OpenAI subscription | $20 | |
 | Claude subscription | $20 | |
 | Grok subscription | $30 | Grok API usage is not tracked by ccusage |
-| **Subscription total** | **$184** | |
+| **Subscription total** | $184 | |
 
 ## Total identified spend
 
@@ -48,7 +48,7 @@ Separate from the API charges above, these subscription fees were paid:
 |---|---:|
 | API charges (enterprise/PAYG rates, via ccusage) | $1,870.77 |
 | Subscriptions | $184.00 |
-| **Total identified** | **$2,054.77** |
+| **Total identified** | $2,054.77 |
 
 The API charges are computed at published enterprise rates, not necessarily what
 was actually billed (DeepSeek's actual bill was $77.39 for the project period;

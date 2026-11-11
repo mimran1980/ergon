@@ -1,0 +1,165 @@
+/* ergon book animation runtime styles (see anim.js).
+ * Palette: Okabe-Ito (colour-blind safe), lighter variants on dark themes.
+ * Every colour is also carried by a text label, never by colour alone. */
+:root {
+  --ea-c1: #0072b2; /* blue */
+  --ea-c2: #d55e00; /* vermillion */
+  --ea-c3: #009e73; /* bluish green */
+  --ea-c4: #cc79a7; /* reddish purple */
+  --ea-c5: #e69f00; /* orange */
+}
+.coal, .navy, .ayu {
+  --ea-c1: #56b4e9;
+  --ea-c2: #ef8a4c;
+  --ea-c3: #2fc59b;
+  --ea-c4: #e3a5c8;
+  --ea-c5: #f0c040;
+}
+
+.ergon-anim {
+  margin: 1.8em 0 0.8em;
+  padding: 1em;
+  border: 1px solid var(--table-border-color);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  max-width: 100%;
+  box-sizing: border-box;
+  box-shadow: 0 4px 18px rgb(0 0 0 / 7%);
+}
+.ergon-anim .ea-header { display: flex; align-items: flex-start; gap: 1em; margin-bottom: 1em; }
+.ergon-anim .ea-header > div { min-width: 0; flex: 1; }
+.ergon-anim .ea-eyebrow {
+  display: block;
+  color: var(--ea-c1);
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.ergon-anim .ea-title { margin: 0.35em 0 0; font-size: 1em; font-weight: 650; line-height: 1.4; }
+.ergon-anim .ea-status {
+  flex-shrink: 0;
+  padding: 0.3em 0.65em;
+  border: 1px solid var(--table-border-color);
+  border-radius: 20px;
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+}
+.ergon-anim.ea-playing .ea-status { color: var(--ea-c3); border-color: currentColor; }
+.ergon-anim .ea-stage {
+  padding: 0.75em 0.25em;
+  border-block: 1px solid var(--table-border-color);
+  background: var(--quote-bg);
+  background: color-mix(in srgb, var(--quote-bg) 55%, var(--bg));
+}
+.ergon-anim:focus-visible,
+.ergon-anim .ea-btn:focus-visible,
+.ergon-anim select:focus-visible,
+.ergon-anim .ea-scrubber:focus-visible {
+  outline: 3px solid var(--links);
+  outline-offset: 2px;
+}
+.ergon-anim.ea-failed { font-style: italic; }
+
+.ergon-anim .ea-stage svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.ergon-anim .ea-caption {
+  margin: 1em 0;
+  padding-left: 0.8em;
+  border-left: 3px solid var(--ea-c1);
+  min-height: 3em;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+.ergon-anim .ea-timeline { display: flex; align-items: center; gap: 1em; margin: 0.8em 0; }
+.ergon-anim .ea-scrubber {
+  --ea-progress: 0%;
+  flex: 1;
+  min-width: 0;
+  height: 1.5em;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--ea-c1);
+}
+.ergon-anim .ea-scrubber::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 5px;
+  background: linear-gradient(to right, var(--ea-c1) var(--ea-progress), var(--table-border-color) var(--ea-progress));
+}
+.ergon-anim .ea-scrubber::-webkit-slider-thumb { margin-top: -5px; }
+.ergon-anim .ea-scrubber::-moz-range-track { height: 5px; border-radius: 5px; background: var(--table-border-color); }
+.ergon-anim .ea-scrubber::-moz-range-progress { height: 5px; border-radius: 5px; background: var(--ea-c1); }
+.ergon-anim .ea-progress {
+  flex-shrink: 0;
+  font-size: 0.75em;
+  font-variant-numeric: tabular-nums;
+}
+.ergon-anim .ea-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
+}
+.ergon-anim .ea-btn,
+.ergon-anim select {
+  font: inherit;
+  font-size: 0.8em;
+  color: var(--fg);
+  background: var(--theme-popup-bg);
+  border: 1px solid var(--theme-popup-border);
+  border-radius: 6px;
+  padding: 0.4em 0.8em;
+  min-height: 2.75em;
+  cursor: pointer;
+}
+.ergon-anim .ea-btn:hover:not([aria-disabled='true']) { background: var(--theme-hover); }
+.ergon-anim .ea-btn[aria-label='Play animation'],
+.ergon-anim .ea-btn[aria-label='Pause animation'] { border-color: var(--ea-c1); color: var(--ea-c1); font-weight: 650; }
+.ergon-anim .ea-btn[aria-disabled='true'] { opacity: 0.45; cursor: default; }
+.ergon-anim .ea-speed { margin-left: auto; white-space: nowrap; font-size: 0.9em; }
+.ergon-anim .ea-speed select { font-size: 0.9em; }
+.ergon-anim.ea-narrow { padding: 0.7em; }
+.ergon-anim.ea-narrow .ea-header { gap: 0.5em; }
+.ergon-anim.ea-narrow .ea-speed { margin-left: 0; }
+
+/* Shared SVG vocabulary for modules. */
+.ergon-anim svg text { fill: var(--fg); font-family: inherit; }
+.ergon-anim svg .ea-mono { font-family: var(--mono-font); }
+/* --icons is too faint on coal for text; dim the text colour instead. */
+.ergon-anim svg .ea-muted { fill: var(--fg); fill-opacity: 0.68; }
+.ergon-anim svg .ea-strong { font-weight: 700; }
+.ergon-anim svg .ea-box {
+  fill: var(--quote-bg);
+  stroke: var(--table-border-color);
+  stroke: color-mix(in srgb, var(--fg) 25%, var(--bg));
+  stroke-width: 1;
+}
+.ergon-anim svg .ea-k1 { fill: var(--ea-c1); fill-opacity: 0.22; stroke: var(--ea-c1); }
+.ergon-anim svg .ea-k2 { fill: var(--ea-c2); fill-opacity: 0.22; stroke: var(--ea-c2); }
+.ergon-anim svg .ea-k3 { fill: var(--ea-c3); fill-opacity: 0.22; stroke: var(--ea-c3); }
+.ergon-anim svg .ea-k4 { fill: var(--ea-c4); fill-opacity: 0.22; stroke: var(--ea-c4); }
+.ergon-anim svg .ea-k5 { fill: var(--ea-c5); fill-opacity: 0.22; stroke: var(--ea-c5); }
+.ergon-anim svg .ea-sub { fill-opacity: 0.08; } /* nested part of a ea-k* item */
+/* Highlight = heavier outline in the text colour plus a fuller fill, so it
+ * reads without colour vision. --d staggers a sequence (modules set it). */
+.ergon-anim svg .ea-hot { stroke: var(--fg); stroke-width: 2; fill-opacity: 0.6; }
+.ergon-anim svg .ea-ok { stroke: var(--ea-c3); stroke-width: 3; stroke-dasharray: 5 3; }
+.ergon-anim svg .ea-hidden { opacity: 0; }
+.ergon-anim svg * {
+  transition: fill-opacity 0.3s, stroke-width 0.3s, opacity 0.35s, transform 0.45s;
+}
+.ergon-anim svg .ea-hot { transition-delay: calc(var(--d, 0) * 90ms); }
+.ergon-anim.ea-narrow svg .ea-fine { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ergon-anim svg * { transition: none !important; }
+}
+@media print {
+  .ergon-anim { box-shadow: none; break-inside: avoid; }
+  .ergon-anim .ea-controls, .ergon-anim .ea-timeline, .ergon-anim .ea-status { display: none; }
+}

@@ -680,7 +680,7 @@ fn entry_text_helper_yields_to_a_field_that_already_has_its_name()
 /// A payload longer than the schema max must be rejected on the base lane,
 /// on a cold memoized getter, and on a memoized getter after `encoded_length()`
 /// has already published the (bounds-valid) end. Warming the cache must not
-/// skip the max-length check (HFT review 2026-09-15).
+/// skip the max-length check.
 #[test]
 fn memoized_var_data_rejects_over_max_after_encoded_length()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -728,8 +728,10 @@ fn memoized_var_data_rejects_over_max_after_encoded_length()
     Ok(())
 }
 
-/// Group-entry last-var-data must reject over-max on a cold getter and after
-/// the iterator has published a bounds-valid `tail_end`.
+/// Group iteration only bounds-checks an entry's extent, so it yields an entry
+/// whose last var-data is over its maximum. The getter must still reject it
+/// after the iterator (or `scan_entry_at`) published a bounds-valid
+/// `tail_end`, and the entry's `encoded_length` must reject it too.
 #[test]
 fn group_entry_var_data_rejects_over_max_after_encoded_length()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -782,6 +784,15 @@ fn group_entry_var_data_rejects_over_max_after_encoded_length()
             entry.payload(),
             Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })
         ), "warm entry cache must not disable schema length validation");
+        assert!(matches!(
+            entry.encoded_length(),
+            Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })
+        ), "an entry's encoded_length must apply the schema length limit");
+        let scanned = dec.rows()?.scan_entry_at(0)?;
+        assert!(matches!(
+            scanned.payload(),
+            Err(sbe_rt::DecodeError::InvalidVarDataLength { length: 4, max_length: 3, .. })
+        ), "an entry from scan_entry_at must apply the schema length limit");
         "#,
     );
     Ok(())

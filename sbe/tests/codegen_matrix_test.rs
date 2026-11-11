@@ -1,25 +1,25 @@
 //! Codegen combination matrix.
 //!
-//! Domain-object coverage used to assert on **source strings**, which stay
-//! green while the generated module fails to compile. Five defects reached
-//! 0.1.22/0.1.23 that way, and this matrix found ten more of the same family
-//! on its first run. Every case here therefore *compiles* the generated
-//! module; the string assertions only name the cell that broke.
+//! Assertions on generated source strings stay green while the generated
+//! module fails to compile. Five defects reached 0.1.22/0.1.23 that way, and
+//! this matrix found ten more of the same family on its first run, so every
+//! case here compiles the generated module; the string assertions only name
+//! the cell that broke.
 //!
 //! Two axes, crossed:
 //!
-//! * **Shape** — field kind x `sinceVersion` x mapped/unmapped, repeated at
+//! * **Shape:** field kind x `sinceVersion` x mapped/unmapped, repeated at
 //!   message, group-entry, and nested-group-entry level. `converter_impls` has
 //!   separate message-level and group-entry loops and the domain-DTO generator
 //!   recurses separately for entry DTOs, so a cell proven at one location
 //!   proves nothing about the others.
-//! * **Config** — the `GenerationConfig` knobs that select different codegen
+//! * **Config:** the `GenerationConfig` knobs that select different codegen
 //!   paths (domain objects, domain types, conversion-only, profile, var-data
 //!   representation, null-as-option, display/meta/dispatch).
 //!
 //! [`expected_cells`] recomputes the shape cross product independently of the
 //! fixture. Adding a shape there fails the suite until the fixture and the
-//! expectations catch up — the fixture cannot silently fall behind.
+//! expectations catch up, so the fixture cannot silently fall behind.
 #![allow(
     clippy::all,
     clippy::pedantic,
@@ -86,6 +86,10 @@ const SHAPES: &[(&str, &str, &str)] = &[
         "chrono::DateTime<chrono::Utc>",
         "Option<chrono::DateTime<chrono::Utc>>",
     ),
+    // Optional array and field-level optional composite: group entries write
+    // their null image on `add()` at both group locations.
+    ("a_opt", "[u16; 2]", "[u16; 2]"),
+    ("c_opt", "Option<Pair>", "Option<Pair>"),
 ];
 
 const VERSIONS: &[u16] = &[0, 1];
@@ -175,7 +179,7 @@ fn with_matrix_domain_types(c: GenerationConfig) -> GenerationConfig {
 /// impls, `chrono` for the built-in timestamp conversion.
 const DOMAIN_DEPS: &str = "rust_decimal = \"1\"\nchrono = \"0.4\"\n";
 
-/// Conversion selectors only — no domain type, so the generated surface is
+/// Conversion selectors only, no domain type, so the generated surface is
 /// `*_as` / `*_from` plus `*_wire` raw renames rather than domain accessors.
 fn with_matrix_conversions(c: GenerationConfig) -> GenerationConfig {
     c.with_conversion(ConversionSelector::semantic_type("ScaledPrice"))
@@ -194,14 +198,14 @@ struct Variant {
     /// exists (a hook's item, a renamed accessor).
     module_suffix: &'static str,
     /// Fragments the knob must put in the generated source. For a knob whose
-    /// output is an attribute, compiling proves nothing on its own — a missing
+    /// output is an attribute, compiling proves nothing on its own: a missing
     /// `#[deprecated]` compiles perfectly well.
     expect_src: &'static [&'static str],
 }
 
 /// Every `GenerationConfig` combination that selects a distinct codegen path.
-/// Add a row when you add a knob — a knob with no row here is a knob whose
-/// generated output nothing compiles.
+/// Add a row when you add a knob: nothing compiles the generated output of a
+/// knob with no row here.
 const VARIANTS: &[Variant] = &[
     Variant {
         name: "domain_objects_and_domain_types",
@@ -354,8 +358,8 @@ const VARIANTS: &[Variant] = &[
 ];
 
 /// The fixture must carry a field for every shape x version cell. If this fails
-/// the fixture has fallen behind `SHAPES` — regenerate it with
-/// `scripts/gen-codegen-matrix-fixture.py`.
+/// the fixture has fallen behind `SHAPES`; regenerate it with
+/// `scripts/regenerate-codegen-matrix-fixture.py`.
 #[test]
 fn fixture_covers_every_shape() -> Result<(), Box<dyn std::error::Error>> {
     let xml = std::fs::read_to_string(matrix_schema())?;
@@ -436,10 +440,9 @@ fn domain_dto_shape_matrix_types_and_compiles() -> Result<(), Box<dyn std::error
 
 /// `ConversionSelector::FieldPath` selects exactly one field.
 ///
-/// It is documented as the primary selector form and validation accepts it, but
-/// codegen matched only `NamedType` and `SemanticType` — every `FieldPath`
-/// selector was a silent no-op that produced a wire-typed DTO field with no
-/// error. Group and nested-group fields extend the path with their group names.
+/// It is the primary selector form, so codegen must honour it rather than
+/// leave a wire-typed DTO field with no error. Group and nested-group fields
+/// extend the path with their group names.
 #[test]
 fn field_path_selector_selects_exactly_that_field() -> Result<(), Box<dyn std::error::Error>> {
     let (_s, src) = generate_domain_with(&matrix_schema(), "cm_field_path", |c| {
@@ -481,8 +484,8 @@ fn field_path_selector_selects_exactly_that_field() -> Result<(), Box<dyn std::e
 }
 
 /// Documented selector precedence (`config.rs`): `FieldPath` beats
-/// `SemanticType` beats `NamedType`. Resolution used to be "first selector in
-/// registration order wins", so precedence depended on call order.
+/// `SemanticType` beats `NamedType`, whatever order the selectors were
+/// registered in.
 #[test]
 fn selector_precedence_field_path_beats_semantic_beats_named()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -512,10 +515,9 @@ fn selector_precedence_field_path_beats_semantic_beats_named()
     Ok(())
 }
 
-/// A domain type configured for an **enum** or **set** field must reach the
-/// DTO. `converter_impls` generated domain accessors for these fields all
-/// along, but the domain-DTO generator ignored them and emitted the raw
-/// generated type — the configured mapping silently did nothing.
+/// A domain type configured for an enum or set field must reach the DTO, not
+/// only the domain accessors `converter_impls` generates; otherwise the DTO
+/// keeps the raw generated type and the mapping silently does nothing.
 #[test]
 fn enum_and_set_domain_types_reach_the_dto() -> Result<(), Box<dyn std::error::Error>> {
     let (_s, src) = generate_domain_with(&matrix_schema(), "cm_enum_set_dt", |c| {
@@ -864,8 +866,8 @@ fn decoder_iterator_surface_matrix() -> Result<(), Box<dyn std::error::Error>> {
 /// modules' doctests, proves that runner fails on a block doc comment, and
 /// keeps the source scan to name the offending line.
 ///
-/// The schema must contain a message with **no groups and no var-data** —
-/// that is the branch carrying the two-paragraph doc. A schema whose messages
+/// The schema must contain a message with no groups and no var-data, the
+/// branch that carries the two-paragraph doc. A schema whose messages
 /// all have tails renders the single-paragraph form and never exercises it.
 #[test]
 fn generated_code_has_no_block_doc_comments() -> Result<(), Box<dyn std::error::Error>> {

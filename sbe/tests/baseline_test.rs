@@ -61,7 +61,7 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
 }
 
 /// A runtime owner cannot see its consumers' schemas, so every generated
-/// `sbe_rt` is whole — including `EntryInfo` / `Ordered` on a fixed-block
+/// `sbe_rt` is whole, including `EntryInfo` / `Ordered` on a fixed-block
 /// owner. A consumer with tails `pub use`s that runtime and walks in the
 /// ordered spelling. Sizing the owner to its own schema (0.1.27/0.1.28) made
 /// `consumer::sbe_rt::EntryInfo` a different type from the owner's.
@@ -165,7 +165,7 @@ fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
 #[test]
 fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
-    // Item-level allow attributes — NOT expect, because the exact set of
+    // Item-level allow attributes, not expect, because the exact set of
     // lints that fire depends on the schema.  Using #[expect] would produce
     // false-positive stale-suppression warnings when a schema doesn'''t trigger
     // the suppressed lint, breaking CI for end users.
@@ -218,7 +218,7 @@ fn generated_code_has_lint_suppressions() -> Result<(), Box<dyn std::error::Erro
 fn reserved_name_lists_have_no_duplicates() -> Result<(), Box<dyn std::error::Error>> {
     // ENCODER_RESERVED / DECODER_RESERVED live once in conversion_helpers.rs.
     // Placement utils (remaining/buffer/limit/message_offset/as_fixed_*) must
-    // not appear — they are only on get_metadata().
+    // not appear; they are only on get_metadata().
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let helpers = std::fs::read_to_string(root.join("src/codegen/conversion_helpers.rs"))?;
     for (label, marker) in [
@@ -566,7 +566,7 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(BoostType::NITROUS, booster.boost_type(), "engine.booster.boostType");
         assert_eq!(200, booster.horse_power(), "engine.booster.horsePower");
 
-        // Group: fuelFigures (3 entries) — consuming stages, wire order.
+        // Group: fuelFigures (3 entries), consuming stages in wire order.
         let mut fuel_figures = Vec::new();
         let after_fuel = car.into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
             let speed = e.speed();
@@ -624,7 +624,7 @@ fn decode_baseline_fixture() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(100, accel1[2].0, "pf[1].acc[2].mph");
         assert!((accel1[2].1 - 11.8).abs() < 0.01, "pf[1].acc[2].seconds");
 
-        // Var-data fields — continue the consuming chain in wire order.
+        // Var-data fields continue the consuming chain in wire order.
         let (manufacturer, c1) = after_perf.into_manufacturer().unwrap();
         assert_eq!(b"Honda", manufacturer, "manufacturer");
         let (model, c2) = c1.into_model().unwrap();
@@ -1279,7 +1279,7 @@ fn bounds_checks_active_by_default_nth_always_checked() -> Result<(), Box<dyn st
 
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
         let mut ff = car2.fuel_figures().unwrap();
-        // scan_entry_at() bounds check is ALWAYS present (trust boundary — external idx input)
+        // scan_entry_at() always checks bounds: the index is external input.
         let result = ff.scan_entry_at(999);
         assert!(result.is_err(), "scan_entry_at(999) on 0-entry group must return Err");
     "#,
@@ -1720,7 +1720,7 @@ fn generated_code_has_inline_annotations() -> Result<(), Box<dyn std::error::Err
         src.contains("#[inline]\n    pub fn skip_fuel_figures"),
         "skip_fuel_figures missing #[inline]"
     );
-    // Group decoder wrap — #[inline] precedes `pub fn wrap(`, but acting_version
+    // Group decoder wrap: #[inline] precedes `pub fn wrap(`, but acting_version
     // is on a subsequent line when prettyplease breaks the signature. Check
     // that within 4 lines after #[inline], one line has `fn wrap(` and another
     // (or the same) has `acting_version`.
@@ -1781,7 +1781,7 @@ fn generated_code_has_must_use_annotations() -> Result<(), Box<dyn std::error::E
         "FuelFiguresEncoder struct missing #[must_use]"
     );
 
-    // Fixed-field setters (&mut Self) intentionally do NOT carry #[must_use] —
+    // Fixed-field setters (&mut Self) do not carry #[must_use]:
     // the side effect (buffer write) is the point; the returned reference is
     // meant to be discarded. Result-returning methods and encoder structs
     // keep their #[must_use].
@@ -1802,7 +1802,7 @@ fn generated_code_has_must_use_annotations() -> Result<(), Box<dyn std::error::E
         "group encoder `add()` missing #[must_use]"
     );
 
-    // Category-aware observers (T-5): `#[must_use]` may sit above `#[inline]`,
+    // Category-aware observers: `#[must_use]` may sit above `#[inline]`,
     // so look back from the fn rather than requiring it on the next line.
     for method in [
         "as_option",
@@ -1998,16 +1998,16 @@ fn forward_compat_v2_decoder_reads_v1_bytes() -> Result<(), Box<dyn std::error::
 
         let d = versmsg_v2::VersionedMessageV2Decoder::try_decode(encoded, 0).unwrap();
 
-        // Common fields (sinceVersion=0) — must decode correctly
+        // Common fields (sinceVersion=0) decode.
         assert_eq!(d.field_a1(), 100, "FieldA1 should survive forward compat");
         assert_eq!(d.field_b1(), 200, "FieldB1 should survive forward compat");
 
-        // V2-only fields (sinceVersion=2, acting_version=1) — return None
+        // V2-only fields (sinceVersion=2, acting_version=1) return None.
         assert_eq!(d.field_c2(), None, "FieldC2 should be None (sinceVersion > actingVersion)");
         assert_eq!(d.field_d2(), None, "FieldD2 should be None (sinceVersion > actingVersion)");
         assert_eq!(d.field_e2(), None, "FieldE2 should be None (sinceVersion > actingVersion)");
 
-        // Var-data — must be readable at correct tail offset
+        // Var-data reads at the right tail offset.
         let (s1, _done) = d.into_string1().unwrap();
         assert_eq!(s1, b"v1data", "String1 should survive forward compat");
     "#,
@@ -2165,7 +2165,7 @@ fn anymessage_unknown_template_forwards_the_complete_frame()
         match frame.message {
             AnyMessage::Unknown { header, frame } => {
                 assert_eq!(header.template_id(), 99);
-                // frame = &buf[pos..pos+frame_len] = &buf[0..24] — header + body
+                // frame = &buf[pos..pos+frame_len] = &buf[0..24], header and body
                 assert_eq!(frame.len(), 24);
                 assert_eq!(frame[8], 0xAB); // body starts at offset 8
             }
@@ -2330,7 +2330,7 @@ fn v2_decoder_reads_v1_group_entries_using_wire_blocklength()
         let after_entries = ents.finish().unwrap();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
-        // Common fields (sinceVersion=0) — must decode
+        // Common fields (sinceVersion=0) decode.
         assert_eq!(entries[0].0, 100);
         assert_eq!(entries[0].1, 10);
         assert_eq!(entries[1].0, 200);
@@ -2390,7 +2390,7 @@ fn var_data_after_version_mismatched_group_at_correct_offset()
         let after_entries = ents.finish().unwrap();
         assert_eq!(entries.len(), 2, "should find 2 entries");
 
-        // Known fields correct — V1 decoder reads V2 entries using wire blockLength=16
+        // The V1 decoder reads V2 entries using the wire blockLength=16.
         assert_eq!(entries[0].0, 111);
         assert_eq!(entries[0].1, 22);
         assert_eq!(entries[1].0, 333);
@@ -2454,8 +2454,8 @@ fn upstream_issue_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
 fn generated_encoder_has_no_phantomdata_or_state_generic() -> Result<(), Box<dyn std::error::Error>>
 {
     let (_schema, src) = generate(&Paths::example_schema(), MODULE);
-    // Encoder now uses PhantomData<H> for HeaderPresent/HeaderAbsent typestate.
-    // This is zero-sized and eliminated by the compiler — no SROA impact.
+    // The encoder uses PhantomData<H> for HeaderPresent/HeaderAbsent typestate,
+    // which is zero-sized, so it has no SROA impact.
     assert!(
         src.contains("core::marker::PhantomData"),
         "encoder must use PhantomData for header-aware typestate"
@@ -2996,7 +2996,7 @@ fn decimal_converter_composite_roundtrip() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// A caller's domain type is only ever required to be `Debug` — the generated
+/// A caller's domain type is only ever required to be `Debug`, so the generated
 /// `Display`/`Debug` bodies must never format one with `{}`. `Range<i64>` is
 /// `Debug` but deliberately **not** `Display`, so this fails to compile if any
 /// formatting site regresses. Mapped onto a composite used both top-level and
@@ -3139,7 +3139,7 @@ fn group_entry_domain_mapped_set_formats_with_debug() -> Result<(), Box<dyn std:
 /// `DomainImpl::Manual` gets the same concrete `price(...)?` /
 /// `price()?` signatures as `DomainImpl::Generated`, but ergo-sbe does
 /// not generate the `TryFromSbe`/`TryToSbe` impl for the built-in
-/// `rust_decimal` mapping — the caller supplies its own (deliberately
+/// `rust_decimal` mapping; the caller supplies its own (deliberately
 /// different from the built-in: scaled by an extra factor of 10) to prove
 /// it's genuinely wired to the user's impl, not silently falling back to a
 /// hidden built-in one.
@@ -3165,8 +3165,8 @@ fn domain_type_manual_impl_uses_callers_own_impl() -> Result<(), Box<dyn std::er
         use rust_decimal::Decimal;
 
         // Caller-supplied impl: deliberately scales mantissa by 10 on the way
-        // in/out, so a value only round-trips correctly through THIS impl —
-        // proof ergo-sbe didn't quietly generate its own.
+        // in/out, so a value round-trips only through this impl, which
+        // proves ergo-sbe did not generate its own.
         impl TryFromSbe<self::Decimal> for rust_decimal::Decimal {
             type Error = &'static str;
             fn try_from_sbe(wire: self::Decimal) -> Result<Self, Self::Error> {
@@ -3200,9 +3200,9 @@ fn domain_type_manual_impl_uses_callers_own_impl() -> Result<(), Box<dyn std::er
 /// A `DomainImpl::Manual` field on one of the three built-in type paths
 /// (here `rust_decimal::Decimal`) gets a doc comment on its generated
 /// domain accessor containing the exact impl `DomainImpl::Generated` would
-/// have written — a ready-to-paste starting point (see
+/// have written, ready to paste (see
 /// `conversion_traits.rs::generate_manual_impl_snippets`). A non-built-in
-/// `rust_type` gets no snippet — there is no generated-impl template to
+/// `rust_type` gets no snippet: there is no generated-impl template to
 /// offer for a caller-invented type.
 #[test]
 fn domain_type_manual_impl_doc_comment_has_generated_snippet()
@@ -3230,7 +3230,7 @@ fn domain_type_manual_impl_doc_comment_has_generated_snippet()
 
 /// `DomainImpl::Manual` without a caller-supplied impl fails closed with a
 /// named diagnostic (`#[diagnostic::on_unimplemented]`), not the default
-/// "the trait bound `i64: TryFromSbe<Decimal>` is not satisfied" — see
+/// "the trait bound `i64: TryFromSbe<Decimal>` is not satisfied"; see
 /// `conversion_traits.rs::emit_conversion_traits`.
 #[test]
 fn domain_type_manual_impl_missing_gives_named_diagnostic() -> Result<(), Box<dyn std::error::Error>>
@@ -3243,7 +3243,7 @@ fn domain_type_manual_impl_missing_gives_named_diagnostic() -> Result<(), Box<dy
         c.with_manual_domain_type(ergo_sbe::ConversionSelector::named_type("Decimal"), "i64")
     });
     // `i64: TryFromSbe<Decimal>` is never implemented, so the generated
-    // module itself fails to compile — the test body doesn't need to call
+    // module itself fails to compile, so the test body does not need to call
     // anything.
     compile_fails_with_diagnostics(
         "manual_impl_missing",
@@ -3258,7 +3258,7 @@ fn domain_type_manual_impl_missing_gives_named_diagnostic() -> Result<(), Box<dy
     Ok(())
 }
 
-/// `DomainImpl::Manual` doc-comment snippets for the other two built-ins —
+/// `DomainImpl::Manual` doc-comment snippets for the other two built-ins:
 /// `bool` (an enum-backed selector, not a composite one like Decimal) and
 /// `chrono::DateTime<Utc>` (a single global impl, not per-selector like
 /// Decimal). Companion to
@@ -3352,7 +3352,7 @@ fn optional_decimal_and_timestamp_domain_types_roundtrip() -> Result<(), Box<dyn
 
         let dec = QuoteDecoder::try_decode(&buf[..len], 0)?;
 
-        // Optional decimal composites decode to a plain Decimal — a composite
+        // Optional decimal composites decode to a plain Decimal: a composite
         // has no null image, so `presence="optional"` does not become Option.
         assert_eq!(dec.price64()?, Decimal::new(12345, 2));
         assert_eq!(dec.size64()?, Decimal::new(100, 0));
@@ -3553,7 +3553,7 @@ fn chrono_timestamp_domain_type_honours_time_unit() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// **Optional** domain-typed fields under `DomainImpl::Manual` — the
+/// Optional domain-typed fields under `DomainImpl::Manual`: the
 /// combination `optional_decimal_and_timestamp_domain_types_roundtrip`
 /// (generated impls, optional fields) and
 /// `domain_type_manual_impl_uses_callers_own_impl` (manual impls, required
@@ -3641,8 +3641,8 @@ fn optional_domain_types_with_manual_impls_roundtrip() -> Result<(), Box<dyn std
 
         let dec = QuoteDecoder::try_decode(&buf[..len], 0)?;
 
-        // Optional composites: plain Result<Decimal>, no Option wrapper —
-        // annotated to fail compilation if the return type ever grows one.
+        // Optional composites: plain Result<Decimal>, no Option wrapper. The
+        // annotation fails compilation if the return type ever grows one.
         let price64: Decimal = dec.price64()?;
         assert_eq!(price64, Decimal::new(12345, 2));
         assert_eq!(dec.size64()?, Decimal::new(100, 0));
@@ -4056,7 +4056,7 @@ fn nested_message_rejects_malformed_payload() -> Result<(), Box<dyn std::error::
             .unwrap();
         let bad_dec = OuterDecoder::try_decode(&bad_buf, 0).unwrap();
         let (_n, bad_after) = bad_dec.into_app_name().unwrap();
-        // All-zeros has schema_id=0 — rejected with WrongSchema
+        // All zeros has schema_id=0, rejected with WrongSchema.
         let bad_result = bad_after.into_payload_as_message();
         assert!(bad_result.is_err(), "wrong-schema payload must be rejected");
     "#,
@@ -4100,7 +4100,7 @@ fn nested_message_identifies_recursive_payload() -> Result<(), Box<dyn std::erro
         let dec = OuterDecoder::try_decode(&buf, 0).unwrap();
         let (_name, after_name) = dec.into_app_name().unwrap();
         let (frame, _c) = after_name.into_payload_as_message().unwrap();
-        // Recursive Outer appears as AnyMessage::Outer — app can reject it
+        // A recursive Outer appears as AnyMessage::Outer, so the app can reject it.
         assert!(matches!(frame.message, AnyMessage::Outer(_)),
             "recursive Outer payload must be identifiable for rejection");
     "#,
@@ -4208,7 +4208,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
 }
 
 /// Independent exact fixed-scale adapter matrix: positive/negative
-/// values, exponents 0/-8/-15/-18, overflow, and precision-loss rejection —
+/// values, exponents 0/-8/-15/-18, overflow, and precision-loss rejection,
 /// implemented in a temporary crate against the generated trait only.
 #[test]
 fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Error>> {
@@ -4309,20 +4309,19 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// A group-entry field with a domain type AND `presence="optional"` used to
-/// fail to compile two different ways:
-/// (1) `emit_group_entry_impls` (converter_impls.rs) never Option-wrapped the
-///     domain accessor's return type for optional group fields the way the
-///     message-level path does, so the raw accessor's `Option<Wire>` was
-///     passed straight to `TryFromSbe<Wire>::try_from_sbe`, which expects an
-///     unwrapped `Wire` — E0308.
-/// (2) the group-entry `Display`/`Debug` codegen (group_decoder.rs) never
-///     checked for a domain type on `Primitive`/`Enum` fields at all, so it
-///     always called the plain field accessor — which no longer exists once
-///     a domain type registers and renames it to `*_wire` — E0599.
-/// Both only reproduce for a domain type on a non-composite (a composite
-/// never gets Option-wrapped, since it has no null image) inside a group —
-/// message-level fields were already correct on both counts.
+/// A group-entry field with a domain type and `presence="optional"` must
+/// compile. It can break two ways:
+/// (1) `emit_group_entry_impls` (converter_impls.rs) must Option-wrap the
+///     domain accessor's return type for optional group fields as the
+///     message-level path does; otherwise the raw accessor's `Option<Wire>`
+///     reaches `TryFromSbe<Wire>::try_from_sbe`, which expects an unwrapped
+///     `Wire` (E0308).
+/// (2) the group-entry `Display`/`Debug` codegen (group_decoder.rs) must
+///     check for a domain type on `Primitive`/`Enum` fields; otherwise it
+///     calls the plain field accessor, which a domain type renames to
+///     `*_wire` (E0599).
+/// Both need a domain type on a non-composite inside a group (a composite
+/// is never Option-wrapped, since it has no null image).
 #[test]
 fn group_entry_optional_domain_type_field_compiles_and_round_trips()
 -> Result<(), Box<dyn std::error::Error>> {

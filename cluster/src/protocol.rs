@@ -62,8 +62,8 @@ pub fn client_info_bytes(client_name: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// One `SessionConnectRequest`. The caller re-offers the same bytes, so the
-/// correlation id stays the one the cluster will echo.
+/// One `SessionConnectRequest`, offered until it lands once: each request
+/// opens a cluster session.
 pub fn encode_connect_request(
     correlation_id: i64,
     response_stream_id: i32,
@@ -158,6 +158,11 @@ pub fn classify_handshake(
                     image_session_id,
                 }),
                 EventCode::AUTHENTICATIONREJECTED => Ok(HandshakeEvent::AuthRejected),
+                // A version mismatch or the session limit: Java's client
+                // throws at once rather than wait out the message timeout.
+                EventCode::ERROR => Err(ClusterError::ConnectFailed {
+                    reason: format!("cluster rejected the connect: {detail}"),
+                }),
                 EventCode::REDIRECT => {
                     let endpoint =
                         crate::poller::parse_leader_endpoint(&detail, leader_member_id)?.ok_or_else(|| {
@@ -252,6 +257,31 @@ mod tests {
         };
         assert_eq!(decoder.correlation_id(), 99);
         assert_eq!(decoder.version(), Some(PROTOCOL_SEMANTIC_VERSION));
+        Ok(())
+    }
+
+    fn session_event(correlation_id: i64, code: EventCode, detail: &str) -> EgressEvent {
+        EgressEvent::SessionEvent {
+            correlation_id,
+            cluster_session_id: 7,
+            leadership_term_id: 3,
+            leader_member_id: 0,
+            code,
+            detail: detail.to_owned(),
+            leader_heartbeat_timeout_ns: None,
+        }
+    }
+
+    /// Java `AsyncConnect.pollResponse`: `ERROR` → `ClusterException(detail)`.
+    #[test]
+    fn an_error_for_this_attempt_fails_the_connect_with_its_detail() -> Result<(), Box<dyn std::error::Error>> {
+        let event = session_event(2, EventCode::ERROR, "concurrent session limit");
+        let Err(ClusterError::ConnectFailed { reason }) = classify_handshake(event, 2, None) else {
+            return Err("expected ConnectFailed".into());
+        };
+        assert_eq!(reason, "cluster rejected the connect: concurrent session limit");
+        let other = session_event(1, EventCode::ERROR, "concurrent session limit");
+        assert!(matches!(classify_handshake(other, 2, None)?, HandshakeEvent::Ignore));
         Ok(())
     }
 

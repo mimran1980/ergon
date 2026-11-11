@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:4ab22881b25266e3c9c6ae4769cb6841543566abae2060de4d20adc246d9c89a -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:a9dc4dea1c1fb563f883cbfdfb7540b16b6bdecb4cb9a742e29d4c0f4454094d -->
 # UDP
 
 `UdpConn` is one UDP socket that a `Driver` owns. Whole datagrams in,
@@ -67,6 +67,25 @@ a lone datagram is one call, not a read plus an empty read (with
 [backends](backends.md)). On loopback a burst of 8 drained in about half the
 time.
 
+<div class="ergon-anim" data-anim="udp-rx-batch" data-title="UDP batching: rx_batch, datagram_burst and replying inline"></div>
+
+*In words:* one connected socket with `datagram_burst` 16. A lone datagram
+is one `recvmmsg` that asks for 16 and gets 1, so it is handled at once,
+and the handler's `UdpTx::send` reply is one `send`. A burst of 8 with
+`rx_batch` 1 takes nine receive calls (the last finds the queue empty): the
+first datagram is handled after one copy, the last after the eighth call. With
+`rx_batch` 16 one short call copies all eight into their own 2,048-byte
+slots before the handler sees the first; with `rx_batch` 8 the call comes
+back full, so a second call meets `EAGAIN`. Replies sent with
+`ConnMut::send` after `poll` returns leave together in one `sendmmsg` at
+`flush`, where inline replies were eight `send`s between the deliveries. Twenty
+datagrams queued take two polls: the first stops at `datagram_burst` 16
+with no empty read, and the next takes the last 4. It ends with the
+figures below and in [replying inline](#replying-inline): 32 datagrams
+queued, `rx_batch` 1 handles the first in 2.0 µs and the last in 34.5 µs
+(p50); 16 handles them in 7.4 and 14.0 µs; inline replies were 1.15 µs
+lower at p50 than queued ones for bursts of 8 between hosts.
+
 ### Choosing `rx_batch`
 
 `rx_batch` is a cap, not a wait: `recvmmsg` returns what is already queued,
@@ -75,8 +94,10 @@ burst. The kernel copies the whole batch before the handler sees any of it,
 so a larger batch delays the first datagram and brings the last one in
 sooner.
 
-32 datagrams of 64 bytes already queued, time from the poll to the handler
-seeing the first and the last; µs, p50 / p99 / max, ranges over three runs:
+32 datagrams of 64 bytes already queued (`datagram_burst` 64, so one poll
+takes them all), time from the poll to the handler seeing the first and the
+last; µs, p50 / p99 / max, ranges over three runs of 50,000 bursts (min and
+p99.99 not recorded):
 
 | `rx_batch` | first datagram | last datagram | receive calls |
 |---|---|---|---|
@@ -109,8 +130,8 @@ Between two Graviton `c8g.2xlarge` hosts (AWS, isolated CPUs, bursts of 8
 echoed, every message of a burst counted): p50 45.15 at `rx_batch` 64,
 45.50 at 16 and 47.01 at 1 (50,000 msg/s; 48.73, 48.83, 49.05 at
 200,000), max 181 to 190 (rep ranges to 2,090, unexplained). 16 stays the
-default. What costs more is when a reply leaves: ergon-io's handler cannot
-send during `poll`, so a reply queued in `on_datagram` goes after the pass;
+default. What costs more is when a reply leaves: the handler cannot reach
+`ConnMut::send` during `poll`, so a reply queued with it goes after the pass;
 mio replying per datagram was about 5 lower at p50 (40.90, max 179, against 45.50, max 184)
 ([UDP batching](../transports/comparison.md#aws-udp-batching-graviton)).
 Measured on a second `c8g.2xlarge` pair (`aws-20261031-164813`, A/A p50
@@ -136,8 +157,10 @@ Rows and ranges: [UDP reply](../transports/comparison.md#udp-reply-when-the-echo
 
 `UdpTx::send(payload)`, on the `tx` that `on_datagram` gets, hands the
 reply to the kernel there and then: one `send`, before the next datagram is
-delivered. `ConnMut::send` instead queues it for the send pass after the
-poll's receive pass, which batches the pass's replies into one `sendmmsg`.
+delivered. `ConnMut::send` needs the driver, so the handler cannot call it
+during `poll`: after `poll` returns it queues the reply for the next send
+pass (`flush`, or the next `poll` before its receive pass), which batches
+the replies into one `sendmmsg`.
 
 | reply with | when |
 |---|---|

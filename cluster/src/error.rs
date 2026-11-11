@@ -1,19 +1,18 @@
 //! Cluster client error type ([`ClusterError`]).
 //!
-//! Library and application code must use this enum (or other crate-specific
-//! types). `Box<dyn std::error::Error>` is reserved for **unit tests** and
-//! **`fn main()`** only — never for the public client API.
+//! Library and application code uses this enum or another crate-specific
+//! type. `Box<dyn std::error::Error>` is for unit tests and **`fn main()`** only,
+//! never the public client API.
 
 use std::sync::Arc;
 
 use rusteron_client::{AeronCError, AeronOfferError};
 
-/// Wraps an [`AeronCError`] so it can be stored as a `#[source]` in
-/// [`ClusterError`] variants. Constructed implicitly via `From<AeronCError>`.
+/// Wraps an [`AeronCError`] so [`ClusterError`] variants can hold it as a
+/// `#[source]`. Built through `From<AeronCError>`.
 ///
-/// The inner value is deliberately private — access it through
-/// [`as_aeron_error`](Self::as_aeron_error) rather than reaching into the
-/// storage.
+/// The inner value is private; read it with
+/// [`as_aeron_error`](Self::as_aeron_error).
 #[derive(Debug, Clone)]
 pub struct AeronErrorSource(Arc<AeronCError>);
 
@@ -31,7 +30,7 @@ impl std::fmt::Display for AeronErrorSource {
     }
 }
 
-impl std::error::Error for AeronErrorSource {} // No further source — leaf error
+impl std::error::Error for AeronErrorSource {}
 
 impl From<AeronCError> for AeronErrorSource {
     fn from(e: AeronCError) -> Self {
@@ -39,32 +38,31 @@ impl From<AeronCError> for AeronErrorSource {
     }
 }
 
-/// Typed classification of a failed `offer` / `try_claim` (Aeron publication
-/// sentinels). Use [`Self::is_retryable`] for idle/retry loops.
+/// Why an `offer` or `try_claim` failed, from the Aeron publication sentinels.
+/// [`Self::is_retryable`] tells an idle loop whether to try again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PublicationFailure {
     /// No subscriber yet (`-1`). Retryable.
     NotConnected,
-    /// Flow control / full term (`-2`). Retry after idle. Retryable.
+    /// Flow control or a full term (`-2`). Retryable after idling.
     BackPressured,
-    /// Admin action e.g. term rotation (`-3`). Retryable.
+    /// An admin action such as term rotation (`-3`). Retryable.
     AdminAction,
     /// Publication closed (`-4`). Fatal for this handle.
     Closed,
-    /// Max stream position (`-5`). Fatal — need a new publication.
+    /// Maximum stream position reached (`-5`). Fatal: open a new publication.
     MaxPositionExceeded,
-    /// A vectored offer (`try_claim`-style, multiple parts) exceeded the
-    /// number of parts Aeron supports. Not a raw wire sentinel — rusteron
-    /// classifies this before any Aeron return code exists. Fatal for this
-    /// offer shape; retrying with the same part count cannot succeed.
+    /// A vectored offer had more parts than Aeron supports. Rusteron detects
+    /// this before Aeron returns a code, so there is no raw sentinel. Fatal for
+    /// this offer shape: the same part count can never succeed.
     TooManyParts,
-    /// Unexpected negative or other failure, carrying the raw Aeron sentinel.
+    /// Any other failure, with the raw Aeron return code.
     Other(i64),
 }
 
 impl PublicationFailure {
-    /// Map a raw Aeron offer / `try_claim` return (must be `< 0`).
+    /// Maps a raw Aeron offer or `try_claim` return, which must be negative.
     #[inline]
     #[must_use]
     pub const fn from_raw(code: i64) -> Self {
@@ -78,7 +76,7 @@ impl PublicationFailure {
         }
     }
 
-    /// From rusteron's typed offer error.
+    /// Maps rusteron's typed offer error.
     #[inline]
     #[must_use]
     pub fn from_offer_error(e: &AeronOfferError) -> Self {
@@ -93,16 +91,15 @@ impl PublicationFailure {
         }
     }
 
-    /// A retry (after idle / waiting for a subscriber) can succeed.
+    /// Whether retrying after an idle can succeed.
     #[must_use = "the retry decision is the point of calling this"]
     #[inline]
     pub const fn is_retryable(self) -> bool {
         matches!(self, Self::NotConnected | Self::BackPressured | Self::AdminAction)
     }
 
-    /// Raw Aeron sentinel, when this failure actually carries one.
-    /// `None` for [`Self::TooManyParts`] — rusteron classifies it before any
-    /// Aeron return code exists, so there is no real sentinel to report.
+    /// The raw Aeron return code, or `None` for [`Self::TooManyParts`], which
+    /// has no code.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub const fn raw_code(self) -> Option<i64> {
@@ -132,16 +129,17 @@ impl std::fmt::Display for PublicationFailure {
     }
 }
 
-/// All errors the cluster client can produce.
+/// Every error the cluster client returns.
 ///
-/// This is the sole error type for the public `ergo-aeron-cluster` API.
+/// It is the only error type in the public `ergo-aeron-cluster` API.
 #[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClusterError {
-    /// Connection failed for a non-protocol reason (e.g. context, subscription).
+    /// Connecting failed for a reason other than a protocol error, such as the
+    /// context or a subscription.
     #[error("connect failed: {reason}")]
     ConnectFailed {
-        /// Human-readable description of the failure.
+        /// What failed.
         reason: String,
     },
     /// The cluster rejected authentication.
@@ -150,76 +148,76 @@ pub enum ClusterError {
     /// A step timed out.
     #[error("timeout in phase '{phase}' after {after_ms}ms")]
     Timeout {
-        /// Which phase timed out (`connect`, `poll`, `keep_alive`, …).
+        /// The phase that timed out (`connect`, `poll`, `keep_alive`, ...).
         phase: &'static str,
         /// Milliseconds elapsed before the timeout fired.
         after_ms: u64,
     },
-    /// Operation attempted on a session that is not connected.
+    /// The session is not connected.
     #[error("session is not connected")]
     NotConnected,
-    /// The session was closed by the cluster or by calling `close()`.
+    /// The cluster or a call to `close()` closed the session.
     #[error("session has been closed")]
     SessionClosed,
-    /// The session was disconnected while connected — the egress image closed
-    /// or the ingress publication reported CLOSED / max-position. The caller
-    /// may reconnect on a new leader or treat the session as dead.
+    /// A connected session lost its link: the egress image closed, or the
+    /// ingress publication reported closed or max position. The caller can
+    /// reconnect to a new leader or treat the session as dead.
     #[error("session disconnected: {reason}")]
     Disconnected {
-        /// Human-readable reason (egress closed, publication CLOSED, …).
+        /// What was lost (egress closed, publication closed, ...).
         reason: String,
     },
-    /// The protocol stream contained an unexpected or malformed message.
+    /// The protocol stream held an unexpected or malformed message.
     #[error("protocol error: {reason}")]
     ProtocolError {
-        /// Description of the protocol violation.
+        /// The violation.
         reason: String,
     },
-    /// The cluster redirected us to a different leader during connect.
+    /// The cluster redirected the connect to another leader.
     #[error("redirect to leader: {leader_endpoints}")]
     Redirect {
-        /// Member-endpoint map string for the new leader.
+        /// The new leader's member-endpoint map.
         leader_endpoints: String,
     },
     /// A buffer was too small for the operation.
     #[error("buffer too small: need {needed} bytes, have {actual}")]
     BufferTooSmall {
-        /// Minimum bytes required by the operation.
+        /// Bytes the operation needs.
         needed: usize,
-        /// Bytes actually available.
+        /// Bytes available.
         actual: usize,
     },
-    /// A publication offer/claim/commit failed.
+    /// A publication offer, claim or commit failed.
     #[error("{context}: {failure}")]
     Publication {
-        /// Typed Aeron offer classification (when from a raw offer code).
+        /// The Aeron classification of the failed offer.
         failure: PublicationFailure,
-        /// Optional context (`offer`, `try_claim`, `keep_alive`, …).
+        /// The operation that failed (`offer`, `try_claim`, `keep_alive`, ...).
         context: &'static str,
     },
-    /// Reconnect to a new leader after `NewLeaderEvent` failed.
+    /// Reconnecting to a new leader after a `NewLeaderEvent` failed.
     #[error("reconnect failed: {reason}")]
     ReconnectFailed {
-        /// Why the reconnect attempt failed.
+        /// Why the reconnect failed.
         reason: String,
     },
-    /// Channel / URI construction failed.
+    /// Building a channel URI failed.
     #[error("channel URI: {reason}")]
     ChannelUri {
-        /// Description of the channel URI problem.
+        /// What is wrong with the URI.
         reason: String,
-        /// The underlying `AeronUriString` parse error.
+        /// The `AeronUriString` parse error.
         #[source]
         source: AeronErrorSource,
     },
-    /// Underlying Aeron / rusteron client error with context.
+    /// An Aeron or rusteron call failed.
     #[error("aeron {context}: {message}")]
     Aeron {
-        /// Short phase label (`set_dir`, `add_subscription`, …).
+        /// The failing step (`set_dir`, `add_subscription`, ...).
         context: &'static str,
-        /// Display of the Aeron error.
+        /// The Aeron error's display text.
         message: String,
-        /// The underlying Aeron error (when available). Access via
+        /// The Aeron error, when there is one. Read it through
         /// [`source()`](std::error::Error::source) or
         /// [`as_aeron_error()`](AeronErrorSource::as_aeron_error).
         #[source]
@@ -228,40 +226,39 @@ pub enum ClusterError {
     /// An egress listener callback panicked.
     #[error("egress listener panicked: {context}")]
     ListenerPanicked {
-        /// What was being dispatched when the panic occurred.
+        /// What was being dispatched at the time.
         context: &'static str,
     },
-    /// Schema-declared text field contained invalid UTF-8.
+    /// A schema text field held invalid UTF-8.
     #[error("invalid UTF-8 in field '{field}'")]
     InvalidUtf8 {
-        /// Field name from the schema.
+        /// The schema field name.
         field: &'static str,
     },
-    /// An invalid or impossible timeout was set. Zero or overflow durations
-    /// are rejected at builder validation time (connect) or at the first
-    /// async poll.
+    /// A timeout is zero or overflows. Builder validation rejects it at
+    /// connect, and the first async poll rejects it otherwise.
     #[error("invalid timeout in phase '{phase}': {reason}")]
     InvalidTimeout {
-        /// Which phase produced the invalid timeout.
+        /// The phase the timeout belongs to.
         phase: &'static str,
-        /// Why the duration was rejected (zero, overflow, …).
+        /// Why it was rejected (zero, overflow, ...).
         reason: &'static str,
     },
-    /// The application payload plus the session message header exceeds the
-    /// Aeron publication's maximum message length.
+    /// The payload plus the session message header exceeds the publication's
+    /// maximum message length.
     #[error("payload too large for {operation}: {requested} bytes requested, {maximum} maximum")]
     PayloadTooLarge {
-        /// Which operation was attempted (`offer`, `try_claim`).
+        /// The operation attempted (`offer`, `try_claim`).
         operation: &'static str,
-        /// The total frame length requested (header + payload).
+        /// The frame length requested (header plus payload).
         requested: usize,
-        /// The publication's maximum allowed frame length.
+        /// The publication's maximum frame length.
         maximum: usize,
     },
 }
 
 impl ClusterError {
-    /// Wrap an [`AeronCError`] with a static context label.
+    /// Wraps an [`AeronCError`] with a static context label.
     #[cold]
     #[must_use]
     pub fn aeron(context: &'static str, e: AeronCError) -> Self {
@@ -274,13 +271,13 @@ impl ClusterError {
         }
     }
 
-    /// Connect-phase failure with a free-form reason.
+    /// A connect failure with a free-form reason.
     #[cold]
     pub fn connect(reason: impl Into<String>) -> Self {
         Self::ConnectFailed { reason: reason.into() }
     }
 
-    /// Publication failure from a raw offer / `try_claim` return code (`code < 0`).
+    /// A publication failure from a raw offer or `try_claim` return code, which must be negative.
     #[inline]
     #[must_use]
     pub const fn from_offer_raw(context: &'static str, code: i64) -> Self {
@@ -290,7 +287,7 @@ impl ClusterError {
         }
     }
 
-    /// Publication failure from rusteron [`AeronOfferError`].
+    /// A publication failure from rusteron's [`AeronOfferError`].
     #[inline]
     #[must_use]
     #[allow(
@@ -304,10 +301,9 @@ impl ClusterError {
         }
     }
 
-    /// Free-form publication-side failure (encode, commit message, …).
-    /// Carries the reason as an Aeron message string. Not classified
-    /// as a retryable sentinel — use `from_offer_raw`/`from_offer_error`
-    /// for those.
+    /// A free-form publication-side failure such as an encode or commit
+    /// message. It is never retryable; `from_offer_raw` and `from_offer_error`
+    /// build the retryable kinds.
     #[cold]
     pub fn publication(reason: impl Into<String>) -> Self {
         Self::Aeron {
@@ -317,13 +313,13 @@ impl ClusterError {
         }
     }
 
-    /// Reconnect-phase failure with a free-form reason.
+    /// A reconnect failure with a free-form reason.
     #[cold]
     pub fn reconnect(reason: impl Into<String>) -> Self {
         Self::ReconnectFailed { reason: reason.into() }
     }
 
-    /// Whether an idle/retry loop may succeed.
+    /// Whether retrying after an idle can succeed.
     #[must_use = "the retry decision is the point of calling this"]
     #[inline]
     pub const fn is_retryable(&self) -> bool {
@@ -365,10 +361,10 @@ impl From<AeronOfferError> for ClusterError {
     }
 }
 
-/// A cluster event recorded by the application, in the style of Java
-/// `ClusterEvent`: a message with no stack trace and no logging framework.
+/// A cluster event recorded by the application, like Java's `ClusterEvent`:
+/// a message with no stack trace and no logging framework.
 ///
-/// Not raised by the client. Construct one when an application wants a
+/// The client never raises one. Build one when the application wants a
 /// distinct error value for its own log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClusterEvent {

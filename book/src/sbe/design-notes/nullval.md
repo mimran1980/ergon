@@ -1,21 +1,21 @@
-# Why NullVal Instead of Option
+# Why NullVal instead of Option
 
-An SBE enum may declare a `nullValue` in the schema — an explicit wire sentinel
+An SBE enum may declare a `nullValue` in the schema: an explicit wire sentinel
 that means "not present" / "not set". When the schema doesn't specify one, SBE
 defaults to the encoding type's null sentinel: the maximum value for unsigned
 types (e.g. `255` for `uint8`) and the minimum value for signed types (e.g.
 `-128` for `int8`).
 
 `nullValue` / `minValue` / `maxValue` on a type or field must fit the declared
-primitive width. `nullValue="256"` on `uint8` is a parse error — it would
+primitive width. `nullValue="256"` on `uint8` is a parse error, because it would
 otherwise collapse to `0` on the wire and make `Some(0)` indistinguishable from
-`None`. See [Error Diagnostics](../getting-started/error-diagnostics.md).
+`None`. See [Error diagnostics](../getting-started/error-diagnostics.md).
 
 An early design tried wrapping every enum field in `Option<EventCode>` at the
 field site:
 
 ```rust,ignore
-// Option approach — REJECTED
+// Option approach: rejected
 pub fn event_code(&self) -> Option<EventCode> { … }
 pub fn set_event_code(&mut self, val: Option<EventCode>) { … }
 ```
@@ -24,7 +24,7 @@ This was rejected for three reasons:
 
 1. **API complexity.** Using `Option<EventCode>` at every access point forces
    every consumer to `.unwrap()` or match, even when the field is known to be
-   populated. The `NullVal` approach gives you a plain `EventCode` type — if you
+   populated. The `NullVal` approach gives you a plain `EventCode` type. If you
    care about null, check `code == EventCode::NullVal`; if you don't, just use
    it. (The wire encoding itself would be compatible either way: `None` maps to
    the null sentinel, `Some(v)` maps to `v`. The issue is ergonomics, not wire
@@ -52,11 +52,23 @@ pub enum EventCode {
 }
 ```
 
+```mermaid
+flowchart TD
+    W["one wire byte, the schema null"] --> N["default: a NullVal variant on the enum"]
+    W --> O["opt-in with_null_as_option: None"]
+    N --> U["use the value, or compare with NullVal"]
+    O --> M["match Option"]
+```
+
+The bytes do not change between the two. `NullVal` is the default because
+the schema's null is a value of the enum, and because a caller who does
+not care about null should not have to match.
+
 For an `Optional` field (schema `presence="optional"`), the generated accessor
-returns `Option<EventCode>` — but the null check compares against the `NullVal`
+returns `Option<EventCode>`, but the null check compares against the `NullVal`
 discriminant on the wire, never allocates, and is transparent to the caller.
 
-On **encode**, `fixed(&FixedFields)` always writes every fixed field: `Some(v)`
+On encode, `fixed(&FixedFields)` always writes every fixed field: `Some(v)`
 writes the value and `None` writes the exact schema null wire image (including
 nested optional composite members). Dirty buffer reuse is therefore safe when
 you go through `fixed`. Prefer that path for whole-message encodes.
@@ -64,13 +76,13 @@ you go through `fixed`. Prefer that path for whole-message encodes.
 `apply_nulls()` remains on the unfixed encoder after
 `wrap_and_apply_header` when you set individual optional fields piecemeal
 instead of using `FixedFields`. See
-[Encode and Decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
+[Encode and decode](../getting-started/encode-decode.md#optional-fields-and-apply_nulls).
 
 ## Opting into `Option<T>` with `with_null_as_option`
 
 The `NullVal` is the right default, but some codebases prefer `Option`
 throughout. Use `with_null_as_option` to make generated enum accessors
-return `Option<Enum>` — `NullVal` maps to `None`, all other values to
+return `Option<Enum>`: `NullVal` maps to `None`, all other values to
 `Some(v)`. Wire bytes are identical either way.
 
 ```rust,ignore
@@ -103,14 +115,14 @@ the `{field}_bool(v)` encoder setter; it returns `Result` because the decode
 is fallible:
 
 ```rust,ignore
-// Standard getter — returns the enum variant (raw wire discriminant).
+// Standard getter: returns the enum variant (raw wire discriminant).
 pub fn available(&self) -> BooleanType { … }
 
-// Null-aware — rejects NullVal (returns Err); Ok(true/false) otherwise.
+// Null-aware: rejects NullVal (returns Err); Ok(true/false) otherwise.
 pub fn available_bool(&self) -> Result<bool, DecodeError> { … }
 
 // A `sinceVersion > 0` field can also be absent, so its getter adds the
-// `Option` layer — the only shape difference, at message and group level:
+// `Option` layer, the only shape difference, at message and group level:
 pub fn added_later_bool(&self) -> Result<Option<bool>, DecodeError> { … }
 ```
 
@@ -122,7 +134,7 @@ wire encoding is identical either way.
 ## Generated enum mappings
 
 `with_enum_mapping` maps an SBE enum onto an application enum that has no
-`NullVal` (see [App Types](../recipes/app-types-composites.md#nullval-and-unknown-values)).
+`NullVal` (see [App types](../recipes/app-types-composites.md#nullval-and-unknown-values)).
 There, `NullVal` is never turned into a variant: it decodes as
 `sbe_rt::MappingError::NullEnum`, or as `None` when the enum is also under
 `with_null_as_option`. Because the decoder folds an undeclared discriminant

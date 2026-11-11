@@ -12,7 +12,8 @@ default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/mimran1980/ergon"
 edit-url-template = "https://github.com/mimran1980/ergon/edit/main/book/{path}"
-additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-js = ["mermaid.min.js", "mermaid-init.js", "src/anim/anim.js"]
+additional-css = ["src/anim/anim.css"]
 
 [output.html.fold]
 enable = true

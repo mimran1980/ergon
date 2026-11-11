@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Throwaway kind cluster. Installs the public ergon-shared-cpus chart 0.1.1
+# Throwaway kind cluster. Installs the public ergon-shared-cpus chart 0.1.3
 # with the hot-pod check's host mounts, applies the latency-pod admission
 # policy from this repo, runs one pod that gets the shared CPU, and shows two
 # refusals: a hot pod (the kind node has no isolcpus) and an exec probe.
@@ -153,7 +153,8 @@ ncpu=$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)
 say "docker CPUs: $ncpu"
 [[ "$ncpu" -ge 6 ]] || fail "Docker has ${ncpu} CPUs; this sample needs at least 6"
 
-if "$KIND" get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
+clusters=$("$KIND" get clusters 2>/dev/null || true)
+if grep -qx "$CLUSTER" <<<"$clusters"; then
   fail "cluster ${CLUSTER} already exists; delete it before running this sample"
 fi
 
@@ -173,7 +174,7 @@ wait_containerd || fail "containerd did not stay up on ${node}; see $LOG"
 
 install_chart() {
   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-    --version 0.1.1 \
+    --version 0.1.3 \
     --namespace ergon-system --create-namespace \
     --set-string config.sharedCpus=0 \
     --set 'config.namespaces={trading}' \
@@ -183,7 +184,7 @@ install_chart() {
     >>"$LOG" 2>&1
 }
 
-say "helm install oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.1"
+say "helm install oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.3"
 if ! install_chart; then
   say "helm install failed; checking containerd and retrying once"
   wait_containerd || fail "containerd did not stay up on ${node}; see $LOG"
@@ -224,10 +225,10 @@ kubectl wait -n trading --for=condition=Ready pod/trader --timeout=180s >>"$LOG"
 sleep 2
 grant=$(kubectl -n trading logs trader 2>>"$LOG" || true)
 printf '%s\n' "$grant" | tee -a "$LOG"
-printf '%s\n' "$grant" | grep -q '^ERGON_SHARED_CPUS=0$' || fail "ERGON_SHARED_CPUS is not 0"
-printf '%s\n' "$grant" | grep -q '^ERGON_ISOLATED_CPUS=..*' || fail "ERGON_ISOLATED_CPUS is empty"
-printf '%s\n' "$grant" | grep -q '^Cpus_allowed_list:[[:space:]]*0$' || fail "PID 1 Cpus_allowed_list is not the shared CPU 0"
-printf '%s\n' "$grant" | grep -q '^nproc=1$' || fail "nproc is not 1; PID 1 can see more than the shared CPU"
+grep -q '^ERGON_SHARED_CPUS=0$' <<<"$grant" || fail "ERGON_SHARED_CPUS is not 0"
+grep -q '^ERGON_ISOLATED_CPUS=..*' <<<"$grant" || fail "ERGON_ISOLATED_CPUS is empty"
+grep -q '^Cpus_allowed_list:[[:space:]]*0$' <<<"$grant" || fail "PID 1 Cpus_allowed_list is not the shared CPU 0"
+grep -q '^nproc=1$' <<<"$grant" || fail "nproc is not 1; PID 1 can see more than the shared CPU"
 
 # Free trader's two exclusive CPUs first. On a 6-CPU Docker the node has 4
 # allocatable CPUs and kube-system requests about 1, so two cpu: "2" pods
@@ -259,8 +260,8 @@ deny_status=0
 deny=$(kubectl apply -f "$TRY/bad-probe.yaml" 2>&1) || deny_status=$?
 printf '%s\n' "$deny" | tee -a "$LOG"
 [[ "$deny_status" -ne 0 ]] || fail "the exec probe was admitted (kubectl exited 0)"
-printf '%s\n' "$deny" | grep -Eqi 'denied|forbidden' || fail "the exec probe was not an admission denial"
-printf '%s\n' "$deny" | grep -q 'livenessProbe must not be exec' || fail "the exec probe was not denied for the probe rule"
+grep -Eqi 'denied|forbidden' <<<"$deny" || fail "the exec probe was not an admission denial"
+grep -q 'livenessProbe must not be exec' <<<"$deny" || fail "the exec probe was not denied for the probe rule"
 if kubectl -n trading get pod trader-bad-probe >/dev/null 2>&1; then
   fail "trader-bad-probe exists; the policy did not deny it"
 fi

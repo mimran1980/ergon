@@ -1,9 +1,5 @@
 #![warn(missing_docs)]
-// Crate-root allows are deliberately few. Codegen-specific noise lives on
-// `codegen` (and other modules) via scoped attributes — not a 40-line blanket
-// silence of workspace lint policy.
-//
-// Justified at crate root (schema/codegen reality, not laziness):
+// Lints that every module trips go here; the rest are scoped per module below.
 #![allow(clippy::too_many_arguments)] // Generator pipelines thread many schema/config params
 #![allow(clippy::too_many_lines)] // Emit functions are inherently large token builders
 #![allow(clippy::doc_markdown)] // SBE identifiers (blockLength, templateId) trip false positives
@@ -18,9 +14,9 @@
 //!
 //! # Documentation
 //!
-//! - **[ergo-sbe book](https://mimran1980.github.io/ergon/)** — getting started,
-//!   feature tour, core concepts, configuration, recipes, design notes, then
-//!   the [samples](https://mimran1980.github.io/ergon/samples/overview.html)
+//! - **[ergo-sbe book](https://mimran1980.github.io/ergon/):** getting
+//!   started, a feature tour, core concepts, configuration, recipes, design
+//!   notes and the [samples](https://mimran1980.github.io/ergon/samples/overview.html).
 //! - [Getting started](https://mimran1980.github.io/ergon/sbe/getting-started.html) ·
 //!   [Feature tour](https://mimran1980.github.io/ergon/sbe/feature-tour.html) ·
 //!   [Coming from sbe-tool](https://mimran1980.github.io/ergon/sbe/getting-started/from-sbe-tool.html) ·
@@ -28,19 +24,22 @@
 //!   [Samples](https://mimran1980.github.io/ergon/samples/overview.html)
 //! - [Crate README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md)
 //!
-//! ## In a few words
+//! ## Summary
 //!
-//! - **Compile-time wire order** — calling `asks` before `bids` is a type error
-//! - **Closure-based groups** — nested shape mirrors the schema, no `.parent()` hopscotch
-//! - **Exact buffer sizing** — no oversize scratch buffers; works directly with
-//!   Aeron `try_claim`
-//! - **Three-tier trust boundary** — `try_*` constructors validate the buffer
-//!   extent and return `Result`; bare `wrap` / `wrap_and_apply_header` /
-//!   `decode` prove the same extent and **panic** if short; `unsafe fn
-//!   *_unchecked` skips checks (caller proves the extent in `# Safety`)
-//! - **Zero heap allocation** on generated hot paths; zero runtime dependencies
-//! - **Domain types** — map wire `Decimal` to `rust_decimal::Decimal` with one
-//!   line of config
+//! - **Compile-time wire order:** calling `asks` before `bids` is a type error.
+//! - **Closure-based groups:** the nesting mirrors the schema and there is no
+//!   `.parent()` call.
+//! - **Exact buffer sizing:** no oversized scratch buffers, so an encoder can
+//!   write straight into an Aeron `try_claim`.
+//! - **Three-tier trust boundary:** `try_*` constructors check the buffer
+//!   extent and return `Result`; bare `wrap`, `wrap_and_apply_header` and
+//!   `decode` check the same extent and panic if it is short; `unsafe fn
+//!   *_unchecked` skips the check, and its `# Safety` section says what the
+//!   caller must prove.
+//! - **Zero heap allocation** on generated hot paths, and no runtime
+//!   dependencies.
+//! - **Domain types:** one line of config maps a wire `Decimal` to
+//!   `rust_decimal::Decimal`.
 //!
 //! # Architecture
 //!
@@ -51,21 +50,20 @@
 //! | Options | [`config`] | Module name, conversions, domain objects, … |
 //! | Codegen | [`codegen`] | Rust source modules |
 //!
-//! # Front door
+//! # Entry points
 //!
 //! | Job | Call |
 //! |---|---|
-//! | Parse + generate in a `build.rs` | [`generate`], then [`GeneratedModuleSet::write_to_out_dir`] |
+//! | Parse and generate in a `build.rs` | [`generate`], then [`GeneratedModuleSet::write_to_out_dir`] |
 //! | Include the module | [`sbe_mod!`] |
 //! | Parse only (inspect the token IR) | [`parse`] with a [`SchemaSource`] |
 //! | Several schemas sharing types | [`parse`] each (consumers [`SchemaSource::with_shared`]), [`Generator::generate_multi`], [`GeneratedModuleSet::write_to_out_dir`] |
 //!
-//! # Quick-start — doctest pins generated idioms
+//! # Quick start
 //!
-//! Generated *application* types do not exist in this crate at doctest time.
-//! The example below **runs the generator** on an inline schema and asserts on
-//! the emitted source so chained encode / length-builder names cannot drift
-//! unnoticed. For end-to-end encode/decode of real types, see
+//! A doctest in this crate cannot use generated types, so the example below
+//! runs the generator on an inline schema and checks the emitted source for
+//! the encoder and length-builder names. For end-to-end encode and decode, see
 //! [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/tree/main/samples/sbe-feature-tour)
 //! and the golden file
 //! [`sbe/tests/golden/car_example.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/golden/car_example.rs).
@@ -101,60 +99,53 @@
 //! // in build.rs: output.write_to_out_dir()?, then ergo_sbe::sbe_mod!(my_messages);
 //! ```
 //!
-//! # What gets generated (how to use it)
+//! # What gets generated
 //!
-//! Names depend on your schema (`Car` below is illustrative). Prefer the
-//! feature-tour sample and golden file over prose-only snippets.
+//! Names depend on your schema; `Car` and `Engine` below are examples. The
+//! feature-tour sample and the golden file show the full generated surface.
 //!
-//! ## Composites = wire images (not `repr(C)` overlays)
+//! ## Composites are wire images
 //!
-//! Generated composites are `#[repr(transparent)] struct Engine(pub [u8; N])`:
-//! the value **is** the on-wire byte block. Accessors use explicit
-//! `from_le_bytes` / `to_le_bytes` at schema offsets (portable; free on LE).
-//! Default decode is a flyweight (`EngineDecoder { buf, pos }`) — zero-copy
-//! into the message. Do **not** transmute the buffer to a padded `#[repr(C)]`
-//! field struct: SBE is packed and may be unaligned. See the crate README
-//! section *Composite layout & little-endian*.
+//! A generated composite is `#[repr(transparent)] struct Engine(pub [u8; N])`:
+//! the value is the wire bytes. Accessors read and write them with
+//! `from_le_bytes` / `to_le_bytes` at schema offsets, which costs nothing on a
+//! little-endian host. Decoding uses a zero-copy flyweight
+//! (`EngineDecoder { buf, pos }`). Do not transmute the buffer to a padded
+//! `#[repr(C)]` struct: SBE fields are packed and may be unaligned. The crate
+//! README section *Composite layout & little-endian* has the detail.
 //!
-//! ## Decode flyweight
+//! ## Encoding and buffer sizing
 //!
-//! → [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
+//! Size the buffer before you write. The generated helpers account for nested
+//! groups and var-data of any length, so you never work out a wire length by
+//! hand or guess with `vec![0u8; 4096]`. Use a stack array when the length is
+//! `const`; otherwise size first, then claim or encode into a slot of exactly
+//! that length.
 //!
-//! ## Encode + type-state tails (buffer sizing)
-//!
-//! **Size the buffer first** with the staged `*EncodedLength` builder —
-//! never guess with a large `vec![0u8; 4096]`. For fixed-only messages
-//! use the const `ENCODED_LENGTH`.
-//!
-//! → [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
-//!
-//! ## Buffer sizing
-//!
-//! Schema-aware helpers size the buffer **before** you write — including
-//! nested groups and ragged var-data — so you do not hand-calculate wire length
-//! for complicated messages. Prefer a **stack array** when the length is
-//! `const` (`ENCODED_LENGTH` / `compute_encoded_length_*`); for runtime
-//! lengths, size first then claim or encode into an exact-length slot.
-//!
-//! | Shape | API | Prefer |
+//! | Message shape | API | Buffer |
 //! |-------|-----|--------|
-//! | Fixed-only | `HeartbeatEncoder::ENCODED_LENGTH` (const) | `[0u8; N]` stack |
-//! | Flat / known tails | `compute_encoded_length_with_message_header(...)` | stack when const |
-//! | Groups / nested / ragged | `CarEncodedLength::new()…encoded_length_with_header()` | exact claim / slot |
+//! | Fixed fields only | `HeartbeatEncoder::ENCODED_LENGTH` (const) | `[0u8; N]` on the stack |
+//! | Flat groups and var-data | `compute_encoded_length_with_message_header(...)` | stack when const |
+//! | Nested groups or entry var-data | `CarEncodedLength::new()…encoded_length_with_header()` | exact claim or slot |
 //!
-//! ## Why wire order is compile-time
+//! [`samples/sbe-feature-tour`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
+//! shows decoding, encoding and sizing on real types.
 //!
-//! SBE is positional. Two adjacent identical groups (e.g. bids then asks) are
-//! common in market data; swapping them still produces “valid” bytes and only
-//! fails in production. Named stage structs make the wrong order a type error.
+//! ## Why wire order is checked at compile time
 //!
-//! ## Field metadata (Java parity)
+//! SBE is positional. Two adjacent groups of the same shape, such as bids then
+//! asks, are common in market data, and swapping them still produces valid
+//! bytes that fail only in production. Each encoder stage is its own type, so
+//! the wrong order does not compile.
 //!
-//! → [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs)
+//! ## Field metadata
 //!
-//! ## Conversion: `with_conversion` vs `with_domain_type`
+//! The constants that mirror sbe-tool's Java metadata are exercised in
+//! [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs).
 //!
-//! **Pick one style per selector** — `with_domain_type` already enables conversion.
+//! ## Conversion: `with_conversion` or `with_domain_type`
+//!
+//! Pick one style per selector; `with_domain_type` already enables conversion.
 //!
 //! | Config | Generated decode | Generated encode |
 //! |--------|------------------|------------------|
@@ -164,11 +155,11 @@
 //! ```rust
 //! use ergo_sbe::{ConversionSelector, GenerationConfig};
 //!
-//! // A — pluggable: you implement TryFromSbe / TryToSbe
+//! // Pluggable: you implement TryFromSbe / TryToSbe.
 //! let _a = GenerationConfig::new("msgs")
 //!     .with_conversion(ConversionSelector::named_type("Decimal"));
 //!
-//! // B — concrete Rust type (implies conversion for the same selector)
+//! // One concrete Rust type, which implies conversion for the same selector.
 //! let _b = GenerationConfig::new("msgs")
 //!     .with_domain_type(
 //!         ConversionSelector::named_type("Decimal"),
@@ -176,49 +167,47 @@
 //!     );
 //! ```
 //!
-//! See [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
-//! (conversion and domain-object coverage).
+//! [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
+//! covers conversions and domain objects.
 //!
 //! ## Domain objects
 //!
-//! [`GenerationConfig::with_domain_objects`] with a [`DomainVarData`] mode emits
-//! owned structs. Use [`DomainVarData::Strings`] for text (`String`;
-//! invalid UTF-8 → `InvalidUtf8` error) or [`DomainVarData::Bytes`] for `Vec<u8>`.
-//!
-//! See [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
+//! [`GenerationConfig::with_domain_objects`] emits owned structs. Pass
+//! [`DomainVarData::Strings`] for `String` var-data, where invalid UTF-8 is an
+//! `InvalidUtf8` error, or [`DomainVarData::Bytes`] for `Vec<u8>`. See
+//! [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs).
 //!
 //! ## Multi-message dispatch
 //!
-//! See [`sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs)
+//! [`sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/fuzz/fuzz_targets/any_message_frame_cursor.rs)
+//! drives `AnyMessage` and `FrameCursor`.
 //!
-//! ## Fixed arrays / char fields
+//! ## Fixed arrays and char fields
 //!
-//! See [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs)
+//! See [`sbe/tests/java_parity_features_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs).
 //!
 //! ## Keywords in schema names
 //!
-//! Field `type` becomes `type_` (default append `"_"`). Override with
+//! A field named `type` becomes `type_`. Change the appended `"_"` with
 //! [`GenerationConfig::with_keyword_append_token`].
 //!
 //! ## XSD structural check
 //!
-//! Optional CI gate: [`validate_against_sbe_xsd`], or
-//! [`SchemaSource::with_xsd_validation`] to run it inside [`parse`].
-//! Official XSD text is embedded as [`SBE_XSD`].
-//!
-//! Note this is a *shape* check, not a full W3C engine, and it is opt-in.
-//! [`parse`] itself always rejects malformed XML, a bad root, unexpected
-//! elements, and unknown attributes.
+//! [`validate_against_sbe_xsd`] checks a schema against the official XSD,
+//! which is embedded as [`SBE_XSD`]; [`SchemaSource::with_xsd_validation`]
+//! runs the same check inside [`parse`]. It is opt-in and checks shape only;
+//! it is not a full W3C validator. [`parse`] itself always rejects malformed
+//! XML, a bad root, unexpected elements and unknown attributes.
 //!
 //! # Design
 //!
-//! - Wire-compatible with official SBE / sbe-tool baselines where tested
-//! - Idiomatic Rust (type-state tails, borrow flyweights) — not a Java port
-//! - Zero allocation on decode hot paths by default
-//! - Version-aware accessors (`sinceVersion` / acting version)
-//! - Unsafe only on explicit `_unchecked` / documented paths
+//! - Wire-compatible with official SBE and sbe-tool where tested.
+//! - Idiomatic Rust (type-state tails, borrowing flyweights), not a Java port.
+//! - No allocation on decode hot paths by default.
+//! - Accessors respect `sinceVersion` and the acting version.
+//! - `unsafe` only on the explicit `_unchecked` paths, each documented.
 //!
-//! Benchmarks: [benchmarks chapter](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
+//! Benchmark results are in the [benchmarks chapter](https://mimran1980.github.io/ergon/sbe/benchmarks.html).
 //!
 //! [sbe-spec]: https://www.fixtrading.org/standards/sbe/
 
@@ -227,7 +216,7 @@
 /// (source snippet + span) instead of the plain fallback.
 pub use miette;
 
-/// The generate front door ([`generate`], [`sbe_mod!`]).
+/// Build-script entry points ([`generate`], [`sbe_mod!`]).
 #[allow(
     clippy::pedantic,
     clippy::nursery,
@@ -237,11 +226,8 @@ pub use miette;
 )]
 pub mod build;
 /// Codec generation ([`Generator`]).
-// Scoped: quote!/token emit paths and submodule re-exports trip style lints and
-// unused_import on `pub(crate) use` hubs. Prefer fixing real dead code over
-// growing this list — do not re-blanket the crate root.
+// quote!-heavy emit code trips these style lints.
 #[allow(
-    unused,
     clippy::pedantic,
     clippy::nursery,
     clippy::unwrap_used,
@@ -282,9 +268,8 @@ pub mod build;
     clippy::only_used_in_recursion
 )]
 pub mod codegen;
-/// [`GenerationConfig`] — conversions, domain objects, keywords, etc.
+/// Generator options ([`GenerationConfig`]).
 #[allow(
-    dead_code,
     clippy::pedantic,
     clippy::nursery,
     clippy::unwrap_used,
@@ -310,28 +295,14 @@ pub mod ir;
 )]
 pub mod resolve;
 /// [`Schema`] handle for codegen.
-#[allow(
-    dead_code,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::unnecessary_wraps
-)]
+#[allow(clippy::pedantic, clippy::nursery, clippy::unnecessary_wraps)]
 pub mod schema;
 /// Structured IR for codegen (internal).
 mod schema_attrs;
-#[allow(
-    dead_code,
-    unused_imports,
-    unused_variables,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cast_lossless
-)]
+#[allow(clippy::pedantic, clippy::nursery, clippy::cast_lossless)]
 pub(crate) mod structured_ir;
-/// The parse front door ([`parse`], [`SchemaSource`]).
+/// Schema parsing ([`parse`], [`SchemaSource`]).
 #[allow(
-    unused,
-    dead_code,
     clippy::pedantic,
     clippy::nursery,
     clippy::unwrap_used,
@@ -375,7 +346,7 @@ pub use schema::Schema;
 pub use xml::{IncludeCause, ParseError, SchemaSource, parse};
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
 
-/// Chrono timestamp converters — feature-gated behind `chrono`.
+/// Chrono timestamp converters (feature `chrono`).
 ///
 /// Use [`GenerationConfig::with_domain_type`] with
 /// `"chrono::DateTime<chrono::Utc>"` or `"chrono::NaiveDateTime"` to
@@ -387,7 +358,7 @@ pub mod chrono_converters;
 // Re-export optional dependencies so generated codecs can name the types
 // without the consumer adding them directly. The matching codec methods
 // (into_<field>_as_compact_str, etc.) are emitted only when the generator
-// itself was built with the feature, so enable it on ergo-sbe in **both**
+// itself was built with the feature, so enable it on ergo-sbe in both
 // `[build-dependencies]` and `[dependencies]`.
 #[cfg(feature = "bytes")]
 pub use bytes;

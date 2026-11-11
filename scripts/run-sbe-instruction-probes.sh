@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-sbe-instruction-probes.sh — mechanism-level evidence for SBE hot paths.
+# run-sbe-instruction-probes.sh: mechanism-level evidence for SBE hot paths.
 #
 # Criterion measures wall-clock on one machine at one moment. It cannot show
 # whether a call was emitted, whether constant propagation crossed the crate
@@ -8,7 +8,7 @@
 #
 # It drives the `perf-probe` binary (sbe/benchmarks/src/bin/perf_probe.rs) under
 # system Valgrind with raw Callgrind, collecting ONLY the named probe symbol so
-# setup and validation — which run before the probe is entered — are excluded.
+# setup and validation (which run before the probe is entered) are excluded.
 # It then disassembles the exact same binary with the pinned llvm-objdump.
 #
 # Deliberately no `iai-callgrind`: it was removed for RUSTSEC-2026-0173 and must
@@ -116,7 +116,7 @@ for profile in "${PROFILES[@]}"; do
     mkdir -p "$profile_dir"
 
     echo ""
-    echo "=== building perf-probe — $profile ==="
+    echo "=== building perf-probe ($profile) ==="
     if [ "$profile" = "no-lto" ]; then
         env CARGO_TARGET_DIR="$target_dir" \
             CARGO_PROFILE_RELEASE_LTO=false \
@@ -161,7 +161,7 @@ for profile in "${PROFILES[@]}"; do
         done < <(awk -F'\t' 'NR>1 {print $1}' "$MANIFEST")
     fi
 
-    # Disassemble once per profile — the exact binary that will be measured.
+    # Disassemble once per profile: the exact binary that will be measured.
     llvm-objdump --disassemble --demangle "$binary" > "$profile_dir/perf-probe.objdump"
 
     for probe in "${selected[@]}"; do
@@ -170,8 +170,8 @@ for profile in "${PROFILES[@]}"; do
         arm=$(awk -F'\t' -v s="$probe" 'NR>1 && $1==s {print $2}' "$MANIFEST")
 
         if ! grep -q "<$probe>" "$profile_dir/perf-probe.objdump"; then
-            echo "FAIL $probe: symbol absent from disassembly — it was inlined or \
-stripped, so nothing can be attributed to it" >&2
+            echo "FAIL $probe: symbol absent from disassembly (it was inlined or \
+stripped, so nothing can be attributed to it)" >&2
             failures=$((failures + 1))
             continue
         fi
@@ -256,14 +256,18 @@ done
 
 echo ""
 echo "=== paired Ir/op (ergon vs sbe-tool) ==="
-if ! python3 "$REPO_ROOT/scripts/compare-sbe-probe-pairs.py" "$OUT_ROOT" "$MANIFEST"; then
-    failures=$((failures + 1))
-fi
+pairs_ok=1
+python3 "$REPO_ROOT/scripts/compare-sbe-probe-pairs.py" "$OUT_ROOT" "$MANIFEST" || pairs_ok=0
 
 echo ""
 echo "artifacts: $OUT_ROOT"
 if [ "$failures" -gt 0 ]; then
     echo "FAIL: $failures probe(s) could not be measured"
+fi
+if [ "$pairs_ok" -eq 0 ]; then
+    echo "FAIL: a probe pair failed the Ir/op comparison above"
+fi
+if [ "$failures" -gt 0 ] || [ "$pairs_ok" -eq 0 ]; then
     exit 1
 fi
-echo "PASS: every selected probe produced raw Callgrind output, disassembly, and ergon Ir/op that does not exceed sbe-tool"
+echo "PASS: every selected probe produced raw Callgrind output, disassembly, and ergon Ir/op that does not exceed sbe-tool outside the documented exceptions"

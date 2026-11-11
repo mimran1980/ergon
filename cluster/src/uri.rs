@@ -1,21 +1,18 @@
 //! Aeron channel URI construction via `AeronUriStringBuilder`.
 //!
-//! # Performance over convenience
-//!
-//! Prefer **`CString` / `CStr`** for channels that end up at rusteron/Aeron C.
-//! Returning `String` / `&str` when you still need a C string means **extra**
-//! work (UTF-8 view + a second NUL conversion). Do **not** do that for
-//! performance-sensitive paths.
+//! Channels bound for rusteron stay **`CString` / `CStr`**. Returning a `String`
+//! and converting it to a C string again costs a UTF-8 view and a second NUL
+//! check, which matters on hot paths.
 //!
 //! | Form | Cost | Use |
 //! |------|------|-----|
-//! | [`AERON_IPC_STREAM`] | zero | static IPC (rusteron; do not re-define) |
-//! | `channel_cstr` / `udp_endpoint_cstr` | one normalize + one CString | dynamic channels for rusteron |
-//! | `String` / `&str` | only when you truly need UTF-8 text and **not** FFI next | rare |
+//! | [`AERON_IPC_STREAM`] | none | static IPC channel from rusteron |
+//! | `channel_cstr` / `udp_endpoint_cstr` | one normalise and one `CString` | dynamic channels for rusteron |
+//! | `String` / `&str` | UTF-8 view | only when the text is not going to FFI |
 //!
-//! `AeronUriStringBuilder::build` produces a temporary `String`; we convert
-//! once to `CString` for the public API so callers pass `&CStr` to rusteron
-//! without a second `cformat!`.
+//! `AeronUriStringBuilder::build` produces a temporary `String`. It is
+//! converted once to a `CString`, so callers pass `&CStr` to rusteron without a
+//! second `cformat!`.
 
 use std::ffi::{CStr, CString};
 use std::net::IpAddr;
@@ -24,9 +21,9 @@ use rusteron_client::{AeronCError, AeronErrorType, AeronUriStringBuilder, cforma
 
 use crate::ClusterError;
 
-/// IPC channel — re-export of rusteron's zero-cost `c"aeron:ipc"`.
+/// The IPC channel, re-exported from rusteron as a static `c"aeron:ipc"`.
 ///
-/// Prefer this over inventing another `c"aeron:ipc"` / owned `CString`.
+/// Use it instead of building another `aeron:ipc` string.
 pub use rusteron_client::AERON_IPC_STREAM;
 
 fn map_uri(e: AeronCError) -> ClusterError {
@@ -42,9 +39,9 @@ const URI_CAPACITY: usize = 4096;
 /// delimiters, an added `endpoint=` key and the trailing NUL.
 const URI_SLACK: usize = 64;
 
-/// Print `builder` into a [`URI_CAPACITY`] buffer. Aeron's URI printer writes
+/// Prints `builder` into a [`URI_CAPACITY`] buffer. Aeron's URI printer writes
 /// past the end of a buffer that is too short, so input that might not fit is
-/// refused before printing; Aeron would reject such a channel anyway.
+/// refused first. Aeron would reject such a channel anyway.
 fn build(builder: &AeronUriStringBuilder, input_len: usize) -> Result<CString, ClusterError> {
     if input_len + URI_SLACK > URI_CAPACITY {
         return Err(ClusterError::ChannelUri {
@@ -56,7 +53,11 @@ fn build(builder: &AeronUriStringBuilder, input_len: usize) -> Result<CString, C
     Ok(cformat!("{s}"))
 }
 
-/// Parse and normalize a full Aeron channel URI into a `CString` for rusteron.
+/// Parses a full Aeron channel URI and returns it normalised as a `CString`.
+///
+/// # Errors
+///
+/// [`ClusterError::ChannelUri`] when the URI does not parse or exceeds Aeron's length limit.
 pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
     let builder: AeronUriStringBuilder = uri.parse().map_err(map_uri)?;
     build(&builder, uri.len())

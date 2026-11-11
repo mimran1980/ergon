@@ -18,7 +18,7 @@ FIXTURE = (
     / "sbe/tests/fixtures/schemas/codegen-matrix-schema.xml"
 )
 
-# (prefix, schema type ref, comment) — "mapped" shapes carry a selector that a
+# (prefix, schema type ref, comment). "mapped" shapes carry a selector that a
 # domain type is configured for; "plain" shapes carry none.
 SHAPES = [
     ("sDom",       "Scaled",    'semanticType="ScaledPrice"', "primitive scalar, domain-mapped"),
@@ -40,6 +40,8 @@ SHAPES = [
     ("eTdNull",    "Side",      "",                            "enum whose encodingType typedef declares nullValue"),
     ("cFloatNull", "Bounds",    "",                            "composite with float constant and non-NaN optional nulls"),
     ("tsMs",       "uint64",    'semanticType="UTCTimestamp" timeUnit="millisecond"', "millisecond timestamp, built-in chrono domain type"),
+    ("aOpt",       "OptPair16", "",                            "optional fixed array (element null in every slot)"),
+    ("cOpt",       "Pair",      'presence="optional"',        "optional composite (field-level presence)"),
 ]
 
 # sinceVersion values under test.
@@ -147,6 +149,7 @@ HEADER = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <type name="OptPlain" primitiveType="int32" presence="optional"/>
         <type name="Tag" primitiveType="char" length="4"/>
         <type name="TagPlain" primitiveType="char" length="4"/>
+        <type name="OptPair16" primitiveType="uint16" length="2" presence="optional"/>
 
         <type name="OptInfF" primitiveType="float" presence="optional" nullValue="Infinity"/>
         <type name="OptNegD" primitiveType="double" presence="optional" nullValue="-1.0"/>
@@ -230,7 +233,7 @@ if __name__ == "__main__":
         current = FIXTURE.read_text() if FIXTURE.exists() else ""
         if current != rendered:
             print(
-                f"codegen matrix fixture: DRIFT — {FIXTURE} does not match "
+                f"codegen matrix fixture: DRIFT, {FIXTURE} does not match "
                 "SHAPES in this script.\nRun ./scripts/regenerate-codegen-matrix-fixture.py",
                 file=sys.stderr,
             )

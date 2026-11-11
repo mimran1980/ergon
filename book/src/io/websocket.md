@@ -1,7 +1,8 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:8bc034d20058421f332057995dd440e678ccbaf7d3657b737f28749aa14b320f -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:5f4abd6d6d92d761dc344f538fcff9e3e0c5bf42a24906e9cb49379c1118d8db -->
 # WebSocket
 
-`WsConn` is a TLS 1.3 WebSocket client that a `Driver` owns.
+`WsConn` is a TLS 1.3 WebSocket client that a `Driver` owns (TLS 1.2 on a
+target that opts in: [Connecting](overview.md#connecting)).
 
 - Frames are parsed in place: `WsHandler::on_message` gets a slice of the
   buffer the kernel wrote into (one copy per byte).
@@ -24,25 +25,47 @@ a drop, then close cleanly:
 
 ```rust,ignore
 use ergon_io::reconnect::{Closed, LinkId, LinkState, Retry};
-use ergon_io::{ConnId, Error, Handler, Reconnect, RxMeta, WsDial, WsHandler};
+use ergon_io::{
+    ConnId, ConnMut, Driver, Error, Handler, Reconnect, Result, RxMeta, WsConn, WsDial, WsHandler,
+};
 
-/// Sent on every connect and reconnect.
+/// The default subscribe message: replace it with your service's.
 pub const SUBSCRIBE: &str = r#"{"action":"subscribe","channel":"updates"}"#;
 
-/// The application. `Driver::poll` calls it.
+/// The application: `Driver::poll` calls its handlers.
 pub struct App {
     /// Keeps the connection open: reopens it with backoff after a drop.
     pub links: Reconnect<WsDial>,
     /// The one link (a connection that `links` keeps open).
     pub link: LinkId,
-    /// Connections opened during the last poll: subscribe on them.
-    opened: Vec<ConnId>,
+    /// Sent on every connect and reconnect (`SUBSCRIBE` unless changed).
+    pub subscribe: &'static str,
+    /// Opened since the last poll: subscribe on them. Sends wait until
+    /// `poll` returns, so `on_open` only notes the connection.
+    to_subscribe: Vec<ConnId>,
     /// Close after this many messages.
     pub limit: u64,
     /// Messages received.
     pub messages: u64,
     /// Connections opened; more than 1 means it reconnected.
     pub opens: u32,
+}
+
+/// The loop: runs until the clean close, or until the link gives up.
+///
+/// # Errors
+/// The backend failed. A connection that fails goes to `on_closed` instead.
+pub fn run(config: ergon_io::Config, app: &mut App) -> Result<()> {
+    let mut driver: Driver<WsConn> = Driver::new(config)?;
+    while !app.finished() {
+        driver.poll(app)?; // receive, decrypt, deliver, send
+        app.links.poll(&mut driver); // start a reconnect when one is due
+        app.subscribe_new(&mut driver)?;
+        if app.messages >= app.limit {
+            app.close(&mut driver)?;
+        }
+    }
+    Ok(())
 }
 
 impl App {
@@ -52,15 +75,16 @@ impl App {
     /// `retry` is out of range.
     pub fn new(
         retry: Retry,
-        dial: impl FnMut() -> ergon_io::Result<WsDial> + 'static,
+        dial: impl FnMut() -> Result<WsDial> + 'static,
         limit: u64,
-    ) -> ergon_io::Result<Self> {
+    ) -> Result<Self> {
         let mut links = Reconnect::new(retry)?;
         let link = links.add(dial);
         Ok(Self {
             links,
             link,
-            opened: Vec::new(),
+            subscribe: SUBSCRIBE,
+            to_subscribe: Vec::new(),
             limit,
             messages: 0,
             opens: 0,
@@ -75,6 +99,33 @@ impl App {
             Some(LinkState::Stopped | LinkState::GaveUp)
         )
     }
+
+    fn subscribe_new(&mut self, driver: &mut Driver<WsConn>) -> Result<()> {
+        for id in self.to_subscribe.drain(..) {
+            if let Some(mut conn) = live(driver, id) {
+                conn.send_text(self.subscribe)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Stops reconnecting, then starts the close handshake; `on_closed`
+    /// follows once the server answers. Safe to call again.
+    fn close(&mut self, driver: &mut Driver<WsConn>) -> Result<()> {
+        let state = self.links.state(self.link);
+        self.links.stop(self.link);
+        if let Some(LinkState::Open(id)) = state
+            && let Some(mut conn) = live(driver, id)
+        {
+            conn.close(1000, "done")?;
+        }
+        Ok(())
+    }
+}
+
+/// The connection, unless it is gone or already closing (it takes no sends).
+fn live(driver: &mut Driver<WsConn>, id: ConnId) -> Option<ConnMut<'_, WsConn>> {
+    driver.get_mut(id).filter(|conn| !conn.is_closing())
 }
 
 impl Handler for App {
@@ -84,8 +135,7 @@ impl Handler for App {
             if opened.reconnect {
                 println!("reconnected: subscribing again");
             }
-            // Sends wait until `poll` returns: remember the connection.
-            self.opened.push(id);
+            self.to_subscribe.push(id);
         }
     }
 
@@ -105,56 +155,26 @@ impl WsHandler for App {
     }
 }
 
-/// The loop: runs until the clean close, or until the link gives up.
-///
-/// # Errors
-/// The backend failed. A connection that fails goes to `on_closed` instead.
-#[cfg(target_os = "linux")]
-pub fn run(config: ergon_io::Config, app: &mut App) -> ergon_io::Result<()> {
-    use ergon_io::{Driver, WsConn};
-
-    let mut driver: Driver<WsConn> = Driver::new(config)?;
-    let mut closing = false;
-    while !app.finished() {
-        driver.poll(app)?; // receive, decrypt, deliver, send
-        app.links.poll(&mut driver); // start a reconnect when one is due
-        for id in app.opened.drain(..) {
-            // A connection the server is already closing takes no sends.
-            if let Some(mut conn) = driver.get_mut(id)
-                && !conn.is_closing()
-            {
-                conn.send_text(SUBSCRIBE)?;
-            }
-        }
-        if app.messages >= app.limit && !closing {
-            closing = true;
-            app.links.stop(app.link); // no reconnect after this close
-            if let Some(LinkState::Open(id)) = app.links.state(app.link)
-                && let Some(mut conn) = driver.get_mut(id)
-                && !conn.is_closing()
-            {
-                // `on_closed` follows once the server answers.
-                conn.close(1000, "done")?;
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(all(target_os = "linux", feature = "webpki-roots"))]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(feature = "webpki-roots")]
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ergon_io::{Config, Target, WsOptions, tls};
 
+    let usage = "usage: websocket HOST PORT PATH [MESSAGES] [BACKEND]";
     let mut args = std::env::args().skip(1);
-    let limit: u64 = args.next().map_or(Ok(20), |a| a.parse())?;
-    let config = Config::parse(&args.next().unwrap_or_else(|| "recv-busy".into()))?;
+    let host = args.next().ok_or(usage)?;
+    let port = args.next().ok_or(usage)?.parse()?;
+    let path = args.next().ok_or(usage)?;
+    let limit = args.next().map_or(Ok(20), |a| a.parse())?;
+    let default = if cfg!(target_os = "linux") {
+        "recv-busy"
+    } else {
+        "epoll-spin"
+    };
+    let config = Config::parse(&args.next().unwrap_or_else(|| default.into()))?;
+
     // In production, pin this thread to an isolated core first.
     let tls = tls::client_config(tls::webpki_roots())?;
-    let host = args.next().ok_or("missing WebSocket host")?;
-    let port = args.next().ok_or("missing WebSocket port")?.parse()?;
-    let path = args.next().ok_or("missing WebSocket path")?;
     let target = Target::new(host, port, path);
-    // Limits, pings and timeouts: WsOptions.
     let dial = move || WsDial::with_options(target.clone(), tls.clone(), WsOptions::default());
     let mut app = App::new(Retry::default(), dial, limit)?;
     run(config, &mut app)?;
@@ -167,15 +187,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 backend: a server close, the reconnect, the second subscribe and the clean
 close.)*
 
-Run it (Linux):
+Run it:
 
 ```sh
-cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-busy HOST 443 /updates
+cargo run -p ergon-io --features webpki-roots --example websocket -- HOST 443 /updates
+cargo run -p ergon-io --features webpki-roots --example websocket -- HOST 443 /updates 50 uring-sqpoll
 ```
 
-- Arguments: messages to print before closing, then the backend
-  configuration.
-- Supply your service's host, port and path; adapt `SUBSCRIBE` to its protocol.
+- Arguments: your service's host, port and path; then, optionally, the
+  messages to print before closing (20) and the backend configuration
+  (`recv-busy` on Linux, `epoll-spin` elsewhere). Set `App::subscribe`
+  (default `SUBSCRIBE`) to its protocol's message.
+- The loop is four steps: `poll` (receive, decrypt, deliver, send), the
+  reconnect check, subscribe on connections opened during that poll, and
+  close once enough messages arrived.
+- **macOS:** the same code runs on `epoll-spin` alone, on kqueue, with
+  none of the Linux tuning (no NIC polling, receive timestamps,
+  `TCP_USER_TIMEOUT`, TCP timers, host checks or CPU pinning). The other
+  backends and those settings are refused at `Driver::new`. It is for
+  developing against a venue, not for latency.
 
 ## Options
 
@@ -184,7 +214,7 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 | option | default | what it does |
 |---|---|---|
 | `buf_size` | 1 MiB | receive buffer; every frame must fit |
-| `max_message` | 0 (what the buffer holds) | a larger message closes the connection; a fragmented message may exceed the buffer |
+| `max_message` | 0 (what the buffer holds) | a larger message closes the connection; a fragmented message may exceed the buffer. The reassembly buffer is this size, resident from connect: a size the allocator refuses fails the connect with `Error::Config`, but under memory overcommit one larger than the pod's memory is accepted and the write at connect is OOM-killed |
 | `ping_interval_ms` | 10,000 | Ping after this long with nothing received; a busy connection sends none; 0: off |
 | `pong_timeout_ms` | 5,000 | nothing received this long after a Ping: `Error::Timeout("websocket pong")`; 0: off |
 | `idle_timeout_ms` | 0 (off) | nothing received this long: `Error::Timeout("websocket idle")` |
@@ -446,8 +476,11 @@ impl WsHandler for Prices {
   `k` is not ASCII stops mid-way. Fragments `0..k` were already delivered
   through `on_fragment`, no `fin` fragment follows, and no callback says
   the message was dropped: it counts in `stats().skipped` once its last
-  frame arrives, and the first one per connection writes one warning line
-  (from the warning thread). The next message starts again at `index` 0, so a handler
+  frame arrives, and in `stats().cut_short`. Building a connection with
+  this policy writes one warning line per process (from the warning
+  thread; one per connection when that thread is not running); the drop
+  itself only counts, so it never allocates. The next
+  message starts again at `index` 0, so a handler
   that sees index 0 while it holds a partial message discards it. Pinned
   by `a_streamed_non_ascii_fragment_ends_the_message_without_fin`
   (`ergon-io/tests/ws_stream.rs`).
@@ -584,6 +617,24 @@ interleaved (`ws_bench-frag.md`):
   16 KiB, against 28.6–33.8 ns. A parser that reads every byte adds its
   own pass in every column.
 
+<div class="ergon-anim" data-anim="ws-receive-paths" data-title="WebSocket receive: one fragmented message under Keep, Fragments and Stream"></div>
+
+*In words:* one binary message in four 100-byte fragments arrives in three
+TLS records over two reads (sizes illustrative), and the first 474 bytes
+of the receive buffer are followed under each `Interest`. Each record is decrypted
+in place; when the window is empty its plaintext becomes the window, so
+records 1 and 2 cost no copy. Record 2 ends inside the last fragment, so record 3
+must join the 36-byte leftover: `Keep` and `Stream` move that leftover
+forward (36 bytes), while under `Fragments` the leftover runs from the hold
+point (364 bytes), so the record's 66 bytes move back instead. `Keep` also
+copies every payload byte into its own buffer (400 bytes) and delivers one
+slice; `Fragments` delivers four slices of the receive buffer, whose
+offsets skip the 22 bytes of record overhead in the held span; `Stream`
+hands each fragment over as it completes and holds nothing. The last two
+steps give the four-fragment rows above: at 4 KiB `Keep` 89.8 ns at the
+p50 against 28.6 (`Fragments`) and 32.5 (`Stream`); at 300 B 26.0 against
+26.6 and 29.2.
+
 #### A frame cut across records
 
 Messages back to back, stand-in records of 16 KiB cut wherever they fall,
@@ -658,7 +709,7 @@ and feed it every open and close.
   with `reconnect`, resync any state kept from the old connection.
 - `on_closed_with(id, &error)` returns the next step: `Retry`, `GaveUp` or
   `Stopped`. An error no retry can fix (`Error::TlsVersion`: the server has
-  no TLS 1.3) gives up at once. `on_closed(id)` does the same without the
+  no TLS 1.3, and the target did not opt in to TLS 1.2) gives up at once. `on_closed(id)` does the same without the
   error, so it always retries.
 - `stop(link)` vetoes reconnects; `resume(link)` starts again.
 - `Driver::close` reports nothing: call `on_closed(id)` yourself after it.
@@ -894,6 +945,18 @@ message, p50 / p99 / max, same host and run as above
 - Offers no extension and refuses a server that picks one.
 - Extra headers (auth, say) go on the `Target`:
   `Target::new(host, port, path).with_header(name, value)`.
+- TLS session tickets read during the dial (servers send them before the
+  101) are stored by the dial, so the next connect resumes. One arriving
+  later, on the live connection, is held in an 8 KiB buffer with no
+  allocation and stored when the connection closes (driver's helper
+  thread) or through `tls_housekeeping()`. Bound and details:
+  [overview](overview.md#tls-session-tickets). Counters:
+  `WsStats::tickets_held`, `tickets_dropped`.
+- A busy feed should call `tls_housekeeping()` at idle (through
+  `Driver::get_mut`): after a TLS key update it prepares the next key, so
+  the next update allocates nothing ([key
+  updates](overview.md#tls-key-updates); `WsStats::inline_key_updates`
+  counts those that had to derive inline).
 
 ## Not supported
 

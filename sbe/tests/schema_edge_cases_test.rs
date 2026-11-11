@@ -6,9 +6,8 @@
 //! 3. Check that expected types (decoders, encoders, enums, composites) exist
 //!
 //! Schemas that require Java-generated binary fixtures document the requirement.
-//! Full round-trip tests are deferred until codegen bugs (tracked in `patch_source`)
-//! are fixed.  For now, structural verification ensures the parser + codegen
-//! produce valid Rust from each edge-case input.
+//! These are structural checks: the parser and codegen must produce valid Rust
+//! from each edge-case input.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]

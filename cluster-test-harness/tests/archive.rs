@@ -19,7 +19,7 @@ fn test_embedded_archive_driver_starts() -> Result<(), Box<dyn std::error::Error
 #[test]
 #[serial]
 fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Error>> {
-    // Start both an archive and a cluster — verify no port conflicts
+    // Start both an archive and a cluster to verify no port conflicts
     let _archive = ergo_aeron_cluster_test_harness::EmbeddedArchiveDriver::start(9801)?;
     let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
 

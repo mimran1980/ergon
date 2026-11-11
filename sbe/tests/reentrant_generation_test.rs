@@ -1,6 +1,6 @@
 //! A message-decoder hook may invoke a nested `Generator` (e.g. to emit a
 //! companion crate, or just because a hook author's code happens to call
-//! back into the library). Regression coverage for T-13: nested generation
+//! back into the library). Nested generation
 //! must not leak its sealing path into the outer generation's remaining
 //! messages. See `sbe/src/codegen/runtime.rs::GenerationContext`.
 #![allow(clippy::restriction)]

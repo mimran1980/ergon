@@ -1,15 +1,22 @@
 //! Random-access tail-offset emission.
 //!
-//! One kernel, two lanes. The per-tail `walk_tail_k(start)` walkers and the
-//! `walk_dynamic_tail(k, start)` dispatch over them are pure: given a start
-//! offset they validate and return that tail's end, consulting no cache. They
-//! are emitted once, on the base decoder.
+//! One kernel, two lanes. The per-tail `walk_tail_k::<CHECK_MAX>(start)`
+//! walkers and the `walk_dynamic_tail(k, start)` dispatch over them are pure:
+//! given a start offset they validate and return that tail's end, consulting
+//! no cache. They are emitted once, on the base decoder.
 //!
-//! * Base lane — `tail_offset_k` chains back through `tail_offset_0`,
+//! `CHECK_MAX` decides whether a var-data length above the schema `maxValue`
+//! is rejected on the way past. Whole-message paths (`encoded_length`,
+//! `as_*_bytes`, `skip`, `verify`, the memoized lane) pass `true`; a
+//! random-access read that only passes over earlier tails to locate its own,
+//! and group iteration, pass `false` and check bounds only. The read of the
+//! field itself always checks the maximum.
+//!
+//! * Base lane: `tail_offset_k` chains back through `tail_offset_0`,
 //!   re-walking on every access. No cache field, so the decoder stays `Sync`
 //!   and small. This is what `Decoder::try_decode` gives you.
-//! * Memoized lane — [`emit_cached_tail_offsets`] emits a progressive `Cell`
-//!   cache over the *same* walkers, on the `{Name}MemoizedDecoder` wrapper
+//! * Memoized lane: [`emit_cached_tail_offsets`] emits a progressive `Cell`
+//!   cache over the same walkers, on the `{Name}MemoizedDecoder` wrapper
 //!   produced by `Decoder::memoized(self)`. Walked forward from the frontier
 //!   only, so repeated and out-of-order access walks each boundary at most
 //!   once.
@@ -29,6 +36,10 @@ pub(crate) fn cache_type_tokens(n: usize) -> proc_macro2::TokenStream {
 
 /// Emit the per-tail walkers and `tail_offset_*` accessors for an owner with
 /// `groups` then `var_data`, in whichever mode the config selected.
+#[expect(
+    unused_variables,
+    reason = "callers in message_decoder and group_decoder still pass cache_base"
+)]
 pub(crate) fn emit_tail_offsets(
     groups: &[MessageGroup],
     var_data: &[MessageVarData],
@@ -86,7 +97,7 @@ pub(crate) fn emit_tail_offsets(
         };
         walk_fns.extend(quote::quote! {
             #[inline]
-            fn #walk_ident(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+            fn #walk_ident<const CHECK_MAX: bool>(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
                 if start + #dim_size_lit > self.buf.len() {
                     sbe_rt::cold();
@@ -111,7 +122,7 @@ pub(crate) fn emit_tail_offsets(
                 let mut offset = start + #dim_size_lit;
                 let mut idx = 0;
                 while idx < count {
-                                        offset = #entry_decoder_ident::skip(
+                    offset = #entry_decoder_ident::skip_with::<CHECK_MAX>(
                         self.buf,
                         offset,
                         block_len,
@@ -122,7 +133,7 @@ pub(crate) fn emit_tail_offsets(
                 Ok(offset)
             }
         });
-        walk_arms.extend(quote::quote! { #k_lit => self.#walk_ident(start), });
+        walk_arms.extend(quote::quote! { #k_lit => self.#walk_ident::<true>(start), });
         k += 1;
     }
     for vd in var_data {
@@ -134,6 +145,7 @@ pub(crate) fn emit_tail_offsets(
         let vd_type_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
         let vd_len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
         let vd_name_lit = syn::LitStr::new(&vd.name, proc_macro2::Span::call_site());
+        let max_lit = super::runtime::var_data_max_lit(vd.max_length);
         let version_skip = if vd.since_version > 0 {
             let since_lit = syn::LitInt::new(
                 &vd.since_version.to_string(),
@@ -149,7 +161,7 @@ pub(crate) fn emit_tail_offsets(
         };
         walk_fns.extend(quote::quote! {
             #[inline]
-            fn #walk_ident(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+            fn #walk_ident<const CHECK_MAX: bool>(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
                 if #prefix_size_lit > self.buf.len().saturating_sub(start) {
                     sbe_rt::cold();
@@ -163,7 +175,7 @@ pub(crate) fn emit_tail_offsets(
                     read_bytes::<#prefix_size_lit>(self.buf, start);
                 let header = #vd_type_ident(bytes);
                 let wire_length = header.#vd_len_field_ident() as u64;
-                let (_, data_end) = sbe_rt::checked_var_data_bounds(
+                let (_, data_end) = sbe_rt::checked_var_data_bounds::<CHECK_MAX, #max_lit>(
                     #vd_name_lit,
                     start,
                     #prefix_size_lit,
@@ -173,7 +185,7 @@ pub(crate) fn emit_tail_offsets(
                 Ok(data_end)
             }
         });
-        walk_arms.extend(quote::quote! { #k_lit => self.#walk_ident(start), });
+        walk_arms.extend(quote::quote! { #k_lit => self.#walk_ident::<true>(start), });
         k += 1;
     }
 
@@ -181,7 +193,9 @@ pub(crate) fn emit_tail_offsets(
 
     if total_tail > 0 {
         // Pure dispatch over the walkers. Emitted on the base decoder in every
-        // lane; the memoized wrapper drives it through the inner decoder.
+        // lane; the memoized wrapper drives it through the inner decoder. It
+        // checks the maximum, so every boundary the memoized cache publishes
+        // is proven against it and a cache hit needs no second check.
         ts.extend(quote::quote! {
             #[inline]
             pub(crate) fn walk_dynamic_tail(
@@ -201,18 +215,33 @@ pub(crate) fn emit_tail_offsets(
     // wire on every access. No cache field exists to consult.
     for i in 1..=total_tail {
         let ident = quote::format_ident!("tail_offset_{i}");
-        let prev = quote::format_ident!("tail_offset_{}", i - 1);
         let walk = quote::format_ident!("walk_tail_{}", i - 1);
+        let prev_call = tail_offset_call(i - 1, &quote::quote! { CHECK_MAX });
         ts.extend(quote::quote! {
             #[inline]
-            fn #ident(&self) -> Result<usize, sbe_rt::DecodeError> {
-                let start = self.#prev()?;
-                self.#walk(start)
+            fn #ident<const CHECK_MAX: bool>(&self) -> Result<usize, sbe_rt::DecodeError> {
+                let start = self.#prev_call?;
+                self.#walk::<CHECK_MAX>(start)
             }
         });
     }
 
     ts
+}
+
+/// The base-lane call `tail_offset_k::<check_max>()`, or `tail_offset_0()`,
+/// which walks nothing and so takes no `CHECK_MAX`. `check_max` is `true`,
+/// `false`, or a forwarded `CHECK_MAX` parameter.
+pub(crate) fn tail_offset_call(
+    k: usize,
+    check_max: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let ident = quote::format_ident!("tail_offset_{k}");
+    if k == 0 {
+        quote::quote! { #ident() }
+    } else {
+        quote::quote! { #ident::<#check_max>() }
+    }
 }
 
 /// Cache-consulting `tail_offset_*` for the memoized wrapper.

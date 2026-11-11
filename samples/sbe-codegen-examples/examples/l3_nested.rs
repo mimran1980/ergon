@@ -1,4 +1,4 @@
-//! L3 nested-group showcase — the full API surface for 3 levels of nesting.
+//! L3 nested-group showcase: the full API surface for 3 levels of nesting.
 //!
 //! Uses the Car schema (fuelFigures → performanceFigures → acceleration) to
 //! show every type generated for nested groups. Same pattern as an L3 order
@@ -44,11 +44,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else if t.starts_with("pub struct FuelFiguresEncoder") {
                 Some("L1 group encoder")
             } else if t.starts_with("pub struct FuelFiguresEntryEncoder") {
-                Some("L1 entry — leads to L2")
+                Some("L1 entry, leads to L2")
             } else if t.starts_with("pub struct PerformanceFiguresEncoder") {
                 Some("L2 group encoder")
             } else if t.starts_with("pub struct PerformanceFiguresEntryEncoder") {
-                Some("L2 entry — leads to L3")
+                Some("L2 entry, leads to L3")
             } else if t.starts_with("pub struct AccelerationEncoder") {
                 Some("L3 group encoder")
             } else if t.starts_with("pub struct AccelerationEntryEncoder") {

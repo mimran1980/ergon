@@ -64,9 +64,6 @@ type File struct {
 	// PM QoS nodes the container image does not carry; granted paths stay the
 	// container's /dev/... names.
 	DevRoot string `json:"devRoot,omitempty"`
-	// SchedFifo is "off" or "thread" (hot thread only, never container-wide),
-	// or a YAML boolean (true = thread).
-	SchedFifo string `json:"schedFifo,omitempty"`
 	// Ptp is "off", "auto" or a /dev/ptp* path the node has.
 	Ptp string `json:"ptp,omitempty"`
 	// HugepagesAeronDir is the AERON_DIR on hugetlbfs when the pod mounts one.
@@ -93,7 +90,6 @@ type Profile struct {
 	Seccomp            *SeccompFile `json:"seccomp,omitempty"`
 	SeccompProfilePath string       `json:"seccompProfilePath,omitempty"`
 	DevRoot            string       `json:"devRoot,omitempty"`
-	SchedFifo          string       `json:"schedFifo,omitempty"`
 	Ptp                string       `json:"ptp,omitempty"`
 	HugepagesAeronDir  string       `json:"hugepagesAeronDir,omitempty"`
 }
@@ -111,7 +107,6 @@ func (p Profile) asFile() File {
 		Seccomp:            p.Seccomp,
 		SeccompProfilePath: p.SeccompProfilePath,
 		DevRoot:            p.DevRoot,
-		SchedFifo:          p.SchedFifo,
 		Ptp:                p.Ptp,
 		HugepagesAeronDir:  p.HugepagesAeronDir,
 	}
@@ -157,8 +152,6 @@ type Config struct {
 	// DevRoot is where this process can see the host's /dev. Default "/dev";
 	// the DaemonSet mounts the host's /dev at /host/dev and sets that.
 	DevRoot string
-	// SchedFifo is SchedFifoOff or SchedFifoThread.
-	SchedFifo string
 	// Ptp is "off", "auto" or a /dev/ptp* path.
 	Ptp string
 	// HugepagesAeronDir is the AERON_DIR to export when a pod mounts hugetlbfs.
@@ -184,14 +177,6 @@ type Config struct {
 	// CgroupRoot is the cgroup v2 mount point (usually /sys/fs/cgroup).
 	CgroupRoot string
 }
-
-const (
-	// SchedFifoOff grants no realtime policy.
-	SchedFifoOff = "off"
-	// SchedFifoThread grants RLIMIT_RTPRIO and ERGON_SCHED_FIFO; the app (or
-	// prelock) takes SCHED_FIFO on the hot thread only.
-	SchedFifoThread = "thread"
-)
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
@@ -293,14 +278,6 @@ func Parse(data []byte) (*Config, error) {
 		return nil, err
 	}
 	c.SeccompIOUring = ioUring
-	fifo, err := parseSwitch("schedFifo", f.SchedFifo, SchedFifoThread)
-	if err != nil {
-		return nil, err
-	}
-	c.SchedFifo = SchedFifoOff
-	if fifo {
-		c.SchedFifo = SchedFifoThread
-	}
 	switch f.Ptp {
 	case "", "off":
 		c.Ptp = "off"

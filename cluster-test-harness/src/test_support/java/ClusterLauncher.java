@@ -6,11 +6,62 @@ import io.aeron.logbuffer.Header;
 import io.aeron.ExclusivePublication;
 import io.aeron.Image;
 import io.aeron.cluster.codecs.CloseReason;
+import io.aeron.security.Authenticator;
+import io.aeron.security.SessionProxy;
 import org.agrona.DirectBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class ClusterLauncher {
+    /**
+     * Accepts empty credentials and "admin:admin". Challenges "challenge-me"
+     * with "server-challenge" and accepts the answer "answer". Rejects
+     * anything else, on connect or as an answer.
+     */
+    public static class TestAuthenticator implements Authenticator {
+        private final Map<Long, String> credentials = new HashMap<>();
+        private final Map<Long, String> answers = new HashMap<>();
+
+        private static String text(byte[] bytes) { return new String(bytes, StandardCharsets.US_ASCII); }
+
+        public void onConnectRequest(long sessionId, byte[] encodedCredentials, long nowMs) {
+            credentials.put(sessionId, text(encodedCredentials));
+        }
+
+        public void onChallengeResponse(long sessionId, byte[] encodedCredentials, long nowMs) {
+            answers.put(sessionId, text(encodedCredentials));
+        }
+
+        public void onConnectedSession(SessionProxy session, long nowMs) {
+            String given = credentials.get(session.sessionId());
+            if (given == null) return;
+            boolean done;
+            if (given.isEmpty() || given.equals("admin:admin")) {
+                done = session.authenticate(given.getBytes(StandardCharsets.US_ASCII));
+            } else if (given.equals("challenge-me")) {
+                done = session.challenge("server-challenge".getBytes(StandardCharsets.US_ASCII));
+            } else {
+                session.reject();
+                done = true;
+            }
+            if (done) credentials.remove(session.sessionId());
+        }
+
+        public void onChallengedSession(SessionProxy session, long nowMs) {
+            String answer = answers.get(session.sessionId());
+            if (answer == null) return;
+            boolean done;
+            if (answer.equals("answer")) {
+                done = session.authenticate("challenge-me".getBytes(StandardCharsets.US_ASCII));
+            } else {
+                session.reject();
+                done = true;
+            }
+            if (done) answers.remove(session.sessionId());
+        }
+    }
+
     public static class Echo implements ClusteredService {
         private Cluster cluster;
         public void onStart(Cluster c, Image s) { this.cluster = c; }
@@ -36,15 +87,19 @@ public class ClusterLauncher {
         // Optional args after the node triple: "keep" preserves archive and
         // consensus dirs (log-recovery restart). "auction" runs the official
         // sample service; anything else, including omission, is the echo service.
+        // "auth" runs the echo service behind TestAuthenticator.
         // The media driver directory is always recreated: a leftover cnc.dat
         // from a killed process triggers ActiveDriverException.
         boolean keep = false;
+        boolean auth = false;
         ClusteredService service = new Echo();
         for (int i = 3; i < args.length; i++) {
             if (args[i].equals("keep")) {
                 keep = true;
             } else if (args[i].equals("auction")) {
                 service = new BasicAuctionClusteredService();
+            } else if (args[i].equals("auth")) {
+                auth = true;
             } else if (!args[i].equals("echo")) {
                 throw new IllegalArgumentException("unknown ClusterLauncher arg: " + args[i]);
             }
@@ -58,6 +113,9 @@ public class ClusterLauncher {
         config.consensusModuleContext()
             .deleteDirOnStart(!keep)
             .ingressChannel("aeron:udp?endpoint=localhost:" + ingressPort);
+        if (auth) {
+            config.consensusModuleContext().authenticatorSupplier(TestAuthenticator::new);
+        }
 
         ClusteredMediaDriver.launch(config.mediaDriverContext(), config.archiveContext(), config.consensusModuleContext());
         ClusteredServiceContainer.launch(config.clusteredServiceContext());

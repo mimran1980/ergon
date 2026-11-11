@@ -1,4 +1,4 @@
-//! Encode-side `<name>_as_str` var-data setters — the write counterpart of
+//! Encode-side `<name>_as_str` var-data setters, the write counterpart of
 //! the decode-side `<name>_as_str` / `<name>_as_str_unchecked` readers.
 //!
 //! Emitted at the same two locations as the readers (message-level in
@@ -6,7 +6,7 @@
 //! same `characterEncoding`, and both forward into the existing checked byte
 //! setter so length/buffer validation lives in one place. Compilation is the
 //! assertion for shape; runtime assertions cover the one behavioural
-//! difference from the byte setter — ASCII validation.
+//! difference from the byte setter: ASCII validation.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -75,8 +75,8 @@ fn generated_source_from(
 }
 
 // A fixed field named `<vd>AsStr` already owns the name the var-data setter
-// would claim, at both message and entry level. The setter must stand down —
-// same guard as the decode-side reader in `var_data_as_str_methods`.
+// would claim, at both message and entry level. The setter must stand down,
+// as the decode-side reader in `var_data_as_str_methods` does.
 const COLLIDING_XML: &str = r#"<messageSchema package="vdstrcollide" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -174,7 +174,7 @@ fn ascii_as_str_setter_accepts_ascii_and_rejects_non_ascii()
         assert_eq!(leg.leg_tag_as_str()?, "xyz");
         assert_eq!(leg.leg_note_as_str()?, "wörld");
 
-        // Rejects non-ASCII text on the ASCII field — message level. Sized
+        // Rejects non-ASCII text on the ASCII field at message level. Sized
         // for the call to succeed on bytes; the ASCII check must still
         // reject it before any byte is written.
         let sized2 = MsgEncodedLength::new()
@@ -194,7 +194,7 @@ fn ascii_as_str_setter_accepts_ascii_and_rejects_non_ascii()
             "expected InvalidAscii for non-ASCII text on an ASCII field, got {err:?}"
         );
 
-        // Rejects non-ASCII text on the ASCII field — group entry.
+        // Rejects non-ASCII text on the ASCII field in a group entry.
         let sized3 = MsgEncodedLength::new()
             .legs_ragged(1, |g| { g.add()?.leg_tag("café".len())?.leg_note(0)?; Ok(()) })?
             .tag(0)?
@@ -269,7 +269,7 @@ fn as_str_setter_matches_the_byte_setter_bit_for_bit() -> Result<(), Box<dyn std
 // `characterEncoding` is free text in the SBE spec, not a closed enum: ASCII
 // legally spells as `ASCII` or `US-ASCII`, UTF-8 as `UTF-8` or `UTF8`, both
 // case-insensitively. Message decode, group-entry decode, and message/entry
-// encode must all recognise every spelling the same way — a schema using
+// encode must all recognise every spelling the same way: a schema using
 // `US-ASCII` (as `samples/cluster-rfq`'s real schema does) or `UTF8` must not
 // silently lose the `_as_str` accessor at some locations while keeping it at
 // others.
@@ -318,7 +318,7 @@ fn as_str_setter_recognises_every_character_encoding_spelling()
         src.contains("fn leg_tag_as_str("),
         "US-ASCII entry field missing decode _as_str, got source:\n{src}"
     );
-    // Encode side: same two fields get the `&str`-taking setter too — the
+    // Encode side: the same two fields get the `&str`-taking setter too; the
     // `fn note_as_str(`/`fn leg_tag_as_str(` count above already includes it
     // (one per decode lane plus the encoder); the compile-and-run round-trip
     // below is the precise proof, calling both as `_as_str(&str) -> Result<_,
@@ -357,7 +357,7 @@ fn as_str_setter_recognises_every_character_encoding_spelling()
         let mem = MsgDecoder::try_decode(buf, 0)?.memoized();
         assert_eq!(mem.note_as_str()?, "héllo");
 
-        // Staged chain — wire order is legs, then note.
+        // Staged chain in wire order: legs, then note.
         let (note, _) = MsgDecoder::try_decode(buf, 0)?
             .into_legs(|e| -> Result<_, sbe_rt::DecodeError> {
                 let (tag, complete) = e.into_leg_tag_as_str()?;
@@ -372,7 +372,7 @@ fn as_str_setter_recognises_every_character_encoding_spelling()
 }
 
 /// `characterEncoding` on the `<data>` element, not on the composite member.
-/// Dropping it used to emit raw `&[u8]` with no `*_as_str`.
+/// It must still produce the `*_as_str` accessors.
 #[test]
 fn data_element_character_encoding_emits_as_str() -> Result<(), Box<dyn std::error::Error>> {
     const XML: &str = r#"<messageSchema package="vdelem" id="1" version="0" byteOrder="littleEndian">
@@ -421,7 +421,7 @@ fn data_element_character_encoding_emits_as_str() -> Result<(), Box<dyn std::err
 fn as_str_setter_stands_down_when_a_sibling_field_already_claims_the_name()
 -> Result<(), Box<dyn std::error::Error>> {
     // A group entry has its own fixed field `legTagAsStr` alongside var-data
-    // `legTag` (ASCII) — same collision shape the decode-side guard in
+    // `legTag` (ASCII), the same collision shape the decode-side guard in
     // `var_data_as_str_methods` handles. If the encoder emitted the var-data
     // `_as_str` setter unconditionally, the generated module would carry two
     // `fn leg_tag_as_str` methods on the same entry type and fail to compile.

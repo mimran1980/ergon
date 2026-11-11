@@ -1,14 +1,14 @@
 //! Source-name tracking and de-duplicated parse warnings.
 //!
-//! The source name (filename or `"<xml>"` for in-memory input) lives in
-//! [`WarnState`] — no global static. Thread a single `WarnState` through the
-//! parse and every warning reports the correct file.
+//! The source name (file name, or `"<xml>"` for in-memory input) lives in
+//! [`WarnState`]. Thread one `WarnState` through a parse and every warning
+//! names the right file.
 
 use std::collections::HashSet;
 
-/// Per-invocation warning dedup — no global static, so concurrent parses
-/// never suppress each other's warnings. Wrapped in `RefCell` because the
-/// recursive-descent parser doesn't cross any await point.
+/// Warning de-duplication for one parse. Each parse owns its state, so
+/// concurrent parses never suppress each other's warnings. A `RefCell` is
+/// enough because the parser is single-threaded recursive descent.
 pub(crate) struct WarnState {
     seen: std::cell::RefCell<HashSet<String>>,
     /// The name warnings and errors are reported against
@@ -25,14 +25,11 @@ impl WarnState {
     }
 }
 
-/// De-duplicates parser warnings within a single parse call. `xi:include`
-/// inlines a shared schema (e.g. `common-types.xml`) into every consuming
-/// file, so a naive `eprintln!` fires once per consumer — N sibling schema
-/// files sharing one included type multiply the same warning N times.
-/// Each parse invocation creates its own [`WarnState`], so separate parse
-/// calls do not suppress each other even when concurrent. Keyed on byte
-/// offset + message, so distinct warnings are never suppressed within a
-/// parse.
+/// Print a parser warning once per parse. `xi:include` inlines a shared
+/// schema (such as `common-types.xml`) into every consuming file, so a plain
+/// `eprintln!` would repeat one warning for each of N schemas that include
+/// the same type. The key is byte offset plus message, so distinct warnings
+/// are never suppressed.
 ///
 /// When `node` is provided the warning includes the source file, line,
 /// column, and the relevant XML line.
@@ -68,7 +65,7 @@ pub(crate) fn warn_once(message: &str, node: Option<roxmltree::Node<'_, '_>>, st
 mod tests {
     use super::*;
 
-    /// Each `WarnState` carries its own name — no global static.
+    /// Each `WarnState` carries its own name.
     #[test]
     fn warn_state_remembers_the_file_it_was_built_with() -> Result<(), Box<dyn std::error::Error>> {
         let state = WarnState::new("orderbook-schema.xml".into());
@@ -80,7 +77,7 @@ mod tests {
         let state2 = WarnState::new("market-data.xml".into());
         assert_eq!(
             state2.name, "market-data.xml",
-            "separate WarnStates carry separate names — no global leak"
+            "separate WarnStates carry separate names"
         );
         assert_eq!(
             state.name, "orderbook-schema.xml",

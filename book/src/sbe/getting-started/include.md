@@ -1,12 +1,12 @@
-# Include Generated Code
+# Include generated code
 
-**Prefer build-dep only for product crates** (no runtime `ergo-sbe` link).
-Generated codecs embed `sbe_rt`; plain `include!` is enough:
+Product crates should depend on `ergo-sbe` at build time only, with no runtime link.
+Generated codecs embed `sbe_rt`, so plain `include!` is enough:
 
 ```rust,ignore
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:include_build_dep_only}}
 ```
-*(From `sbe-feature-tour/src/lib.rs` — the `#[path]` pattern used by every sample crate. The feature-tour's `cargo build` verifies this compiles.)*
+*(From `sbe-feature-tour/src/lib.rs`: the `#[path]` pattern used by every sample crate. The feature tour's `cargo build` checks that it compiles.)*
 
 or via `include!`:
 
@@ -17,8 +17,8 @@ mod messages {
 use messages::*;
 ```
 
-**Optional convenience** — `sbe_mod!` needs `ergo-sbe` as a normal dependency
-(macro expansion only; not required for encode/decode):
+`sbe_mod!` is optional and needs `ergo-sbe` as a normal dependency
+(for macro expansion only, not for encode or decode):
 
 ```rust,ignore
 // Cargo.toml: [dependencies] ergo-sbe = "0.1"

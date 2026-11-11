@@ -1,4 +1,4 @@
-# What Generated Code Looks Like
+# What generated code looks like
 
 For a schema with one message (`Car`), `ergo-sbe` emits a single Rust module with:
 
@@ -14,7 +14,7 @@ pub struct CarDecoder<'a> {
 }
 
 impl<'a> CarDecoder<'a> {
-    // Illustrative only — real values from your schema.
+    // Illustrative only: real values come from your schema.
     pub const SCHEMA_ID: u16 = 1;
     pub const TEMPLATE_ID: u16 = 1;
     pub const BLOCK_LENGTH: usize = 45;
@@ -25,7 +25,7 @@ impl<'a> CarDecoder<'a> {
         -> Result<Self, sbe_rt::DecodeError> { ... }
 
     // Proves the header+fixed-body extent and panics if short.
-    // Caller does not need `unsafe` — the proof is in the constructor.
+    // Caller does not need `unsafe`: the proof is in the constructor.
     pub fn wrap(buf: &'a [u8], message_offset: usize,
                acting_block_length: usize, acting_version: u16)
         -> Self { ... }
@@ -33,7 +33,7 @@ impl<'a> CarDecoder<'a> {
     // Full dynamic-tail structural check (associated, not `car.verify()`).
     pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> { ... }
 
-    // Fixed fields are random-access — zero-copy reads after a checked wrap.
+    // Fixed fields are random-access: zero-copy reads after a checked wrap.
     #[inline]
     pub fn serial_number(&self) -> u64 {
         let offset = self.offset + 0;
@@ -65,7 +65,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     pub fn fixed(self, fields: &CarFixedFields) -> CarEncoder<'a, H, sbe_rt::FieldsFixed> { ... }
 }
 
-// Calling stages out of order is a type error — `CarEncoder` has no `asks()`.
+// Calling stages out of order is a type error: `CarEncoder` has no `asks()`.
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     pub fn fuel_figures(self, count: u16, f: impl FnOnce(...) -> ...) -> Result<CarAfterFuelFigures> { ... }
 }
@@ -81,18 +81,18 @@ impl<'a> CarComplete<'a> {
 ## Metadata: no field-name collisions
 
 Utility methods like `remaining`, `buffer`, `as_bytes_with_header`, and
-`as_body_bytes` live on a zero-copy **metadata struct** from `get_metadata()`.
+`as_body_bytes` live on a zero-copy metadata struct from `get_metadata()`.
 A schema field named `remaining` or `buffer` therefore generates
-`dec.remaining()` / `dec.buffer()` as field accessors — no `_field` suffix.
+`dec.remaining()` / `dec.buffer()` as field accessors, with no `_field` suffix.
 
 Reserved decoder names (`ordered`, `memoized`, `acting_version`,
-`acting_block_length`, …) still rename a colliding **message-level** field
-(`ordered_field()`). Group entries do **not** rename against that list: if an
+`acting_block_length`, …) still rename a colliding message-level field
+(`ordered_field()`). Group entries do not rename against that list: if an
 entry field is `actingVersion`, it keeps `acting_version()` and the metadata
 getter is omitted.
 
 Convenience accessors (`<group>_count`, `<field>_len`, ordered `fixed`) yield
-to a same-named tail or field — the primary getter wins. A domain-typed field
+to a same-named tail or field; the primary getter wins. A domain-typed field
 counts: its getter takes the plain field name (renamed against the same
 reserved list), so `orders_count` beside a group `orders` stays the field.
 `reserved_name_clash_test`, `ordered_lane_test`.
@@ -101,18 +101,18 @@ reserved list), so `orders_count` beside a group `orders` stays the field.
 
 | Receiver | `remaining()` means |
 |----------|---------------------|
-| Group decoder (e.g. `FuelFiguresDecoder`) | **Entry count** left (`usize`) — not bytes |
-| `dec.get_metadata()` / `enc.get_metadata()` | **Byte slice** after the acting fixed block (`&[u8]`) |
-| Schema field named `remaining` | Ordinary **field accessor** (natural name, no rename) |
+| Group decoder (e.g. `FuelFiguresDecoder`) | Entry count left (`usize`), not bytes |
+| `dec.get_metadata()` / `enc.get_metadata()` | Byte slice after the acting fixed block (`&[u8]`) |
+| Schema field named `remaining` | Ordinary field accessor (natural name, no rename) |
 
 Session framing (header then app payload) must use
 `get_metadata().remaining()` for the payload bytes.
 
 ```rust,ignore
 let dec = CarDecoder::try_decode(&buf, 0)?;
-dec.serial_number();                              // field accessor — never collides
-dec.get_metadata().remaining();                   // metadata — never collides
-dec.get_metadata().buffer();                      // metadata — never collides
+dec.serial_number();                              // field accessor, never collides
+dec.get_metadata().remaining();                   // metadata, never collides
+dec.get_metadata().buffer();                      // metadata, never collides
 // Car has groups/var-data: metadata is fixed-block only (not a full frame).
 dec.get_metadata().as_fixed_region_with_header()?;
 // Complete frame after walking tails, or rescan without consuming:
@@ -136,7 +136,7 @@ Encoders have the same pattern. Fixed-only messages expose
 ```rust,ignore
 let meta = enc.get_metadata();
 meta.as_fixed_body_bytes();            // fixed block only when message has tails
-meta.as_fixed_region_with_header();    // header + fixed block — not full frame
+meta.as_fixed_region_with_header();    // header + fixed block, not the full frame
 meta.message_offset();                 // message start in buffer
 ```
 
@@ -144,18 +144,18 @@ meta.message_offset();                 // message start in buffer
 
 | API | Span | Full Car frame? |
 |-----|------|-----------------|
-| `meta.limit()` | body start + **acting** block length | **No** — stops at fixed block end |
-| `meta.as_fixed_region_with_header()?` | header + acting fixed block | **No** |
+| `meta.limit()` | body start + acting block length | No: stops at fixed block end |
+| `meta.as_fixed_region_with_header()?` | header + acting fixed block | No |
 | `meta.remaining()` | bytes after that fixed end | May still include unread tails of *this* message |
-| complete stage `as_bytes_with_header()` | header through last var-data | **Yes** (after walking tails) |
-| `dec.as_bytes_with_header()?` (inherent rescan) | same full frame without consuming stages | **Yes** (rescans tails) |
+| complete stage `as_bytes_with_header()` | header through last var-data | Yes (after walking tails) |
+| `dec.as_bytes_with_header()?` (inherent rescan) | same full frame without consuming stages | Yes (rescans tails) |
 
-Do **not** use `meta.limit()` as the next-message offset in a multi-message
-buffer for Car-shaped schemas — that truncates at the fixed block.
+Do not use `meta.limit()` as the next-message offset in a multi-message
+buffer for Car-shaped schemas, because it truncates at the fixed block.
 
 ### `acting_version` / `acting_block_length` (dual surface)
 
-These remain **inherent** on the message decoder for the hot path
+These remain inherent on the message decoder for the hot path
 (`dec.acting_version()`, `dec.acting_block_length()`) and are also exposed on
 metadata (`dec.get_metadata().acting_version()`) for a uniform placement facet.
 Both paths return the same values. They are reserved method names: a schema

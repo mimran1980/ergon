@@ -276,33 +276,3 @@ func TestExecNoCommand(t *testing.T) {
 		t.Fatal("Exec accepted an empty argv")
 	}
 }
-
-// --- SCHED_FIFO wrapper ---
-
-func TestSetFifoPriorityRange(t *testing.T) {
-	// The range check is pure and must fail before the syscall.
-	for _, prio := range []int{0, -1, 100, 1000} {
-		if err := SetFifo(prio); err == nil {
-			t.Errorf("SetFifo(%d) must fail on the range check", prio)
-		} else if !strings.Contains(err.Error(), "1..99") {
-			t.Errorf("SetFifo(%d): error %q must name the range", prio, err)
-		}
-	}
-}
-
-func TestSetFifoNeedsRtprio(t *testing.T) {
-	// With no RLIMIT_RTPRIO and no CAP_SYS_NICE the syscall fails with a
-	// typed error that names the fix. That is the unprivileged pod case.
-	err := SetFifo(40)
-	if err == nil {
-		// This process happens to have the right to take SCHED_FIFO. The
-		// behaviour is then exercised for real: drop back and continue.
-		if _, _, curErr := CurrentPolicy(); curErr != nil {
-			t.Fatalf("CurrentPolicy: %v", curErr)
-		}
-		return
-	}
-	if !strings.Contains(err.Error(), "sched-fifo.ergon.io") {
-		t.Errorf("error %q must name the opt-in annotation", err)
-	}
-}

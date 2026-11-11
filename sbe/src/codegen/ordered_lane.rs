@@ -27,7 +27,7 @@ pub(crate) struct OrderedFixedFields<'a> {
 /// The ordered lane offers one spelling for callers who want the whole message
 /// in order and would rather write the same thing at every tail: every group
 /// takes `FnMut(Entry, EntryInfo)`, every var-data takes `FnOnce(&[u8])`. It
-/// owns no cursor of its own — each method delegates to the staged stage it
+/// owns no cursor of its own: each method delegates to the staged stage it
 /// wraps, so the one-pass property and the compile-time ordering come from
 /// there rather than being re-implemented.
 ///
@@ -276,7 +276,7 @@ fn emit_tail_stage(
     // Per type, not per owner: every wrapper defines only tail `i`'s methods
     // (plus the peek), so tail `i` is the only name that can take `acting_*`
     // from it. The owner's own fields and other tails live on other types and
-    // are not in play here — suppressing on those would drop an accessor
+    // are not in play here; suppressing on those would drop an accessor
     // nothing on this type defines. `inner_may_yield_count_len` answers a
     // different question, for the peek: whether the *inner* type still has the
     // count/len method this wrapper forwards to.

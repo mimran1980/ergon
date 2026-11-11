@@ -1,4 +1,4 @@
-//! T-13: `fixed(&FixedFields)` writes schema null images for `None`.
+//! `fixed(&FixedFields)` writes schema null images for `None`.
 //!
 //! Dirty-buffer reuse must not leak prior optional values when a later
 //! encode passes `None`.

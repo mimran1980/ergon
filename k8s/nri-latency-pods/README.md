@@ -24,19 +24,19 @@ units. The shared-CPU half is the public chart. Apply only
 pod that gets the shared CPU, shows the plugin refusing a hot pod (a kind
 node has no `isolcpus`), and shows this policy denying an exec probe. It
 does not grant hugepages, an isolated cpuset partition, io_uring seccomp,
-or a PHC. Not yet run on kind. The chart writes `seccomp`, `ptp` and `schedFifo` as `"off"`.
+or a PHC. Not yet run on kind. The chart writes `seccomp` and `ptp` as `"off"`.
 
 ## Why not AKS
 
 **AKS cannot do this.** It has no supported way to change containerd (so an
 NRI plugin cannot be installed) and no `reservedSystemCPUs` list. Everything
-here needs one of those. **The target is EKS on AL2023**: containerd 2.3.5
+here needs one of those. The target is EKS on AL2023: containerd 2.3.5
 with NRI on by default. The EKS verification ran on spot `c8g.xlarge` nodes
 (4 vCPU, no SMT).
 
 ## The five extensions
 
-A pod author names **kinds and modes only**; values always come from the
+A pod author names kinds and modes only; values always come from the
 plugin config or the node's facts. Every grant is opt-in by annotation, and a
 grant that cannot be given is refused (fail closed): the kubelet shows the
 text in the pod's events as `CreateContainerError` and it names the fix.
@@ -44,16 +44,16 @@ text in the pod's events as `CreateContainerError` and it names the fix.
 | # | extension | mechanism | pod opt-in | env the app sees |
 |---|---|---|---|---|
 | 1 | sized hugetlbfs mount for `AERON_DIR` | NRI `AddMount` `type: hugetlbfs` with `pagesize=2M,size=N` + `AddLinuxHugepageLimit`; N = the container's `hugepages-2Mi` limit | `hugepages.ergon.io/<ctr>: "2M"` + `hugepages-2Mi` (requests = limits) | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` |
-| 2 | `cpuset.cpus.partition=isolated` on the exclusive CPUs | `createRuntime` hook makes a **child** cgroup holding only E, writes `cpuset.cpus.exclusive` down the hierarchy, then `cpuset.cpus.partition=isolated`, and reads it back | `cpu-partition.ergon.io/<ctr>: "isolated"` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
+| 2 | `cpuset.cpus.partition=isolated` on the exclusive CPUs | `createRuntime` hook makes a child cgroup holding only E, writes `cpuset.cpus.exclusive` down the hierarchy, then `cpuset.cpus.partition=isolated`, and reads it back | `cpu-partition.ergon.io/<ctr>: "isolated"` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | 3 | io_uring seccomp profile | (a) NRI `SetLinuxSeccompPolicy`: a clone of the request's profile plus the `io_uring_*` allow rule; (b) fallback, pod field `seccompProfile: Localhost` | `seccomp.ergon.io/<ctr>: "io-uring"` (or none, for the Localhost fallback) | `ERGON_SECCOMP` |
-| 4 | admission: refuse exec probes and always-restart sidecars | `ValidatingAdmissionPolicy` (CEL, GA 1.30) | pod label `ergon.io/latency: "hot"` | — |
+| 4 | admission: refuse exec probes and always-restart sidecars | `ValidatingAdmissionPolicy` (CEL, GA 1.30) | pod label `ergon.io/latency: "hot"` | none |
 | 5 | NRI device grants | NRI `AddDevice` + a read-only bind of the node facts file | `ptp.ergon.io/<ctr>: "auto"` (NIC PHC `/dev/ptp*`); `cpuqos.ergon.io/<ctr>` (`/dev/cpu_dma_latency`, x86 only) | `ERGON_PTP_DEVICE`, `ERGON_NODE_FACTS`, `ERGON_CPU_DMA_LATENCY` |
 
 ### Item 1: the app owns `AERON_DIR`
 
-The plugin mounts a **sized** hugetlbfs at `/dev/hugepages` and exports
+The plugin mounts a sized hugetlbfs at `/dev/hugepages` and exports
 `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`
-and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does **not** set `AERON_DIR`.
+and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does not set `AERON_DIR`.
 The app creates `$ERGON_HUGEPAGES_DIR/aeron` and points `AERON_DIR` there.
 It does not set `AERON_PERFORM_STORAGE_CHECKS=false`. The address, the
 gateway and the PCI address are not filled in by this grant; the opt-in
@@ -64,8 +64,8 @@ plugin granted.
 without a `size=`, and Aeron refuses an unsized hugetlbfs. A sized hugetlbfs
 on the node would need `hostPath`, which PSS Baseline forbids.
 
-`size=` is a **capacity, not a reservation**: the mount succeeds with
-`HugePages_Total=0` and `df` still shows `size`. Pages allocate on **fault**,
+`size=` is a capacity, not a reservation: the mount succeeds with
+`HugePages_Total=0` and `df` still shows `size`. Pages allocate on fault,
 and a fault needs a page source. Measured in a Debian bookworm container,
 2 MiB pagesize, `size=32M`, one page touched by `mmap`:
 
@@ -78,13 +78,13 @@ and a fault needs a page source. Measured in a Debian bookworm container,
 So the node must carry a real pool (`hugepagesz=2M hugepages=N`, which is what
 the `hugepages-2Mi` request draws from) or `nr_overcommit_hugepages`. K8s
 accounts the preallocated pool, so size the request to the pool you actually
-have. Allocation is **mmap-only** — `write()` on hugetlbfs returns `EINVAL`
+have. Allocation is mmap-only: `write()` on hugetlbfs returns `EINVAL`
 even with a full pool, so the storage layer has to map and fault.
 
 ### Allowed ride-along: a DPDK NIC pair (`dpdk.ergon.io`)
 
-Default **off**: without the annotation the five keys below stay unset. With
-`dpdk.ergon.io/<ctr>: "ena-pair"`, the plugin **copies** the NIC pair a NIC
+Default off: without the annotation the five keys below stay unset. With
+`dpdk.ergon.io/<ctr>: "ena-pair"`, the plugin copies the NIC pair a NIC
 device plugin (not shipped here) already injected into this container
 (`RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}`) into:
 
@@ -93,7 +93,7 @@ device plugin (not shipped here) already injected into this container
 | `ERGON_IO_FSTACK` | `fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0` |
 | `ERGON_IO_SMOLTCP` | `port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0` |
 | `ERGON_DPDK_PCI` | `0000:00:06.0` |
-| `ERGON_DPDK_ADDR` | `10.0.1.20` — the address parsed out of the cidr |
+| `ERGON_DPDK_ADDR` | `10.0.1.20`, the address parsed out of the cidr |
 | `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
 
 An app that reads the three variables itself does not need this opt-in.
@@ -111,7 +111,7 @@ value from the node's default route (that is the management NIC), and sets no
 
 ### Item 2: move-then-pin
 
-The child cgroup is a **remote partition**. The kernel needs
+The child cgroup is a remote partition. The kernel needs
 `cpuset.cpus.exclusive` written down the hierarchy (outermost ancestor first)
 before it accepts `cpuset.cpus.partition=isolated`; the plugin then reads the
 file back and requires exactly `isolated`. The parent container cgroup keeps
@@ -149,7 +149,7 @@ containerd 2.x `RuntimeDefault` blocks `io_uring_*` (containerd PR #9320).
 
 ### Item 4: what the policy requires
 
-For pods labelled `ergon.io/latency: "hot"` (a **pod** label, not a namespace
+For pods labelled `ergon.io/latency: "hot"` (a pod label, not a namespace
 label):
 
 - no `livenessProbe`, `readinessProbe` or `startupProbe` of type `exec`/`command`,
@@ -184,7 +184,7 @@ paths stay the container's `/dev/...` names.
 - **PM QoS** (`cpuqos.ergon.io`, x86 only, default-off): writable
   `/dev/cpu_dma_latency`. The app writes the µs value and keeps the fd; the
   kernel aggregates the min of open requests. On arm64 the annotation is
-  ignored. Honest status: a busy-spin loop never idles, so this cannot help
+  ignored. Status: a busy-spin loop never idles, so this cannot help
   the loop; it is plumbing for an interrupt-taking core. Keep it off.
 
 ### Allowed ride-along: plain rlimits
@@ -197,25 +197,14 @@ NRI `AddRlimit` may raise limits for an opted-in container. These are
 | `rlimits.ergon.io/<ctr>` | a subset of `memlock,nofile,rt-prio,nice` | `ERGON_RLIMIT_MEMLOCK`, `ERGON_RLIMIT_NOFILE`, `ERGON_RLIMIT_RTPRIO` |
 
 `memlock` is needed so the app can `mlockall` the hugepages. `rt-prio` raises
-`RLIMIT_RTPRIO` as a **limit value only**. Nothing here takes a real-time
+`RLIMIT_RTPRIO` as a limit value only. Nothing here takes a real-time
 scheduling policy.
-
-## Real-time scheduling: built, default off
-
-`SCHED_FIFO` is not one of the five grants. It lives in
-`k8s/nri-shared-cpus`, off unless a node turns it on:
-
-| path | what it does | default |
-|---|---|---|
-| `ergon-cpus --fifo <prio>` | the exec wrapper takes `SCHED_FIFO` on the thread before exec | off (no flag) |
-| `sched-fifo.ergon.io/<container>: "thread"` | the NRI plugin grants `RLIMIT_RTPRIO` and `ERGON_SCHED_FIFO`; the app or `prelock` takes the policy on the hot thread only | `schedFifo: "off"` — the node refuses the annotation |
-
-Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and under it the loop's `nohz_full` CPU took timer interrupts again ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#sched_fifo)). RT throttling can take the CPU away. This project's latency-pods path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` and `ERGON_SCHED_FIFO` is empty.
 
 ## Deliberately not built
 
 | item | why |
 |---|---|
+| real-time scheduling (`SCHED_FIFO`) | its one committed A/B (run `070339Z`, `rt` arm) is mixed, and under it the loop's `nohz_full` CPU took timer interrupts again ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#sched_fifo)). RT throttling can take the CPU away. This path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` |
 | SR-IOV VF per pod | Nitro guests have one ENA per ENI, no in-guest VFs |
 | a netns-sysctl writer that pretends the knobs are per-netns | `busy_poll`/`busy_read` are global; `gro_flush_timeout` and `napi_defer_hard_irqs` are per-netdev sysfs; `rmem_max` is not writable per-netns. Node config instead (`node-checks.md`) |
 | an IRQ DaemonSet that pins the latency pod's NIC IRQs to the SHARED CPUs | IRQs on a CPU that also runs other work are not measured from committed data; IRQs on a core of their own are ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)). The kept-CPU default stays |
@@ -243,9 +232,9 @@ Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and und
 | `admission/mutating-admission-policy.yaml` | optional MAP JSON-Patch `remove` of `livenessProbe`; off by default |
 | `admission/examples/` | one good pod and the bad pods the policy must refuse |
 | `tools/io_uring_probe.c` | `io_uring_setup(2)`: prints `fd=N` or `<errno name>`. The kind test uses it |
-| `node/netns-sysctls.sh` | **node config helper.** Writes the node's `sysctl.d` and the per-netdev attributes; refuses to pretend a pod can set those knobs |
-| `node/irq-affinity.service` | **node config helper.** Keeps the kept-CPU default for NIC IRQs (never the shared CPUs) |
-| `node-checks.md` | the node checklist (becomes an ergon-tune check later) |
+| `node/netns-sysctls.sh` | Node config helper. Writes the node's `sysctl.d` and the per-netdev attributes; refuses to pretend a pod can set those knobs |
+| `node/irq-affinity.service` | Node config helper. Keeps the kept-CPU default for NIC IRQs (never the shared CPUs) |
+| `node-checks.md` | the node checklist |
 | `test/e2e.sh` | kind e2e, one check per extension, everything torn down in a trap |
 | `test/manifests/` | one manifest per e2e case (`*-yes`, `*-no`, `*-nolimit`, `*-bad`, `seccomp-localhost`) |
 
@@ -317,7 +306,7 @@ test/e2e.sh
 | `RLIMIT_MEMLOCK=inf` | pins node memory; cover it with the pod memory limit |
 | `RLIMIT_RTPRIO` | a limit value only (no policy is taken); keep it paired with exclusive CPUs so a bug cannot starve a shared one |
 | `RuntimeDefault + io_uring` | a larger kernel surface than RuntimeDefault; the small deliberate widening |
-| `Unconfined` seccomp | the whole kernel surface; **refused** |
+| `Unconfined` seccomp | the whole kernel surface; refused |
 | `hostNetwork` (the lab) | the node's network namespace and its IAM role via IMDS |
 | PM QoS fd in a pod | the pod can widen the node's C-state latency while it lives; the request dies with the fd. Keep the value off |
 

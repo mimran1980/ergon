@@ -1,52 +1,51 @@
-# SBE Feature Tour
+# SBE feature tour
 
-Standalone laboratory sample for **ergo-sbe** (`publish = false`). This is the
+Standalone laboratory sample for ergo-sbe (`publish = false`). This is the
 crates.io / docs.rs teaching entry.
 
 ## Conversion: three styles in one crate
 
-`build.rs` uses **different APIs for different selectors**:
+`build.rs` uses different APIs for different selectors:
 
 ```rust,no_run
 {{#include ../../../samples/sbe-feature-tour/build.rs:build_rs_example}}
 ```
-*(The real `build.rs` — this code is compiled and tested in CI.)*
+*(The real `build.rs`; this code is compiled and tested in CI.)*
 
-The generated code is included via `#[path = "generated/feature_tour.rs"]` —
-no `sbe_mod!` needed. See [Build Patterns](./build-patterns.md).
+The generated code is included via `#[path = "generated/feature_tour.rs"]`,
+so no `sbe_mod!` is needed. See [Build patterns](./build-patterns.md).
 
 | Selector | Config | Decode API | Encode API | Who writes the impl? |
 |----------|--------|------------|------------|-----------------------|
 | `BooleanType` | `with_domain_type(.., "bool")` | `dec.available()?` | `enc.available(true)?` | ergo-sbe |
 | `UTCTimestamp` | `with_domain_type(.., chrono)` | `dec.timestamp()?` | `enc.timestamp(t)?` | ergo-sbe |
-| `Decimal` (Quote) | **`with_conversion` only** | `dec.price_as::<T>()?` | `enc.price_from(&t)?` | app (generic, any `T`) |
+| `Decimal` (Quote) | `with_conversion` only | `dec.price_as::<T>()?` | `enc.price_from(&t)?` | app (generic, any `T`) |
 | `ManualDecimal` (Quote) | `with_manual_domain_type(.., rust_decimal)` | `dec.manual_price()?` | `enc.manual_price(v)?` | app (one concrete type) |
 
-Runnable proof for the `Decimal` row: **`demo_conversion_only`** in
+Runnable proof for the `Decimal` row: `demo_conversion_only` in
 `src/lib.rs` (uses both `rust_decimal` and a tiny `FixedPrice`
 adapter on the same buffer). Runnable proof for the `ManualDecimal` row:
-**`demo_domain_type_manual_impl`** — same concrete `manual_price(...)?`
+**`demo_domain_type_manual_impl`** has the same concrete `manual_price(...)?`
 signature `DomainImpl::Generated` would give you, but the `impl
 TryFromSbe<ManualDecimal>` / `TryToSbe<ManualDecimal>` above it are a literal
 copy-paste of the doc comment ergo-sbe put on the generated method (see
-[with_conversion vs with_domain_type](../sbe/configuration/conversion-vs-domain.md#option-b-manual-impl--concrete-signatures-your-own-conversion-logic)).
+[with_conversion vs with_domain_type](../sbe/configuration/conversion-vs-domain.md#option-b-manual-impl-concrete-signatures-your-own-conversion-logic)).
 
 ### Quick rule
 
-- One fixed app type, ergo-sbe writes the impl → `with_domain_type(selector, path)`
-- One fixed app type, **you** write the impl (custom rounding/validation, or
-  overriding the three built-ins) → `with_manual_domain_type(selector, path)`
-- Pluggable / no forced dep → `with_conversion`
-- Never call more than one of these for the **same** selector
+The comparison, including manual impls, is
+[with_conversion vs with_domain_type](../sbe/configuration/conversion-vs-domain.md).
+Call only one of the three for a given selector. The rows above are this
+sample's selectors, not a second copy of that page.
 
 Other samples:
 
 | Sample | Style |
 |--------|--------|
-| [L3 Order Book](l3-book.md) | `with_domain_type` only |
-| [Exchange Example](exchange-example.md) | `with_conversion` only |
+| [L3 order book](l3-book.md) | `with_domain_type` only |
+| [Exchange example](exchange-example.md) | `with_conversion` only |
 
-## Feature map → demo
+## Feature map and demos
 
 | Feature | Demo |
 |---------|------|
@@ -58,8 +57,8 @@ Other samples:
 | `bulk_add` (fixed-stride leaf group) | `demo_bulk_add` |
 | Checked decode / wrap / verify | `demo_try_vs_trusted` |
 | Display / Debug | `demo_display_debug` |
-| **`with_conversion` only** | **`demo_conversion_only`** |
-| **`with_manual_domain_type`** | **`demo_domain_type_manual_impl`** |
+| **`with_conversion` only** | `demo_conversion_only` |
+| **`with_manual_domain_type`** | `demo_domain_type_manual_impl` |
 | All of the above | `run_all` |
 
 ## Run

@@ -115,8 +115,8 @@ fn shared_types_defined_once_imported_by_second_module() -> Result<(), Box<dyn s
         &mods[0].source[..mods[0].source.len().min(400)]
     );
 
-    // Schema B does NOT redefine the Decimal composite (deduped) — it imports it
-    // The shared module only shares types from schema A; schema B's copy is skipped.
+    // Schema B does not redefine the Decimal composite; it imports it. The
+    // shared module only shares types from schema A; schema B's copy is skipped.
     assert!(
         !mods[1].source.contains("pub struct Decimal("),
         "schema B should NOT redefine Decimal struct (shared)"
@@ -144,7 +144,7 @@ fn cross_schema_messages_decode_with_correct_schema_id() -> Result<(), Box<dyn s
     let mods: Vec<_> = modules.modules().collect();
 
     // Both modules compile and their decoders extract the correct schema ID
-    // from their own message headers — proving the header constants are isolated.
+    // from their own message headers, so the header constants are isolated.
     // Uses primitive fields only (composite accessors across modules is a known
     // limitation tracked separately).
     compile_and_run_two_modules(
@@ -162,7 +162,7 @@ fn cross_schema_messages_decode_with_correct_schema_id() -> Result<(), Box<dyn s
             assert_eq!(market_data::QuoteEncoder::SCHEMA_ID, 202);
             assert_eq!(market_data::QuoteEncoder::SCHEMA_VERSION, 0);
 
-            // Encode + decode in schema A — verifies the message round-trips
+            // Encode and decode in schema A: the message round-trips
             // within its own module (shared types work intra-module).
             let mut buf = [0u8; 64];
             let mut enc = common_types::CommonMessageEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
@@ -407,8 +407,8 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
 //
 // Version numbers are per-schema. A shared type with version-gated members
 // (sinceVersion > 0) is ambiguous when imported by a schema at a different
-// version — the importer's acting_version may not match the type's evolution.
-// The generator should warn about this.
+// version: the importer's acting_version may not match the type's evolution,
+// so the generator warns.
 
 #[test]
 fn shared_type_with_version_gated_field_emits_warning() -> Result<(), Box<dyn std::error::Error>> {
@@ -468,7 +468,7 @@ fn shared_type_with_version_gated_field_emits_warning() -> Result<(), Box<dyn st
     let modules = result.expect("generation should succeed with warnings, not error");
     let warnings = modules.warnings();
 
-    // The shared EvolvingDecimal has exponent at sinceVersion=1 — must warn.
+    // The shared EvolvingDecimal has exponent at sinceVersion=1, so it must warn.
     assert!(
         !warnings.is_empty(),
         "expected at least one warning about version-gated shared type, got: {warnings:?}"
@@ -502,7 +502,7 @@ fn without_shared_module_each_schema_is_standalone() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-// ── T-3: validate multi-schema module plan before emission ─────────────
+// ── Validate the multi-schema module plan before emission ─────────────
 
 fn mini_schema(package: &str, id: u16, extra_types: &str) -> Schema {
     let xml = format!(
@@ -583,8 +583,8 @@ fn multi_schema_rejects_keyword_module_name() -> Result<(), Box<dyn std::error::
     let err = g
         .generate_multi(&[(&a, "a"), (&b, "type")])
         .expect_err("keyword module");
-    // Keywords may be rejected as invalid idents or accepted depending on
-    // is_valid_module_ident — either InvalidConfiguration is fine if rejected.
+    // The keyword module name is rejected as InvalidConfiguration or with an
+    // error that names `type`.
     assert!(
         matches!(err, ergo_sbe::GenerateError::InvalidConfiguration { .. })
             || err.to_string().contains("type"),
@@ -593,7 +593,7 @@ fn multi_schema_rejects_keyword_module_name() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-// ── T-12: incompatible shared type fingerprints ────────────────────────
+// ── Incompatible shared type fingerprints ────────────────────────
 
 #[test]
 fn multi_schema_rejects_incompatible_shared_enum() -> Result<(), Box<dyn std::error::Error>> {
@@ -774,7 +774,7 @@ fn file_source_with_shared_seeds_the_registry_from_the_shared_schema()
         "consumer keeps its own schema id, not the shared 0"
     );
 
-    // A missing file is an error, not a panic — the read happens before parse.
+    // A missing file is an error, not a panic: the read happens before parse.
     assert!(
         ergo_sbe::parse(ergo_sbe::SchemaSource::file(dir.join("absent.xml")).with_shared(&shared))
             .is_err()
@@ -787,10 +787,10 @@ fn file_source_with_shared_seeds_the_registry_from_the_shared_schema()
 // ── Shared boolean enum domain type (no conflicting impls) ───────────────
 
 /// A boolean enum shared across two schemas, mapped to `bool` via
-/// `with_domain_type`, must emit its `TryFromSbe`/`TryToSbe` impl exactly once
-/// — in the module that owns `sbe_rt`. Emitting it in the importing module too
-/// produced "conflicting implementations of trait `TryFromSbe<BooleanType>`
-/// for type `bool`" across the two modules.
+/// `with_domain_type`, must emit its `TryFromSbe`/`TryToSbe` impl exactly once,
+/// in the module that owns `sbe_rt`. Emitting it in the importing module too
+/// fails with "conflicting implementations of trait `TryFromSbe<BooleanType>`
+/// for type `bool`".
 #[test]
 fn shared_bool_domain_type_emits_impl_once() -> Result<(), Box<dyn std::error::Error>> {
     fn schema(pkg: &str, id: u16, msg: &str) -> String {

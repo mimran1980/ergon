@@ -1,11 +1,170 @@
 #![allow(missing_docs)]
+//! Authentication: raw connect requests to a node with the default
+//! authenticator, and `AeronCluster` against `TestAuthenticator`, after
+//! Java's `AuthenticationTest`.
+
+#[expect(
+    dead_code,
+    reason = "the auth tests use only the shared driver and echo helpers"
+)]
+mod common;
+
+use std::borrow::Cow;
+use std::error::Error;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
 };
+use ergo_aeron_cluster::{AeronCluster, ClusterError, CredentialsSupplier, SessionBuilder};
+use ergo_aeron_cluster_test_harness::TestCluster;
 use rusteron_client::cformat;
 use serial_test::serial;
-use std::time::Duration;
+
+use common::{Capture, await_echo, launch_own_driver};
+
+/// Sends `credentials` on connect and `answer` to a challenge, recording
+/// each challenge.
+struct Scripted {
+    credentials: &'static [u8],
+    answer: &'static [u8],
+    challenges: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl Scripted {
+    fn new(credentials: &'static [u8], answer: &'static [u8]) -> (Self, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let challenges = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                credentials,
+                answer,
+                challenges: Arc::clone(&challenges),
+            },
+            challenges,
+        )
+    }
+}
+
+impl CredentialsSupplier for Scripted {
+    fn encoded_credentials(&self) -> Option<Cow<'_, [u8]>> {
+        Some(Cow::Borrowed(self.credentials))
+    }
+
+    fn on_challenge(&self, encoded_challenge: &[u8]) -> Option<Cow<'_, [u8]>> {
+        if let Ok(mut challenges) = self.challenges.lock() {
+            challenges.push(encoded_challenge.to_vec());
+        }
+        Some(Cow::Borrowed(self.answer))
+    }
+}
+
+/// A connect's outcome: the client or its error, and the challenges seen.
+/// The client's driver lives as long as this.
+type Attempt = (
+    Result<AeronCluster, ClusterError>,
+    Vec<Vec<u8>>,
+    common::OwnDriver,
+);
+
+/// Connect to `cluster` with `credentials`, answering a challenge with
+/// `answer`.
+fn connect_with(
+    cluster: &TestCluster,
+    credentials: &'static [u8],
+    answer: &'static [u8],
+    tag: &str,
+) -> Result<Attempt, Box<dyn Error>> {
+    let driver = launch_own_driver(tag)?;
+    let (supplier, challenges) = Scripted::new(credentials, answer);
+    let builder = SessionBuilder::default()
+        .ingress_channel(cluster.ingress_channel.clone())?
+        .egress_channel("aeron:udp?endpoint=localhost:0")?
+        .credentials(Arc::new(supplier))
+        .message_timeout(Duration::from_secs(10))?;
+    let client = AeronCluster::connect(&builder, &driver.dir);
+    let seen = challenges
+        .lock()
+        .map_err(|_| "challenge log poisoned")?
+        .clone();
+    Ok((client, seen, driver))
+}
+
+/// The session the authenticator accepted serves a round trip.
+fn assert_serves(client: Result<AeronCluster, ClusterError>) -> Result<(), Box<dyn Error>> {
+    let mut client = client?;
+    assert!(client.cluster_session_id() >= 0);
+    await_echo(
+        &mut client,
+        &mut Capture::new(),
+        b"authenticated",
+        Duration::from_secs(5),
+    )?;
+    client.close()?;
+    Ok(())
+}
+
+/// Java `shouldAuthenticateOnConnectRequestWithEmptyCredentials`.
+#[test]
+#[serial]
+fn empty_credentials_are_accepted_without_a_challenge() -> Result<(), Box<dyn Error>> {
+    let cluster = TestCluster::single_node_auth()?;
+    let (client, challenges, _driver) = connect_with(&cluster, b"", b"", "auth-empty")?;
+    assert_eq!(challenges, Vec::<Vec<u8>>::new());
+    assert_serves(client)
+}
+
+/// Java `shouldAuthenticateOnConnectRequestWithCredentials`.
+#[test]
+#[serial]
+fn credentials_on_the_connect_request_are_accepted() -> Result<(), Box<dyn Error>> {
+    let cluster = TestCluster::single_node_auth()?;
+    let (client, challenges, _driver) = connect_with(&cluster, b"admin:admin", b"", "auth-creds")?;
+    assert_eq!(challenges, Vec::<Vec<u8>>::new());
+    assert_serves(client)
+}
+
+/// Java `shouldAuthenticateOnChallengeResponse`.
+#[test]
+#[serial]
+fn a_challenge_answered_correctly_is_accepted() -> Result<(), Box<dyn Error>> {
+    let cluster = TestCluster::single_node_auth()?;
+    let (client, challenges, _driver) =
+        connect_with(&cluster, b"challenge-me", b"answer", "auth-challenge")?;
+    assert_eq!(challenges, [b"server-challenge".to_vec()]);
+    assert_serves(client)
+}
+
+/// Java `shouldRejectOnConnectRequest`.
+#[test]
+#[serial]
+fn wrong_credentials_are_rejected() -> Result<(), Box<dyn Error>> {
+    let cluster = TestCluster::single_node_auth()?;
+    let (client, challenges, _driver) = connect_with(&cluster, b"admin:wrong", b"", "auth-reject")?;
+    assert_eq!(challenges, Vec::<Vec<u8>>::new());
+    assert!(
+        matches!(client, Err(ClusterError::AuthRejected)),
+        "expected AuthRejected, got {:?}",
+        client.map(|c| c.cluster_session_id())
+    );
+    Ok(())
+}
+
+/// Java `shouldRejectOnChallengeResponse`.
+#[test]
+#[serial]
+fn a_wrong_challenge_answer_is_rejected() -> Result<(), Box<dyn Error>> {
+    let cluster = TestCluster::single_node_auth()?;
+    let (client, challenges, _driver) =
+        connect_with(&cluster, b"challenge-me", b"wrong", "auth-reject-challenge")?;
+    assert_eq!(challenges, [b"server-challenge".to_vec()]);
+    assert!(
+        matches!(client, Err(ClusterError::AuthRejected)),
+        "expected AuthRejected, got {:?}",
+        client.map(|c| c.cluster_session_id())
+    );
+    Ok(())
+}
 
 fn connect_and_send(
     cluster: &ergo_aeron_cluster_test_harness::TestCluster,

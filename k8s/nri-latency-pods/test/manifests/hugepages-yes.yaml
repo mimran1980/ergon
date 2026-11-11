@@ -3,7 +3,7 @@
 # Item 1, granted: the annotation plus a hugepages-2Mi request (requests =
 # limits). The plugin mounts a sized hugetlbfs at /dev/hugepages and exports
 # ERGON_HUGEPAGES_DIR / ERGON_HUGEPAGE_SIZE. The app itself creates
-# $ERGON_HUGEPAGES_DIR/aeron and points AERON_DIR there — the plugin does not
+# $ERGON_HUGEPAGES_DIR/aeron and points AERON_DIR there; the plugin does not
 # set AERON_DIR. No emptyDir hugepage volume: Kubernetes would mount it without
 # a size= option, and Aeron refuses an unsized hugetlbfs.
 apiVersion: v1

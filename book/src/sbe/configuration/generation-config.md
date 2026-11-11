@@ -1,17 +1,17 @@
-# GenerationConfig Options
+# GenerationConfig options
 
 Every option except `new("module_name")` is a chained builder method. Boolean
 flags default to the value shown.
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `new("module")` / `lean("module")` | `Full` / `Lean` | `lean()` is `new().profile(Lean)` — no Display/Debug, meta attrs, or dispatch |
+| `new("module")` / `lean("module")` | `Full` / `Lean` | `lean()` is `new().profile(Lean)`, with no Display/Debug, meta attrs, or dispatch |
 | `with_module_name(name)` | from `new` | Override the output module when cloning a base config |
-| `with_conversion(selector)` | — | Generic `*_as::<T>()` / `*_from(&t)` per selected field |
-| `with_domain_type(selector, path)` | — | One canonical app type per field (implies conversion); Generated impl |
-| `with_manual_domain_type(selector, path)` | — | Same signatures, caller supplies `TryFromSbe`/`TryToSbe` |
-| `with_enum_mapping(EnumMapping)` | — | Generated `TryFromSbe`/`TryToSbe` between an SBE enum and your enum, an exhaustive `match` with renames; `NullVal` (and an unknown value) is an error ([App Types](../recipes/app-types-composites.md)) |
-| `with_composite_mapping(CompositeMapping)` | — | Generated struct-literal mapping between a composite and your struct, member by member with renames; constants skipped, optional members `Option` |
+| `with_conversion(selector)` | none | Generic `*_as::<T>()` / `*_from(&t)` per selected field |
+| `with_domain_type(selector, path)` | none | One canonical app type per field (implies conversion); Generated impl |
+| `with_manual_domain_type(selector, path)` | none | Same signatures, caller supplies `TryFromSbe`/`TryToSbe` |
+| `with_enum_mapping(EnumMapping)` | none | Generated `TryFromSbe`/`TryToSbe` between an SBE enum and your enum, an exhaustive `match` with renames; `NullVal` (and an unknown value) is an error ([App Types](../recipes/app-types-composites.md)) |
+| `with_composite_mapping(CompositeMapping)` | none | Generated struct-literal mapping between a composite and your struct, member by member with renames; constants skipped, optional members `Option` |
 | `with_source_traits(enable: bool)` | `false` | `{Message}Source` trait per message; `encode_from(&src)` encodes your own type, groups and var-data included, without allocating |
 | `with_validate(enable: bool)` | `false` | Opt-in `validate()` on message decoders, group entries and `AnyMessage`: declared value ranges, enum discriminants, set bits (`sbe_rt::ValidateError`; [Trust Boundary](../core-concepts/trust-boundary.md#value-validation-opt-in)) |
 | `with_domain_objects(var_data)` | off | Owned `*Domain` + `encode`; `Strings` → `String` (bad UTF-8 → `InvalidUtf8`), `Bytes` → `Vec<u8>` |
@@ -19,15 +19,15 @@ flags default to the value shown.
 | `with_meta_attributes(enable: bool)` | `true` | Emit `*_ENCODING_OFFSET`, `*_ID`, `*_META_ATTRIBUTE` etc. |
 | `with_dispatch(enable: bool)` | `true` | Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch |
 | `with_bool_domain_type(enable: bool)` | `false` | Auto-register `bool` converters for every boolean enum (name, `semanticType`, or `{0,1}` value pair) |
-| `with_null_as_option(selector)` | — | `NullVal` → `None` for the enum's fields; getter returns `Option<Enum>`. Only `named_type(<enum>)`; any other selector is `InvalidConfiguration` |
+| `with_null_as_option(selector)` | none | `NullVal` → `None` for the enum's fields; getter returns `Option<Enum>`. Only `named_type(<enum>)`; any other selector is `InvalidConfiguration` |
 | `with_all_enums_as_option()` | `false` | All enums → `Option<Enum>`; blanket form of `with_null_as_option` |
 | `profile(GenerationProfile)` | `Full` | Preset: `Full` (default conveniences) or `Lean` (off: Display/Debug, meta attrs, dispatch; domains stay off unless re-enabled). Individual `with_*` overrides still apply after `profile`. |
 | `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated(note = "deprecated since schema version N")]` on decoder getters of `deprecated="N"` fields |
-| `with_shared_module(name)` | — | Multi-schema shared types module |
-| `with_external_sbe_rt(path)` | — | Share one `sbe_rt` runtime module instead of inlining |
+| `with_shared_module(name)` | none | Multi-schema shared types module |
+| `with_external_sbe_rt(path)` | none | Share one `sbe_rt` runtime module instead of inlining |
 | `with_keyword_append_token(token)` | `"_"` | Schema `type` → Rust `type_` |
-| `with_encode_version(version)` | — | Encoder writes `version` and omits members above it; the decoder still reads every version in the schema |
-| `with_hook(fn)` | — | Register a code-generation hook (serde, custom traits, …) |
+| `with_encode_version(version)` | none | Encoder writes `version` and omits members above it; the decoder still reads every version in the schema |
+| `with_hook(fn)` | none | Register a code-generation hook (serde, custom traits, …) |
 
 Turn off `with_display_debug`, `with_meta_attributes`, and `with_dispatch` to
 shrink generated code. Text fields stay bytes unless the schema declares a
@@ -36,17 +36,15 @@ character encoding (then strict UTF-8/ASCII helpers apply).
 ## Decoder lanes (no configuration needed)
 
 Memoization is a runtime lane, not a generation knob.
-`with_memoized_tail_offsets` / `with_compact_tail_offsets` are gone.
 
 ```rust,ignore
 let decoder = CarDecoder::try_from(bytes)?;  // small, Sync, recalculates tails
 let decoder = decoder.memoized();            // lazy cache, no allocation
 ```
 
-Build it **once** and share `&` references. The base decoder is `Sync`; the
-memoized one is `Send` but not `Sync`. Compact `u32` tail-offset storage was
-tried and removed; the deciding measurement was not archived. Lanes:
-[Decoder Lanes](../feature-tour/decode-stages.md).
+Build it once and share `&` references. The base decoder is `Sync`; the
+memoized one is `Send` but not `Sync`. Lanes:
+[Decoder lanes](../feature-tour/decode-stages.md).
 
 ## Typed error conversions
 

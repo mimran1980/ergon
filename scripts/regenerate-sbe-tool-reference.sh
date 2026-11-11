@@ -167,6 +167,8 @@ schemas=(
   "$ROOT/sbe/tests/fixtures/schemas/uint64-vardata-be-schema.xml|uint64_vardata_be"
   "$ROOT/sbe/tests/fixtures/schemas/npe-small-header.xml|small_header"
   "$ROOT/sbe/tests/fixtures/schemas/versioned-l3-v3.xml|versioned_l3"
+  "$ROOT/sbe/tests/fixtures/schemas/group-null-init-le-schema.xml|group_null_init_le"
+  "$ROOT/sbe/tests/fixtures/schemas/group-null-init-be-schema.xml|group_null_init_be"
 )
 
 cd "$SBE_UPSTREAM"

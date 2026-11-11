@@ -9,6 +9,14 @@
 # null or absent, which is what flat sampling writes (every gated group
 # samples flat).
 #
+# The cluster suite takes every invocation in both arm orders, because the arm
+# that runs first in a Criterion group is measured differently from the one
+# after it. `repeats/<k>` holds the arms in registration order and
+# `repeats-reversed/<k>` reversed; each arm's estimate (and interval bound) in
+# invocation k is the geometric mean of its two orders, which makes the pair's
+# ratio the geometric mean of the two ratios, and the A/A controls go through
+# the same reader. With `--run-id` the manifest must say `arm_order: paired`.
+#
 # No tolerance is added to a ceiling (SBE_TOLERANCE=0, CLUSTER_TOLERANCE=0);
 # a caller-supplied tolerance argument is ignored. Verdicts, by the highest
 # ratio across the repeats: at or below the ceiling passes. Above it, a ratio
@@ -142,8 +150,12 @@ def check(stamp, where):
 
 
 checked = 0
-repeats = os.path.join(root, "repeats")
-if os.path.isdir(repeats):
+# The reversed arm order is evidence like the forward one: a stale reversed
+# tree would pull a pair's combined ratio toward a run this one never took.
+for tree, noun in (("repeats", "repetition"), ("repeats-reversed", "reversed repetition")):
+    repeats = os.path.join(root, tree)
+    if not os.path.isdir(repeats):
+        continue
     for name in sorted(
         (n for n in os.listdir(repeats) if os.path.isdir(os.path.join(repeats, n))),
         key=lambda n: (0, int(n)) if n.isdigit() else (1, n),
@@ -151,7 +163,7 @@ if os.path.isdir(repeats):
         arm = os.path.join(repeats, name, key)
         if not os.path.isfile(os.path.join(arm, "estimates.json")):
             continue
-        check(os.path.join(arm, "run-id.txt"), f"repetition {name}")
+        check(os.path.join(arm, "run-id.txt"), f"{noun} {name}")
         checked += 1
 if checked == 0:
     arm = os.path.join(root, key, "new")
@@ -253,6 +265,26 @@ if names:
                 " (every declared invocation of every pair is required)"
             )
         rows.append(load(path, f"repetition {name} of {key}"))
+    # The reversed arm order, when the runner took it. Each arm's estimate in
+    # an invocation is the geometric mean of its two orders, which makes the
+    # pair's ratio the geometric mean of the two orders' ratios: whichever arm
+    # gained from going first loses the same going second. Interval bounds
+    # combine the same way. A reversed tree that does not cover every forward
+    # invocation of this key is incomplete evidence, not a smaller sample.
+    reversed_root = os.path.join(root, "repeats-reversed")
+    if os.path.isdir(reversed_root):
+        for index, name in enumerate(names):
+            path = os.path.join(reversed_root, name, key, "estimates.json")
+            if not os.path.isfile(path):
+                refuse(
+                    f"reversed repetition {name} has no estimate for {key} — incomplete evidence"
+                    " (the reversed arm order must cover every invocation of every pair)"
+                )
+            back = load(path, f"reversed repetition {name} of {key}")
+            fwd = rows[index]
+            lo = None if fwd[1] is None or back[1] is None else math.sqrt(fwd[1] * back[1])
+            hi = None if fwd[2] is None or back[2] is None else math.sqrt(fwd[2] * back[2])
+            rows[index] = (math.sqrt(fwd[0] * back[0]), lo, hi)
 else:
     path = os.path.join(root, key, "new", "estimates.json")
     if os.path.isfile(path):
@@ -283,7 +315,10 @@ check_ratio() {
     # invocation is reported and nothing else is used. Grading the rows it
     # happened to parse would thin the envelope and claim a resolution the run
     # does not have.
-    if printf '%s\n%s\n' "$ergo_rows" "$ref_rows" | grep -q '^@ERROR'; then
+    # A here-string, not `printf | grep -q`: under pipefail grep -q exits at the
+    # first match, printf can then die of SIGPIPE, and the pipeline reports
+    # failure for rows that do carry an @ERROR (seen under load).
+    if grep -q '^@ERROR' <<<"$ergo_rows"$'\n'"$ref_rows"; then
         printf '%s\n%s\n' "$ergo_rows" "$ref_rows" | sed -n 's/^@ERROR /  /p'
         echo "  $label: FAIL — the evidence under this pair is incomplete or malformed. Fail closed."
         return 1
@@ -479,7 +514,7 @@ aa_band() {
     fi
     a_rows=$(repeated_estimates "$group/$arm_a" 2>/dev/null || true)
     b_rows=$(repeated_estimates "$group/$arm_b" 2>/dev/null || true)
-    if printf '%s\n%s\n' "$a_rows" "$b_rows" | grep -q '^@ERROR'; then
+    if grep -q '^@ERROR' <<<"$a_rows"$'\n'"$b_rows"; then
         printf '%s\n%s\n' "$a_rows" "$b_rows" | sed -n 's/^@ERROR /  /p'
         return 1
     fi
@@ -554,6 +589,49 @@ if found != declared:
     )
     raise SystemExit(1)
 print(f"  repeats ok: {found} independent invocations")
+PY
+}
+
+# Cluster only, with --run-id. Whichever arm of a group runs first is measured
+# differently from the one after it, so a cluster run takes every invocation
+# in both arm orders (`repeats/<k>` and `repeats-reversed/<k>`) and the reader
+# combines them. A manifest that does not record the paired order, or a
+# reversed tree that does not match the forward one, is a run that cannot
+# separate the codecs from the order they ran in.
+verify_arm_order() {
+    python3 - "$1" <<'PY'
+import json, os, sys
+
+directory = sys.argv[1]
+manifest_path = os.path.join(directory, "run-manifest.json")
+try:
+    with open(manifest_path, encoding="utf-8") as handle:
+        order = json.load(handle).get("arm_order")
+except (OSError, ValueError):
+    order = None
+if order != "paired":
+    print(
+        f"  FAIL arm order (the manifest records {order!r}, not 'paired' — a run in one"
+        " arm order cannot separate the codecs from the order they ran in)"
+    )
+    raise SystemExit(1)
+
+
+def invocations(tree):
+    path = os.path.join(directory, tree)
+    if not os.path.isdir(path):
+        return 0
+    return len([n for n in os.listdir(path) if os.path.isdir(os.path.join(path, n))])
+
+
+forward, reverse = invocations("repeats"), invocations("repeats-reversed")
+if forward == 0 or forward != reverse:
+    print(
+        f"  FAIL arm order (the forward order has {forward} invocations and the reversed"
+        f" order {reverse} — incomplete evidence)"
+    )
+    raise SystemExit(1)
+print(f"  arm order ok: {forward} invocations in each of the two orders")
 PY
 }
 
@@ -663,6 +741,7 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
 
     if [ -n "$EXPECTED_RUN_ID" ]; then
         verify_manifest "$CRITERION_DIR" "$EXPECTED_RUN_ID" || failures=$((failures + 1))
+        verify_arm_order "$CRITERION_DIR" || failures=$((failures + 1))
     fi
     verify_repeats "$CRITERION_DIR" || failures=$((failures + 1))
 
@@ -743,8 +822,9 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
     # raise a ceiling: it stays at 1.00, and a ratio above it fails unless its
     # envelope overlaps the measured A/A band (inconclusive, reported).
     # Making the measurement able to separate two identical loops needs a
-    # harness change (interleaved arm order, or per-arm processes), not a
-    # ceiling. If a future run moves one of these pairs well outside the
+    # harness change, not a ceiling. Arm order is now one: every invocation is
+    # taken in both orders and combined (see `repeated_estimates`). Per-arm
+    # processes are not. If a future run moves one of these pairs well outside the
     # documented walk, re-disassemble before assuming it is more of the same.
     cluster_pairs=(
         "cluster_encode_session_message_header|ergo-sbe|sbe-tool|1.00"

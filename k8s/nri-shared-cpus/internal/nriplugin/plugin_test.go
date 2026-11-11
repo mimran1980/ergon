@@ -118,7 +118,7 @@ func ctr(id string, cpus string, env map[string]string, ann map[string]string) *
 // runtime does: the env it added and the cpuset it set are the live state a
 // later UpdateContainer or Synchronize reads. A test that creates a container
 // and then updates it needs this, or the update sees the create request rather
-// than what the container became — a cpuset that was never widened and an env
+// than what the container became: a cpuset that was never widened and an env
 // that never gained ERGON_ISOLATED_CGROUP.
 func applyAdjustment(t *testing.T, c *api.Container, adj *api.ContainerAdjustment) {
 	t.Helper()
@@ -582,6 +582,10 @@ func TestSynchronizeKeepsOwnShared(t *testing.T) {
 	}
 	if len(updates) != 0 {
 		t.Fatalf("got %d updates for a container that already has its shared CPU, want 0", len(updates))
+	}
+	// A routine reconnect must not count: the node alert fires on any non-zero value.
+	if got := p.m.Counter("rewidened/sync"); got != 0 {
+		t.Errorf("rewidened/sync = %d, want 0", got)
 	}
 	load, _ := p.Table()
 	if load[4] != 250 {
@@ -1320,7 +1324,7 @@ func TestUpdateResizeReportsStalePartition(t *testing.T) {
 
 // Synchronize sends its re-widen updates again after ResendDelay because
 // containerd only logs a failed one. The copy is taken when Synchronize runs.
-// If the container moves on before the resend fires — a resize, a stop — the
+// If the container moves on before the resend fires (a resize, a stop), the
 // copy is stale and must not be replayed: replaying it would put the container
 // on CPUs it no longer owns.
 func TestSynchronizeResendIsNotReplayedAfterUpdate(t *testing.T) {

@@ -1098,6 +1098,21 @@ fn version_present_groups_visit_entries() -> Result<(), Box<dyn std::error::Erro
         let (extra, done) = after.into_extra_note()?;
         assert_eq!(extra, b"more");
         assert_eq!(done.encoded_length_with_header(), len);
+
+        // Cut the frame just before `note`'s one-byte length prefix: both
+        // staged accessors must report the missing prefix, not read past it.
+        let cut = &encoded[..len - (1 + 2) - (1 + 4)];
+        let at_note = VersionedTailsDecoder::try_decode(cut, 0)?
+            .skip_figures()?
+            .skip_extra_figures()?;
+        for result in [at_note.note_slice(), at_note.into_note().map(|(note, _)| note)] {
+            match result {
+                Err(sbe_rt::DecodeError::BufferTooShort { field, needed, available }) => {
+                    assert_eq!((field, needed, available), ("note", 1, 0));
+                }
+                other => panic!("expected the missing one-byte prefix, got {other:?}"),
+            }
+        }
     "#,
     );
     Ok(())

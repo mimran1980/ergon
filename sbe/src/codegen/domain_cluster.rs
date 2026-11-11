@@ -50,8 +50,8 @@ pub(crate) fn generate_domain_objects(
         conversions,
         domain_types,
         domain_var_data,
-        false, // is_entry — this is a message, not a group entry
-        "",    // path_prefix — message fields' paths are their names
+        false, // is_entry: this is a message, not a group entry
+        "",    // path_prefix: message fields' paths are their names
         hooks,
         schema,
         null_as_option,
@@ -238,10 +238,10 @@ fn some_null_refusal(
 /// field whose wire type is a generated named type (non-boolean enum, set).
 ///
 /// With a domain type configured these go through the fallible domain
-/// accessors, exactly as composites do; without one they use the generated type
+/// accessors, as composites do; without one they use the generated type
 /// directly. The domain getter on a `sinceVersion > 0` field already returns
 /// `Result<Option<T>, E>`, so the versioned domain arm must not re-wrap in
-/// `Some(..)` — that is the `Option<Option<T>>` defect this file shipped twice.
+/// `Some(..)`, which would build `Option<Option<T>>`.
 #[allow(clippy::too_many_arguments)]
 fn push_named_type_cell(
     f: &MessageField,
@@ -424,7 +424,7 @@ pub(crate) fn generate_domain_recursive(
                 // (e.g. u64 UTCTimestamp → chrono::DateTime<Utc>). Only the
                 // scalar required case is converted; arrays/optional keep the
                 // wire type. `dto_domain_type` is the shared predicate the
-                // encode setter uses too — they must never disagree.
+                // encode setter uses too, so they cannot disagree.
                 let scalar_domain = dto_domain_type(f, domain_types, elements);
                 let scalar_ty: syn::Type = match scalar_domain {
                     Some(dt) => syn::parse_str(dt).unwrap(),
@@ -443,8 +443,8 @@ pub(crate) fn generate_domain_recursive(
                 );
                 // Arrays and optional scalars keep the wire type, but a
                 // configured conversion/domain type renames the raw flyweight
-                // getter to `*_wire` — every raw read must use the same name
-                // the decoder actually emits.
+                // getter to `*_wire`, and every raw read must use the name
+                // the decoder emits.
                 let raw_getter = if field_has_conversion_free(f, conversions) {
                     syn::Ident::new(&format!("{f_snake}_wire"), span)
                 } else {
@@ -484,7 +484,7 @@ pub(crate) fn generate_domain_recursive(
                             let field_lit = syn::LitStr::new(&f_snake, span);
                             // The domain getter on a versioned field already yields
                             // `Option<T>` (see `is_optional_domain_field`), so
-                            // do not wrap it in `Some(..)` — that would build
+                            // do not wrap it in `Some(..)`: that would build
                             // `Option<Option<T>>` for an `Option<T>` field.
                             from_exprs.push(quote::quote! {
                                 #f_ident: dec.#dom_get().map_err(|_| {
@@ -589,7 +589,7 @@ pub(crate) fn generate_domain_recursive(
                         let field_lit = syn::LitStr::new(&f_snake, span);
                         // The domain getter on a versioned field already yields
                         // `Option<T>` (see `is_optional_domain_field`), so do
-                        // not wrap it in `Some(..)` — that would build
+                        // not wrap it in `Some(..)`: that would build
                         // `Option<Option<T>>` for an `Option<T>` field.
                         from_exprs.push(quote::quote! {
                             #f_ident: dec.#dom_get().map_err(|_| {
@@ -643,8 +643,8 @@ pub(crate) fn generate_domain_recursive(
                     let set_bool = syn::Ident::new(&format!("{f_snake}_bool"), span);
                     // Only version-gating makes the getter `Option`-returning.
                     // `presence="optional"` does not (an optional enum carries
-                    // `NullVal` as a variant) and neither does `null_as_option`
-                    // — the boolean getter rejects `NullVal` either way.
+                    // `NullVal` as a variant) and neither does `null_as_option`:
+                    // the boolean getter rejects `NullVal` either way.
                     if f.since_version > 0 {
                         struct_fields.push(quote::quote! { pub #f_ident: Option<bool> });
                         from_exprs.push(quote::quote! { #f_ident: dec.#get_bool()? });
@@ -660,7 +660,7 @@ pub(crate) fn generate_domain_recursive(
                     let type_ident = syn::Ident::new(&to_pascal_case(enum_name), span);
                     // `null_as_option` makes the raw enum accessor return
                     // `Option<T>` regardless of version, so the DTO field must
-                    // be optional too — otherwise `from_decoder` assigns
+                    // be optional too, or `from_decoder` would assign
                     // `Option<Model>` to a `Model` field.
                     let accessor_optional =
                         crate::codegen::conversion_helpers::enum_uses_null_as_option(
@@ -737,7 +737,6 @@ pub(crate) fn generate_domain_recursive(
         } else {
             g_pascal.clone()
         };
-        let g_entry_dec_ident = syn::Ident::new(&format!("{g_scoped}EntryDecoder"), span);
 
         struct_fields.push(quote::quote! { pub #g_field_ident: Vec<#entry_domain_ident> });
         // Fixed-entry groups (no tail) yield entries directly;
@@ -989,7 +988,7 @@ pub(crate) fn generate_domain_recursive(
     // entry decoders use wrap() and don't get try_from_slice_with_header.
     //
     // Naming: inherent `try_from_decoder` / `try_from_slice_with_header` instead of
-    // `TryFrom`/`From` — two distinct fallible sources (flyweight decoder vs
+    // `TryFrom`/`From`: two distinct fallible sources (flyweight decoder vs
     // framed byte slice + offset). Std `TryFrom` would collapse both into
     // `try_from` and hide which path validates the message header. No infallible
     // `From`/`from`: materialisation can fail on groups, var-data, and converters.
@@ -1081,7 +1080,7 @@ pub(crate) fn generate_domain_recursive(
         // Append synthetic field entries for groups (Vec<EntryDomain>).
         // The generated entry-DTO struct is `{struct_prefix}{Group}EntryDomain`
         // (see the recursion below), so the reported type must carry the same
-        // prefix — a bare `Vec<{Group}EntryDomain>` names a type that does not
+        // prefix; a bare `Vec<{Group}EntryDomain>` names a type that does not
         // exist.
         for g in groups {
             ctx_fields.push(crate::FieldInfo {
@@ -1302,7 +1301,7 @@ pub(crate) fn generate_domain_recursive(
             quote::quote! {}
         };
         // Use the schema-declared padded block length, not the last field's
-        // extent — the schema may include trailing padding or future-version
+        // extent: the schema may include trailing padding or future-version
         // reservation beyond the last field's offset + size.
         let block_len = message_block_length;
         let bl_lit = syn::LitInt::new(&block_len.to_string(), span);
@@ -1366,7 +1365,7 @@ pub(crate) fn generate_domain_recursive(
             }
         } else {
             // Fixed-only: setters stay on FieldsUnfixed. Length is the const
-            // frame size — `encoded_length*` is only on FieldsFixed.
+            // frame size, because `encoded_length*` is only on FieldsFixed.
             quote::quote! {
                 let mut enc = #encoder_ident::try_wrap_and_apply_header(buf, 0)?;
                 #nullify
@@ -1438,9 +1437,9 @@ pub(crate) fn source_trait_names(msg: &MessageStructure, multi_message: bool) ->
 /// (`Option` when `presence="optional"`), or its domain type.
 ///
 /// The domain decision is [`dto_domain_type`], the same predicate the DTO
-/// field type and the encode setter use. Asking `find_domain_type` here typed
-/// an optional scalar's getter with the domain type while `source_fixed_writes`
-/// wrote it through the raw setter — a Source impl could not compile.
+/// field type and the encode setter use. `find_domain_type` would type an
+/// optional scalar's getter with the domain type while `source_fixed_writes`
+/// writes it through the raw setter, and the Source impl would not compile.
 fn source_getter_type(
     f: &MessageField,
     domain_types: &[(crate::ConversionSelector, String)],

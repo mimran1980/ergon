@@ -36,8 +36,8 @@ pub enum Status {
     /// says which).
     Ok,
     /// The data could not be read (the reason): never a warning. It stops a
-    /// `require` start only where the check must prove something —
-    /// [`unknown_stops_require`](crate::unknown_stops_require).
+    /// `require` start only where the check must prove something, as
+    /// [`unknown_stops_require`](crate::unknown_stops_require) decides.
     Unknown(String),
 }
 

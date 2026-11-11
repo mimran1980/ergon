@@ -29,7 +29,7 @@
 //! | `cannot run`, or `is Java 11; ... need Java 17 or newer` | No JDK, or one older than 17: set `JAVA_HOME` to a JDK 25 |
 //! | `failed to spawn ClusterLauncher` | `java` vanished between the version check and the launch |
 //! | `ClusterLauncher did not emit CLUSTER_READY` | Port bind clash, missing jars, classpath incomplete |
-//! | Jar not found | Aeron submodule not built — run `just build-aeron-jars` |
+//! | Jar not found | Aeron submodule not built; run `just build-aeron-jars` |
 //! | Tests hang / flaky | Previous node left ports busy; kill stale Java cluster processes |
 //!
 //! Do **not** commit `aeron-cluster-[0-9]/` runtime directories created by launches.

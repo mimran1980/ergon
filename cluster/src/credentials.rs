@@ -4,19 +4,18 @@ use std::borrow::Cow;
 
 /// Supplies credentials for cluster authentication.
 ///
-/// Methods return `Option<Cow<'_, [u8]>>` so that [`StaticCredentials`] (which
-/// owns its bytes) can lend them by reference with no clone, while bespoke
-/// suppliers that derive credentials on the fly can return `Cow::Owned`.
-/// Returning `None` from [`Self::encoded_credentials`] means no authentication
-/// is attempted; returning `None` from [`Self::on_challenge`] means the
-/// challenge cannot be answered and the session will be rejected.
+/// Methods return `Option<Cow<'_, [u8]>>` so [`StaticCredentials`] can lend its
+/// bytes without a clone, while a supplier that derives credentials on the fly
+/// returns `Cow::Owned`. `None` from [`Self::encoded_credentials`] means no
+/// authentication is attempted. `None` from [`Self::on_challenge`] means the
+/// challenge cannot be answered and the cluster rejects the session.
 pub trait CredentialsSupplier: Send + Sync {
-    /// Credentials to include in the `SessionConnectRequest`.
-    /// `None` = no auth (`NullCredentialsSupplier` behaviour).
+    /// The credentials for the `SessionConnectRequest`, or `None` for none
+    /// (as [`NullCredentialsSupplier`] does).
     fn encoded_credentials(&self) -> Option<Cow<'_, [u8]>>;
 
-    /// Credentials to send in response to an auth challenge.
-    /// `None` = cannot answer; session will be rejected.
+    /// The credentials answering an authentication challenge, or `None` if
+    /// this supplier cannot answer it, which gets the session rejected.
     fn on_challenge(&self, encoded_challenge: &[u8]) -> Option<Cow<'_, [u8]>> {
         let _ = encoded_challenge;
         None
@@ -35,11 +34,9 @@ impl CredentialsSupplier for NullCredentialsSupplier {
 
 /// Fixed credentials returned for both the connect request and any challenge.
 ///
-/// Mirrors Java `StaticCredentialsSupplier`: the same bytes are supplied on
-/// connect and in response to a challenge, so challenge-response auth is
-/// answerable without a custom supplier. Prefer a bespoke
-/// [`CredentialsSupplier`] implementation when the challenge must be derived
-/// from the encoded challenge bytes.
+/// Mirrors Java `StaticCredentialsSupplier`: the same bytes answer the connect
+/// request and any challenge. Implement [`CredentialsSupplier`] yourself when
+/// the response must be derived from the challenge bytes.
 #[derive(Clone)]
 pub struct StaticCredentials {
     credentials: Vec<u8>,
@@ -57,16 +54,15 @@ impl core::fmt::Debug for StaticCredentials {
 }
 
 impl StaticCredentials {
-    /// Build from opaque wire bytes.
+    /// Builds from opaque wire bytes.
     ///
-    /// Accepts any `Into<Vec<u8>>` so a moved `Vec<u8>` is kept without a copy,
-    /// while slices and arrays allocate once. The same bytes answer both the
-    /// connect request and any challenge.
+    /// Takes any `Into<Vec<u8>>`: a `Vec<u8>` is moved without a copy, and a
+    /// slice or array allocates once.
     ///
     /// ```
     /// use ergo_aeron_cluster::StaticCredentials;
     ///
-    /// // Non-UTF-8 and embedded NUL are valid credential octets.
+    /// // Non-UTF-8 bytes and NULs are valid credential bytes.
     /// let raw = [0x00, 0xff, 0x00, b'x'];
     /// let from_vec = StaticCredentials::new(raw.to_vec());
     /// let from_slice = StaticCredentials::new(&raw[..]);
@@ -81,9 +77,9 @@ impl StaticCredentials {
         }
     }
 
-    /// Build from a UTF-8 string (encoded as its bytes).
+    /// Builds from a string, using its UTF-8 bytes.
     ///
-    /// Prefer [`Self::new`] when the secret is already opaque octets.
+    /// Use [`Self::new`] when the secret is already raw bytes.
     #[must_use = "the credentials supplier is unused; ignoring it skips authentication"]
     pub fn from_utf8(text: &str) -> Self {
         Self {

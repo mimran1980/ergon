@@ -1,9 +1,9 @@
-# Timestamp Conversions
+# Timestamp conversions
 
 SBE timestamps are typically `uint64` fields with a `semanticType`
 (`UTCTimestamp` = nanos, `UTCTimestampMicros` = micros,
 `UTCTimestampMillis` = millis). The `chrono` feature maps them to
-`DateTime<Utc>` / `NaiveDateTime`. Enable it on **both** Cargo entries:
+`DateTime<Utc>` / `NaiveDateTime`. Enable it on both Cargo entries:
 
 ```toml
 [build-dependencies]
@@ -37,7 +37,7 @@ Schema:
 <field name="updated_at"  id="2" type="uint64" semanticType="UTCTimestampMicros"/>
 ```
 
-Generated API — `created_at()` returns `DateTime<Utc>`, `updated_at()`
+In the generated API, `created_at()` returns `DateTime<Utc>` and `updated_at()`
 returns `NaiveDateTime`:
 
 ```rust,ignore
@@ -66,16 +66,16 @@ accessors read and write the field in its own unit, so one
 <field name="sentAt" id="1" type="uint64" semanticType="UTCTimestamp" timeUnit="millisecond"/>
 ```
 
-Writing a `DateTime` more precise than the field — sub-millisecond digits into
-a millisecond field — is an error rather than a truncation; truncate it first
+Writing a `DateTime` more precise than the field (sub-millisecond digits into
+a millisecond field) is an error rather than a truncation; truncate it first
 (`chrono::DurationRound::duration_trunc`) when that is what you mean. Under
 `DomainImpl::Manual` your impl receives the field's own unit.
 
 ## One selector, many fields
 
-`ConversionSelector::semantic_type(..)` matches **every** field in the
-schema carrying that `semanticType` — not just one. You register the
-conversion **once**, not once per field. A schema with three separate
+`ConversionSelector::semantic_type(..)` matches every field in the
+schema carrying that `semanticType`, not just one. You register the
+conversion once, not once per field. A schema with three separate
 `UTCTimestamp` timestamps needs no more config than one with a single field:
 
 ```xml
@@ -85,7 +85,7 @@ conversion **once**, not once per field. A schema with three separate
 ```
 
 ```rust,ignore
-// Same one-time call as the two-field example above — no per-field repeats.
+// Same one-time call as the two-field example above, no per-field repeats.
 let config = GenerationConfig::new("msgs")
     .with_domain_type(
         ConversionSelector::semantic_type("UTCTimestamp"),
@@ -105,14 +105,14 @@ let updated: chrono::DateTime<chrono::Utc> = dec.updated_at()?;
 let expires: chrono::DateTime<chrono::Utc> = dec.expires_at()?;
 ```
 
-This is why `UTCTimestamp` and `UTCTimestampMicros` need **separate**
-`with_domain_type` calls in the two-field example above — they're different
-`semanticType` strings, so they're different selectors — but adding a fourth
+This is why `UTCTimestamp` and `UTCTimestampMicros` need separate
+`with_domain_type` calls in the two-field example above (they are different
+`semanticType` strings, so they are different selectors), but adding a fourth
 `UTCTimestamp` field to the *same* schema needs no config change at all.
 [`ConversionSelector::field_path`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.ConversionSelector.html)
 is the escape hatch when one specific field needs to differ from its
-semantic-type siblings. It works because selectors resolve by **precedence,
-not registration order**: an exact `FieldPath` beats a `SemanticType`, which
+semantic-type siblings. It works because selectors resolve by precedence,
+not registration order: an exact `FieldPath` beats a `SemanticType`, which
 beats a `NamedType`. So a blanket `semantic_type("UTCTimestamp")` mapping plus
 one `field_path("Order.settledAt")` override does what it reads like,
 regardless of which you register first.
@@ -121,25 +121,25 @@ Paths are `"Message.field"`, extended with the group names for fields inside a
 group: `"Order.legs.settledAt"`.
 
 A schema that names its timestamps with an alias instead of a
-`semanticType` — `<type name="Timestamp" primitiveType="uint64"/>` — is
+`semanticType` (`<type name="Timestamp" primitiveType="uint64"/>`) is
 selected the same way through `ConversionSelector::named_type("Timestamp")`:
 every field declared `type="Timestamp"` gets the domain accessors, and the raw
 `*_wire` accessor stays.
 
-## Mixed precisions, one app type — `DomainImpl::Manual`
+## Mixed precisions, one app type: `DomainImpl::Manual`
 
-The built-in converters give nanos → `DateTime<Utc>` and micros →
-`NaiveDateTime` — two different **app types**, because that's what the
+The built-in converters map nanos to `DateTime<Utc>` and micros to
+`NaiveDateTime`, two different app types, because that is what the
 built-in impls happen to produce. Real schemas often need the opposite: three
-fields at three different wire precisions, all normalized to the **same**
+fields at three different wire precisions, all normalised to the same
 `DateTime<Utc>` so downstream app code never branches on precision. None of
 the three is the bare `uint64` + `semanticType="UTCTimestamp"` shape the
-built-in converter matches, so none gets an auto-generated impl — that's
-exactly the case [`DomainImpl::Manual`](../configuration/conversion-vs-domain.md#option-b-manual-impl--concrete-signatures-your-own-conversion-logic)
+built-in converter matches, so none gets an auto-generated impl. That is
+exactly the case [`DomainImpl::Manual`](../configuration/conversion-vs-domain.md#option-b-manual-impl-concrete-signatures-your-own-conversion-logic)
 is for: concrete domain accessor signatures from ergo-sbe, conversion body from you.
 
 Distinguish the three precisions with single-element composites (a distinct
-Rust type per precision — `TimestampMillis(u64)` is not `TimestampNanos(u64)`
+Rust type per precision: `TimestampMillis(u64)` is not `TimestampNanos(u64)`
 even though the wire shape is identical):
 
 ```xml
@@ -152,8 +152,8 @@ even though the wire shape is identical):
 <field name="deletedAt" id="3" type="TimestampMillis"/>
 ```
 
-One `with_manual_domain_type(selector, path)` call per composite — same
-target type, `rust_decimal`-style — in `build.rs`:
+One `with_manual_domain_type(selector, path)` call per composite, all with the
+same target type, goes in `build.rs`:
 
 ```rust,ignore
 use ergo_sbe::{ConversionSelector, GenerationConfig};
@@ -174,7 +174,7 @@ let config = GenerationConfig::new("msgs")
 ```
 
 Each composite is a genuinely new named type, so there is no built-in
-template to offer — write the three impls yourself, one per precision
+template to offer, so write the three impls yourself, one per precision
 (the traits live in the generated module as `sbe_rt::TryFromSbe` /
 `sbe_rt::TryToSbe`; import from there, not from `ergo_sbe::codegen`, which
 is crate-private):
@@ -238,7 +238,7 @@ impl TryToSbe<TimestampMillis> for chrono::DateTime<chrono::Utc> {
 ```
 
 All three fields now return the exact same app type despite three different
-wire precisions — the caller never has to know or care which precision a
+wire precisions, so the caller never needs to know which precision a
 given field was wire-encoded at:
 
 ```rust,ignore
@@ -251,6 +251,6 @@ enc.updated_at(chrono::Utc::now())?;
 enc.deleted_at(chrono::Utc::now())?;
 ```
 
-If you forget one of the three impls, the compile error names it directly —
-`` `chrono::DateTime<Utc>` has no `TryFromSbe<TimestampMillis>` impl `` —
+If you forget one of the three impls, the compile error names it directly
+(`` `chrono::DateTime<Utc>` has no `TryFromSbe<TimestampMillis>` impl ``)
 instead of the default trait-bound message.

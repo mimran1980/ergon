@@ -906,16 +906,46 @@ pub mod sbe_rt {
             }
         }
     }
-    /// Convert a wire var-data length without truncation and validate
-    /// the complete region with overflow-safe offset arithmetic.
+    /// Reject a wire var-data length above the schema maximum `MAX`.
+    /// The only place that test is made: [`checked_var_data_bounds`]
+    /// calls it, and getters call it directly on a length an
+    /// iterator's bounds-only extent already proved in the buffer.
     #[inline]
-    pub(crate) fn checked_var_data_bounds(
+    pub(crate) fn check_var_data_max<const MAX: u64>(
+        field: &'static str,
+        wire_length: u64,
+    ) -> Result<(), DecodeError> {
+        if wire_length > MAX {
+            cold();
+            return Err(DecodeError::InvalidVarDataLength {
+                field,
+                length: wire_length,
+                max_length: MAX,
+            });
+        }
+        Ok(())
+    }
+    /// Convert a wire var-data length without truncation and validate
+    /// the complete region with overflow-safe offset arithmetic. With
+    /// `CHECK_MAX`, first reject a length above the schema maximum
+    /// `MAX`, so a huge length in a short buffer reports the schema
+    /// bound. Every read of the field it returns, `verify`,
+    /// `encoded_length`, staged reads and skips pass `true`; a
+    /// random-access walk that only passes over the field to reach a
+    /// later one, and group iteration, pass `false`. `field` is the
+    /// schema name on walks and staged reads, the `snake_case` name
+    /// on getters and message-level `verify`.
+    #[inline]
+    pub(crate) fn checked_var_data_bounds<const CHECK_MAX: bool, const MAX: u64>(
         field: &'static str,
         offset: usize,
         prefix_size: usize,
         wire_length: u64,
         buffer_length: usize,
     ) -> Result<(usize, usize), DecodeError> {
+        if CHECK_MAX {
+            check_var_data_max::<MAX>(field, wire_length)?;
+        }
         let length = usize::try_from(wire_length)
             .map_err(|_| {
                 DecodeError::InvalidVarDataLength {
@@ -1000,13 +1030,15 @@ pub mod sbe_rt {
     ) -> Result<(usize, usize), DecodeError> {
         let count = checked_group_count("numInGroup", wire_count)?;
         let block_length = checked_header_usize("blockLength", wire_block_length)?;
-        if count > 0 && block_length < min_fixed {
+        if block_length < min_fixed {
             cold();
-            return Err(DecodeError::BufferTooShort {
-                field,
-                needed: min_fixed,
-                available: block_length,
-            });
+            if count > 0 {
+                return Err(DecodeError::BufferTooShort {
+                    field,
+                    needed: min_fixed,
+                    available: block_length,
+                });
+            }
         }
         Ok((count, block_length))
     }
@@ -2414,8 +2446,10 @@ impl CarSchema {
     pub const HEADER_LENGTH: usize = 8;
     /// Full structural verification of a buffer: validates header,
     /// block-length extent, group dimension headers, entry strides,
-    /// and var-data bounds. Use **before** construction when the
-    /// entire frame must be proven valid without building a decoder.
+    /// var-data bounds, and var-data lengths against the schema
+    /// `maxValue` (`VerifyError::DecodeError(InvalidVarDataLength)`).
+    /// Use **before** construction when the entire frame must be
+    /// proven valid without building a decoder.
     #[inline]
     pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
         CarDecoder::verify(buf)
@@ -3197,7 +3231,10 @@ impl<'a> CarDecoder<'a> {
         Ok(self.byte_offset() + self.acting_block_length)
     }
     #[inline]
-    fn walk_tail_0(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_0<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if start + 4 > self.buf.len() {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3217,18 +3254,18 @@ impl<'a> CarDecoder<'a> {
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
-            offset = FuelFiguresEntryDecoder::skip(
-                self.buf,
-                offset,
-                block_len,
-                self.acting_version,
-            )?;
+            offset = FuelFiguresEntryDecoder::skip_with::<
+                CHECK_MAX,
+            >(self.buf, offset, block_len, self.acting_version)?;
             idx += 1;
         }
         Ok(offset)
     }
     #[inline]
-    fn walk_tail_1(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_1<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if start + 4 > self.buf.len() {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3248,18 +3285,18 @@ impl<'a> CarDecoder<'a> {
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
-            offset = PerformanceFiguresEntryDecoder::skip(
-                self.buf,
-                offset,
-                block_len,
-                self.acting_version,
-            )?;
+            offset = PerformanceFiguresEntryDecoder::skip_with::<
+                CHECK_MAX,
+            >(self.buf, offset, block_len, self.acting_version)?;
             idx += 1;
         }
         Ok(offset)
     }
     #[inline]
-    fn walk_tail_2(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_2<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3271,17 +3308,17 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
-        let (_, data_end) = sbe_rt::checked_var_data_bounds(
-            "manufacturer",
-            start,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (_, data_end) = sbe_rt::checked_var_data_bounds::<
+            CHECK_MAX,
+            1073741824,
+        >("manufacturer", start, 4, wire_length, self.buf.len())?;
         Ok(data_end)
     }
     #[inline]
-    fn walk_tail_3(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_3<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3293,17 +3330,17 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
-        let (_, data_end) = sbe_rt::checked_var_data_bounds(
-            "model",
-            start,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (_, data_end) = sbe_rt::checked_var_data_bounds::<
+            CHECK_MAX,
+            1073741824,
+        >("model", start, 4, wire_length, self.buf.len())?;
         Ok(data_end)
     }
     #[inline]
-    fn walk_tail_4(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_4<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3315,13 +3352,10 @@ impl<'a> CarDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
-        let (_, data_end) = sbe_rt::checked_var_data_bounds(
-            "activationCode",
-            start,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (_, data_end) = sbe_rt::checked_var_data_bounds::<
+            CHECK_MAX,
+            1073741824,
+        >("activationCode", start, 4, wire_length, self.buf.len())?;
         Ok(data_end)
     }
     #[inline]
@@ -3331,38 +3365,48 @@ impl<'a> CarDecoder<'a> {
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
         match k {
-            0 => self.walk_tail_0(start),
-            1 => self.walk_tail_1(start),
-            2 => self.walk_tail_2(start),
-            3 => self.walk_tail_3(start),
-            4 => self.walk_tail_4(start),
+            0 => self.walk_tail_0::<true>(start),
+            1 => self.walk_tail_1::<true>(start),
+            2 => self.walk_tail_2::<true>(start),
+            3 => self.walk_tail_3::<true>(start),
+            4 => self.walk_tail_4::<true>(start),
             _ => Ok(start),
         }
     }
     #[inline]
-    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+    fn tail_offset_1<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         let start = self.tail_offset_0()?;
-        self.walk_tail_0(start)
+        self.walk_tail_0::<CHECK_MAX>(start)
     }
     #[inline]
-    fn tail_offset_2(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_1()?;
-        self.walk_tail_1(start)
+    fn tail_offset_2<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_1::<CHECK_MAX>()?;
+        self.walk_tail_1::<CHECK_MAX>(start)
     }
     #[inline]
-    fn tail_offset_3(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_2()?;
-        self.walk_tail_2(start)
+    fn tail_offset_3<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_2::<CHECK_MAX>()?;
+        self.walk_tail_2::<CHECK_MAX>(start)
     }
     #[inline]
-    fn tail_offset_4(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_3()?;
-        self.walk_tail_3(start)
+    fn tail_offset_4<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_3::<CHECK_MAX>()?;
+        self.walk_tail_3::<CHECK_MAX>(start)
     }
     #[inline]
-    fn tail_offset_5(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let start = self.tail_offset_4()?;
-        self.walk_tail_4(start)
+    fn tail_offset_5<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        let start = self.tail_offset_4::<CHECK_MAX>()?;
+        self.walk_tail_4::<CHECK_MAX>(start)
     }
     /// Wire-declared entry count without advancing this decoder.
     #[inline]
@@ -3387,7 +3431,7 @@ impl<'a> CarDecoder<'a> {
     pub fn performance_figures(
         &self,
     ) -> Result<PerformanceFiguresDecoder<'a>, sbe_rt::DecodeError> {
-        let offset = self.tail_offset_1()?;
+        let offset = self.tail_offset_1::<false>()?;
         PerformanceFiguresDecoder::wrap(self.buf, offset, self.acting_version)
     }
     /// Byte length without advancing this decoder.
@@ -3398,7 +3442,7 @@ impl<'a> CarDecoder<'a> {
     ///Generated method `manufacturer`.
     #[inline]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        let offset = self.tail_offset_2()?;
+        let offset = self.tail_offset_2::<false>()?;
         if offset + 4 > self.buf.len() {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3412,21 +3456,10 @@ impl<'a> CarDecoder<'a> {
         };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(manufacturer),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(manufacturer),
-            offset,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(manufacturer), offset, 4, wire_length, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
     /// View this UTF-8 var-data field as `&str`.
@@ -3460,7 +3493,7 @@ impl<'a> CarDecoder<'a> {
     ///Generated method `model`.
     #[inline]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        let offset = self.tail_offset_3()?;
+        let offset = self.tail_offset_3::<false>()?;
         if offset + 4 > self.buf.len() {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3474,21 +3507,10 @@ impl<'a> CarDecoder<'a> {
         };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(model),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(model),
-            offset,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(model), offset, 4, wire_length, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
     /// View this UTF-8 var-data field as `&str`.
@@ -3520,7 +3542,7 @@ impl<'a> CarDecoder<'a> {
     ///Generated method `activation_code`.
     #[inline]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        let offset = self.tail_offset_4()?;
+        let offset = self.tail_offset_4::<false>()?;
         if offset + 4 > self.buf.len() {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -3534,21 +3556,10 @@ impl<'a> CarDecoder<'a> {
         };
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(activation_code),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(activation_code),
-            offset,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(activation_code), offset, 4, wire_length, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
     /// View this ASCII var-data field as `&str`.
@@ -3591,7 +3602,7 @@ impl<'a> CarDecoder<'a> {
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-        let end = self.tail_offset_5()?;
+        let end = self.tail_offset_5::<true>()?;
         Ok(end - self.byte_offset())
     }
     ///Generated method `encoded_length_with_header`.
@@ -3605,7 +3616,7 @@ impl<'a> CarDecoder<'a> {
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        let end = self.tail_offset_5()?;
+        let end = self.tail_offset_5::<true>()?;
         let start = self.byte_offset();
         Ok(&self.buf[start..end])
     }
@@ -3613,7 +3624,7 @@ impl<'a> CarDecoder<'a> {
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
     pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-        let end = self.tail_offset_5()?;
+        let end = self.tail_offset_5::<true>()?;
         let start = self.byte_offset().saturating_sub(Self::HEADER_LENGTH);
         Ok(&self.buf[start..end])
     }
@@ -3745,14 +3756,14 @@ impl<'a> CarDecoder<'a> {
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let var_header = VarStringEncoding(bytes);
             let len = var_header.length() as u64;
-            let (_, data_end) = match sbe_rt::checked_var_data_bounds(
-                "manufacturer",
-                offset,
-                4,
-                len,
-                buf.len(),
-            ) {
+            let (_, data_end) = match sbe_rt::checked_var_data_bounds::<
+                true,
+                1073741824,
+            >("manufacturer", offset, 4, len, buf.len()) {
                 Ok(bounds) => bounds,
+                Err(e @ sbe_rt::DecodeError::InvalidVarDataLength { .. }) => {
+                    return Err(sbe_rt::VerifyError::DecodeError(e));
+                }
                 Err(_) => {
                     sbe_rt::cold();
                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
@@ -3776,14 +3787,14 @@ impl<'a> CarDecoder<'a> {
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let var_header = VarStringEncoding(bytes);
             let len = var_header.length() as u64;
-            let (_, data_end) = match sbe_rt::checked_var_data_bounds(
-                "model",
-                offset,
-                4,
-                len,
-                buf.len(),
-            ) {
+            let (_, data_end) = match sbe_rt::checked_var_data_bounds::<
+                true,
+                1073741824,
+            >("model", offset, 4, len, buf.len()) {
                 Ok(bounds) => bounds,
+                Err(e @ sbe_rt::DecodeError::InvalidVarDataLength { .. }) => {
+                    return Err(sbe_rt::VerifyError::DecodeError(e));
+                }
                 Err(_) => {
                     sbe_rt::cold();
                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
@@ -3807,14 +3818,14 @@ impl<'a> CarDecoder<'a> {
             let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
             let var_header = VarAsciiEncoding(bytes);
             let len = var_header.length() as u64;
-            let (_, data_end) = match sbe_rt::checked_var_data_bounds(
-                "activation_code",
-                offset,
-                4,
-                len,
-                buf.len(),
-            ) {
+            let (_, data_end) = match sbe_rt::checked_var_data_bounds::<
+                true,
+                1073741824,
+            >("activation_code", offset, 4, len, buf.len()) {
                 Ok(bounds) => bounds,
+                Err(e @ sbe_rt::DecodeError::InvalidVarDataLength { .. }) => {
+                    return Err(sbe_rt::VerifyError::DecodeError(e));
+                }
                 Err(_) => {
                     sbe_rt::cold();
                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
@@ -3942,7 +3953,6 @@ pub struct FuelFiguresDecoder<'a, C: sbe_rt::GroupContext = sbe_rt::Detached> {
     parent_pos: usize,
     parent_block_length: usize,
     poisoned: Option<sbe_rt::DecodeError>,
-    min_entry_extent: usize,
     _context: core::marker::PhantomData<C>,
 }
 impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
@@ -3987,11 +3997,6 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             min_fixed,
         )?;
         let entries_start = offset + 4;
-        let min_entry_extent = if block_length > min_fixed {
-            block_length
-        } else {
-            min_fixed
-        };
         Ok(FuelFiguresDecoder {
             buf,
             offset: entries_start,
@@ -4003,7 +4008,6 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             poisoned: None,
-            min_entry_extent,
             _context: core::marker::PhantomData,
         })
     }
@@ -4033,7 +4037,6 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             poisoned: None,
-            min_entry_extent: 0,
             _context: core::marker::PhantomData,
         }
     }
@@ -4104,7 +4107,6 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Detached> {
             parent_pos: attached.parent_pos,
             parent_block_length: attached.parent_block_length,
             poisoned: None,
-            min_entry_extent: attached.min_entry_extent,
             _context: core::marker::PhantomData,
         })
     }
@@ -4145,11 +4147,6 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             header.block_length() as u64,
             min_fixed,
         )?;
-        let min_entry_extent = if block_length > min_fixed {
-            block_length
-        } else {
-            min_fixed
-        };
         Ok(Self {
             buf,
             offset: offset + 4,
@@ -4161,7 +4158,6 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             poisoned: None,
-            min_entry_extent,
             _context: core::marker::PhantomData,
         })
     }
@@ -4199,11 +4195,11 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         }
         for _ in 0..n {
             let __available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > __available {
+            if self.acting_block_length > __available {
                 sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "fuelFigures",
-                    needed: self.min_entry_extent,
+                    needed: self.acting_block_length,
                     available: __available,
                 });
             }
@@ -4246,19 +4242,16 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         }
         let mut offset = self.start;
         for _ in 0..idx {
-            offset = FuelFiguresEntryDecoder::skip(
-                self.buf,
-                offset,
-                self.acting_block_length,
-                self.acting_version,
-            )?;
+            offset = FuelFiguresEntryDecoder::skip_with::<
+                false,
+            >(self.buf, offset, self.acting_block_length, self.acting_version)?;
         }
         let available = self.buf.len().saturating_sub(offset);
-        if self.min_entry_extent > available {
+        if self.acting_block_length > available {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
-                needed: self.min_entry_extent,
+                needed: self.acting_block_length,
                 available,
             });
         }
@@ -4270,7 +4263,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
                 self.acting_version,
             )
         };
-        entry.encoded_length()?;
+        entry.iter_extent()?;
         Ok(entry)
     }
 }
@@ -4282,10 +4275,10 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for FuelFiguresDecoder<'a, C> {
             return None;
         }
         let available = self.buf.len().saturating_sub(self.offset);
-        if self.min_entry_extent > available {
+        if self.acting_block_length > available {
             let error = sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
-                needed: self.min_entry_extent,
+                needed: self.acting_block_length,
                 available,
             };
             self.poisoned = Some(error);
@@ -4301,7 +4294,7 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for FuelFiguresDecoder<'a, C> {
                 self.acting_version,
             )
         };
-        let size = match entry.encoded_length() {
+        let size = match entry.iter_extent() {
             Ok(s) => s,
             Err(e) => {
                 self.poisoned = Some(e);
@@ -4344,9 +4337,10 @@ pub struct FuelFiguresEntryDecoder<'a> {
     offset: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache: filled by `encoded_length`, reused by
-    /// the last var-data accessor. `Cell` keeps `&self` getters and makes
-    /// the entry `Send` + `!Sync`.
+    /// One-shot entry-extent cache: filled by iteration's bounds-only
+    /// `iter_extent` or by `encoded_length`, reused by the last var-data
+    /// accessor, which checks its own maximum. `Cell` keeps `&self`
+    /// getters and makes the entry `Send` + `!Sync`.
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> FuelFiguresEntryDecoder<'a> {
@@ -4463,7 +4457,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         Ok(self.offset + self.acting_block_length)
     }
     #[inline]
-    fn walk_tail_0(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_0<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if 4 > self.buf.len().saturating_sub(start) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -4475,13 +4472,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
-        let (_, data_end) = sbe_rt::checked_var_data_bounds(
-            "usageDescription",
-            start,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (_, data_end) = sbe_rt::checked_var_data_bounds::<
+            CHECK_MAX,
+            1073741824,
+        >("usageDescription", start, 4, wire_length, self.buf.len())?;
         Ok(data_end)
     }
     #[inline]
@@ -4491,14 +4485,16 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
         match k {
-            0 => self.walk_tail_0(start),
+            0 => self.walk_tail_0::<true>(start),
             _ => Ok(start),
         }
     }
     #[inline]
-    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+    fn tail_offset_1<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         let start = self.tail_offset_0()?;
-        self.walk_tail_0(start)
+        self.walk_tail_0::<CHECK_MAX>(start)
     }
     /// Byte length without advancing this decoder.
     #[inline]
@@ -4510,15 +4506,9 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     pub fn usage_description(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
             let data_offset = self.offset + self.acting_block_length + 4;
-            let wire_length = end.saturating_sub(data_offset) as u64;
-            if wire_length > 1073741824 as u64 {
-                sbe_rt::cold();
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: stringify!(usage_description),
-                    length: wire_length,
-                    max_length: 1073741824 as u64,
-                });
-            }
+            sbe_rt::check_var_data_max::<
+                1073741824,
+            >(stringify!(usage_description), end.saturating_sub(data_offset) as u64)?;
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let offset = self.tail_offset_0()?;
@@ -4530,35 +4520,18 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                     needed: usize::MAX,
                     available: self.buf.len().saturating_sub(offset),
                 })?;
-            let wire_length = end.saturating_sub(data_offset) as u64;
-            if wire_length > 1073741824 as u64 {
-                sbe_rt::cold();
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: stringify!(usage_description),
-                    length: wire_length,
-                    max_length: 1073741824 as u64,
-                });
-            }
+            sbe_rt::check_var_data_max::<
+                1073741824,
+            >(stringify!(usage_description), end.saturating_sub(data_offset) as u64)?;
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
         let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(usage_description),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(usage_description),
-            offset,
-            4,
-            wire_length,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(usage_description), offset, 4, wire_length, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
     /// View this ASCII var-data field as `&str`.
@@ -4586,19 +4559,41 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         let bytes = self.usage_description()?;
         Ok(unsafe { core::str::from_utf8_unchecked(bytes) })
     }
-    ///Generated method `encoded_length`.
+    /// Walks every tail and rejects a var-data length above its
+    /// schema maximum anywhere in the entry, whatever iteration
+    /// cached.
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let end = self.tail_offset_1::<true>()?;
+        self.tail_end.set(Some(end));
+        Ok(end - self.offset)
+    }
+    /// The extent iteration advances by: bounds only, cached in
+    /// `tail_end` for the last tail's getter, which checks its own
+    /// maximum.
+    #[inline]
+    pub(crate) fn iter_extent(&self) -> Result<usize, sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
             return Ok(end - self.offset);
         }
-        let end = self.tail_offset_1()?;
+        let end = self.tail_offset_1::<false>()?;
         self.tail_end.set(Some(end));
         Ok(end - self.offset)
     }
     ///Generated method `skip`.
     #[inline]
     pub fn skip(
+        buf: &'a [u8],
+        offset: usize,
+        block_len: usize,
+        acting_version: u16,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        Self::skip_with::<true>(buf, offset, block_len, acting_version)
+    }
+    /// [`Self::skip`] that rejects an over-max var-data length only
+    /// with `CHECK_MAX`; a parent's tail walk forwards its own.
+    #[inline]
+    pub(crate) fn skip_with<const CHECK_MAX: bool>(
         buf: &'a [u8],
         offset: usize,
         block_len: usize,
@@ -4613,7 +4608,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             });
         }
         let entry = unsafe { Self::wrap(buf, offset, block_len, acting_version) };
-        entry.tail_offset_1()
+        entry.tail_offset_1::<CHECK_MAX>()
     }
 }
 impl<'a> core::fmt::Display for FuelFiguresEntryDecoder<'a> {
@@ -4678,21 +4673,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "usageDescription",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "usageDescription",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("usageDescription", offset, 4, len, self.buf.len())?;
         let data = &self.buf[data_start..data_end];
         let next = FuelFiguresEntryDecoderComplete {
             buf: self.buf,
@@ -4721,21 +4705,10 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "usageDescription",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "usageDescription",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("usageDescription", offset, 4, len, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
 }
@@ -4925,7 +4898,6 @@ pub struct PerformanceFiguresDecoder<'a, C: sbe_rt::GroupContext = sbe_rt::Detac
     parent_pos: usize,
     parent_block_length: usize,
     poisoned: Option<sbe_rt::DecodeError>,
-    min_entry_extent: usize,
     _context: core::marker::PhantomData<C>,
 }
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
@@ -4972,11 +4944,6 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             min_fixed,
         )?;
         let entries_start = offset + 4;
-        let min_entry_extent = if block_length > min_fixed {
-            block_length
-        } else {
-            min_fixed
-        };
         Ok(PerformanceFiguresDecoder {
             buf,
             offset: entries_start,
@@ -4988,7 +4955,6 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             poisoned: None,
-            min_entry_extent,
             _context: core::marker::PhantomData,
         })
     }
@@ -5018,7 +4984,6 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             poisoned: None,
-            min_entry_extent: 0,
             _context: core::marker::PhantomData,
         }
     }
@@ -5089,7 +5054,6 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Detached> {
             parent_pos: attached.parent_pos,
             parent_block_length: attached.parent_block_length,
             poisoned: None,
-            min_entry_extent: attached.min_entry_extent,
             _context: core::marker::PhantomData,
         })
     }
@@ -5132,11 +5096,6 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             header.block_length() as u64,
             min_fixed,
         )?;
-        let min_entry_extent = if block_length > min_fixed {
-            block_length
-        } else {
-            min_fixed
-        };
         Ok(Self {
             buf,
             offset: offset + 4,
@@ -5148,7 +5107,6 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
             parent_pos,
             parent_block_length,
             poisoned: None,
-            min_entry_extent,
             _context: core::marker::PhantomData,
         })
     }
@@ -5192,11 +5150,11 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         }
         for _ in 0..n {
             let __available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > __available {
+            if self.acting_block_length > __available {
                 sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "performanceFigures",
-                    needed: self.min_entry_extent,
+                    needed: self.acting_block_length,
                     available: __available,
                 });
             }
@@ -5245,19 +5203,16 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         }
         let mut offset = self.start;
         for _ in 0..idx {
-            offset = PerformanceFiguresEntryDecoder::skip(
-                self.buf,
-                offset,
-                self.acting_block_length,
-                self.acting_version,
-            )?;
+            offset = PerformanceFiguresEntryDecoder::skip_with::<
+                false,
+            >(self.buf, offset, self.acting_block_length, self.acting_version)?;
         }
         let available = self.buf.len().saturating_sub(offset);
-        if self.min_entry_extent > available {
+        if self.acting_block_length > available {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
-                needed: self.min_entry_extent,
+                needed: self.acting_block_length,
                 available,
             });
         }
@@ -5269,7 +5224,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
                 self.acting_version,
             )
         };
-        entry.encoded_length()?;
+        entry.iter_extent()?;
         Ok(entry)
     }
 }
@@ -5281,10 +5236,10 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for PerformanceFiguresDecoder<'a, C> 
             return None;
         }
         let available = self.buf.len().saturating_sub(self.offset);
-        if self.min_entry_extent > available {
+        if self.acting_block_length > available {
             let error = sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
-                needed: self.min_entry_extent,
+                needed: self.acting_block_length,
                 available,
             };
             self.poisoned = Some(error);
@@ -5300,7 +5255,7 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for PerformanceFiguresDecoder<'a, C> 
                 self.acting_version,
             )
         };
-        let size = match entry.encoded_length() {
+        let size = match entry.iter_extent() {
             Ok(s) => s,
             Err(e) => {
                 self.poisoned = Some(e);
@@ -5343,9 +5298,10 @@ pub struct PerformanceFiguresEntryDecoder<'a> {
     offset: usize,
     acting_version: u16,
     acting_block_length: usize,
-    /// One-shot entry-extent cache: filled by `encoded_length`, reused by
-    /// the last var-data accessor. `Cell` keeps `&self` getters and makes
-    /// the entry `Send` + `!Sync`.
+    /// One-shot entry-extent cache: filled by iteration's bounds-only
+    /// `iter_extent` or by `encoded_length`, reused by the last var-data
+    /// accessor, which checks its own maximum. `Cell` keeps `&self`
+    /// getters and makes the entry `Send` + `!Sync`.
     tail_end: core::cell::Cell<Option<usize>>,
 }
 impl<'a> PerformanceFiguresEntryDecoder<'a> {
@@ -5429,7 +5385,10 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         Ok(self.offset + self.acting_block_length)
     }
     #[inline]
-    fn walk_tail_0(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
+    fn walk_tail_0<const CHECK_MAX: bool>(
+        &self,
+        start: usize,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         if start + 4 > self.buf.len() {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -5451,12 +5410,9 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         let mut offset = start + 4;
         let mut idx = 0;
         while idx < count {
-            offset = PerformanceFiguresAccelerationEntryDecoder::skip(
-                self.buf,
-                offset,
-                block_len,
-                self.acting_version,
-            )?;
+            offset = PerformanceFiguresAccelerationEntryDecoder::skip_with::<
+                CHECK_MAX,
+            >(self.buf, offset, block_len, self.acting_version)?;
             idx += 1;
         }
         Ok(offset)
@@ -5468,14 +5424,16 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
         match k {
-            0 => self.walk_tail_0(start),
+            0 => self.walk_tail_0::<true>(start),
             _ => Ok(start),
         }
     }
     #[inline]
-    fn tail_offset_1(&self) -> Result<usize, sbe_rt::DecodeError> {
+    fn tail_offset_1<const CHECK_MAX: bool>(
+        &self,
+    ) -> Result<usize, sbe_rt::DecodeError> {
         let start = self.tail_offset_0()?;
-        self.walk_tail_0(start)
+        self.walk_tail_0::<CHECK_MAX>(start)
     }
     /// Wire-declared entry count without advancing this decoder.
     #[inline]
@@ -5517,19 +5475,41 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             self.acting_version,
         )
     }
-    ///Generated method `encoded_length`.
+    /// Walks every tail and rejects a var-data length above its
+    /// schema maximum anywhere in the entry, whatever iteration
+    /// cached.
     #[inline]
     pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
+        let end = self.tail_offset_1::<true>()?;
+        self.tail_end.set(Some(end));
+        Ok(end - self.offset)
+    }
+    /// The extent iteration advances by: bounds only, cached in
+    /// `tail_end` for the last tail's getter, which checks its own
+    /// maximum.
+    #[inline]
+    pub(crate) fn iter_extent(&self) -> Result<usize, sbe_rt::DecodeError> {
         if let Some(end) = self.tail_end.get() {
             return Ok(end - self.offset);
         }
-        let end = self.tail_offset_1()?;
+        let end = self.tail_offset_1::<false>()?;
         self.tail_end.set(Some(end));
         Ok(end - self.offset)
     }
     ///Generated method `skip`.
     #[inline]
     pub fn skip(
+        buf: &'a [u8],
+        offset: usize,
+        block_len: usize,
+        acting_version: u16,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        Self::skip_with::<true>(buf, offset, block_len, acting_version)
+    }
+    /// [`Self::skip`] that rejects an over-max var-data length only
+    /// with `CHECK_MAX`; a parent's tail walk forwards its own.
+    #[inline]
+    pub(crate) fn skip_with<const CHECK_MAX: bool>(
         buf: &'a [u8],
         offset: usize,
         block_len: usize,
@@ -5544,7 +5524,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
             });
         }
         let entry = unsafe { Self::wrap(buf, offset, block_len, acting_version) };
-        entry.tail_offset_1()
+        entry.tail_offset_1::<CHECK_MAX>()
     }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresEntryDecoder<'a> {
@@ -6125,6 +6105,17 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
         }
         Ok(offset + block_len)
     }
+    /// [`Self::skip`] for a parent's tail walk; a fixed entry has no
+    /// var-data, so `CHECK_MAX` changes nothing.
+    #[inline]
+    pub(crate) const fn skip_with<const CHECK_MAX: bool>(
+        buf: &'a [u8],
+        offset: usize,
+        block_len: usize,
+        acting_version: u16,
+    ) -> Result<usize, sbe_rt::DecodeError> {
+        Self::skip(buf, offset, block_len, acting_version)
+    }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -6252,23 +6243,10 @@ impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
     fn skip_all(
         self,
     ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, sbe_rt::DecodeError> {
-        let span = self
-            .count
-            .checked_mul(self.acting_block_length)
-            .ok_or(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: usize::MAX,
-                available: self.buf.len().saturating_sub(self.offset),
-            })?;
-        let end = self
-            .offset
-            .checked_add(span)
-            .filter(|e| *e <= self.buf.len())
-            .ok_or(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: span,
-                available: self.buf.len().saturating_sub(self.offset),
-            })?;
+        let end = self.offset + self.count * self.acting_block_length;
+        debug_assert!(
+            end <= self.buf.len(), "fixed-stride group extent was proven at wrap"
+        );
         Ok(self.into_parent_stage(end))
     }
 }
@@ -6547,21 +6525,10 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "manufacturer",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "manufacturer",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("manufacturer", offset, 4, len, self.buf.len())?;
         let data = &self.buf[data_start..data_end];
         let next = CarDecoderAfterManufacturer {
             buf: self.buf,
@@ -6590,21 +6557,10 @@ impl<'a> CarDecoderAfterPerformanceFigures<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "manufacturer",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "manufacturer",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("manufacturer", offset, 4, len, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
 }
@@ -6686,21 +6642,10 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "model",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "model",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("model", offset, 4, len, self.buf.len())?;
         let data = &self.buf[data_start..data_end];
         let next = CarDecoderAfterModel {
             buf: self.buf,
@@ -6729,21 +6674,10 @@ impl<'a> CarDecoderAfterManufacturer<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "model",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "model",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("model", offset, 4, len, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
 }
@@ -6822,21 +6756,10 @@ impl<'a> CarDecoderAfterModel<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "activationCode",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "activationCode",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("activationCode", offset, 4, len, self.buf.len())?;
         let data = &self.buf[data_start..data_end];
         let next = CarDecoderComplete {
             buf: self.buf,
@@ -6865,21 +6788,10 @@ impl<'a> CarDecoderAfterModel<'a> {
             core::ptr::read_unaligned(self.buf.as_ptr().add(offset) as *const [u8; 4])
         };
         let len = u32::from_le_bytes(bytes) as u64;
-        if len > 1073741824 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: "activationCode",
-                length: len,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            "activationCode",
-            offset,
-            4,
-            len,
-            self.buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >("activationCode", offset, 4, len, self.buf.len())?;
         Ok(&self.buf[data_start..data_end])
     }
 }
@@ -6950,11 +6862,11 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         let block_length = self.acting_block_length;
         while self.count > 0 {
             let available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > available {
+            if block_length > available {
                 return Err(
                     E::from(sbe_rt::DecodeError::BufferTooShort {
                         field: "fuelFigures",
-                        needed: self.min_entry_extent,
+                        needed: block_length,
                         available,
                     }),
                 );
@@ -7118,11 +7030,11 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         let block_length = self.acting_block_length;
         while self.count > 0 {
             let available = self.buf.len().saturating_sub(self.offset);
-            if self.min_entry_extent > available {
+            if block_length > available {
                 return Err(
                     E::from(sbe_rt::DecodeError::BufferTooShort {
                         field: "performanceFigures",
-                        needed: self.min_entry_extent,
+                        needed: block_length,
                         available,
                     }),
                 );
@@ -8428,17 +8340,7 @@ impl<'a> CarMemoizedDecoder<'a> {
         let offset = self.tail_offset_2()?;
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(2) {
-            let data_start = offset + 4;
-            let wire_length = (end - data_start) as u64;
-            if wire_length > 1073741824 as u64 {
-                sbe_rt::cold();
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: stringify!(manufacturer),
-                    length: wire_length,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            return Ok(&buf[data_start..end]);
+            return Ok(&buf[offset + 4..end]);
         }
         if offset + 4 > buf.len() {
             sbe_rt::cold();
@@ -8451,21 +8353,10 @@ impl<'a> CarMemoizedDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(manufacturer),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(manufacturer),
-            offset,
-            4,
-            wire_length,
-            buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(manufacturer), offset, 4, wire_length, buf.len())?;
         self.cache.publish(2, data_end);
         Ok(&buf[data_start..data_end])
     }
@@ -8503,17 +8394,7 @@ impl<'a> CarMemoizedDecoder<'a> {
         let offset = self.tail_offset_3()?;
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(3) {
-            let data_start = offset + 4;
-            let wire_length = (end - data_start) as u64;
-            if wire_length > 1073741824 as u64 {
-                sbe_rt::cold();
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: stringify!(model),
-                    length: wire_length,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            return Ok(&buf[data_start..end]);
+            return Ok(&buf[offset + 4..end]);
         }
         if offset + 4 > buf.len() {
             sbe_rt::cold();
@@ -8526,21 +8407,10 @@ impl<'a> CarMemoizedDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(model),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(model),
-            offset,
-            4,
-            wire_length,
-            buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(model), offset, 4, wire_length, buf.len())?;
         self.cache.publish(3, data_end);
         Ok(&buf[data_start..data_end])
     }
@@ -8576,17 +8446,7 @@ impl<'a> CarMemoizedDecoder<'a> {
         let offset = self.tail_offset_4()?;
         let buf = self.inner.buf;
         if let Some(end) = self.cache.end_of(4) {
-            let data_start = offset + 4;
-            let wire_length = (end - data_start) as u64;
-            if wire_length > 1073741824 as u64 {
-                sbe_rt::cold();
-                return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                    field: stringify!(activation_code),
-                    length: wire_length,
-                    max_length: 1073741824 as u64,
-                });
-            }
-            return Ok(&buf[data_start..end]);
+            return Ok(&buf[offset + 4..end]);
         }
         if offset + 4 > buf.len() {
             sbe_rt::cold();
@@ -8599,21 +8459,10 @@ impl<'a> CarMemoizedDecoder<'a> {
         let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
-        if wire_length > 1073741824 as u64 {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                field: stringify!(activation_code),
-                length: wire_length,
-                max_length: 1073741824 as u64,
-            });
-        }
-        let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
-            stringify!(activation_code),
-            offset,
-            4,
-            wire_length,
-            buf.len(),
-        )?;
+        let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
+            true,
+            1073741824,
+        >(stringify!(activation_code), offset, 4, wire_length, buf.len())?;
         self.cache.publish(4, data_end);
         Ok(&buf[data_start..data_end])
     }

@@ -166,7 +166,6 @@ fn l3_roundtrip_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
         let a0 = ask_levels[0].as_ref().unwrap();
         assert_eq!(a0.price(), 50001, "ask[0].price");
         assert_eq!(a0.qty(), 8, "ask[0].qty");
-        println!("L3 orderbook roundtrip: PASSED");
         "#,
     );
 
@@ -269,7 +268,6 @@ fn l3_roundtrip_3_orders_per_level() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(order_entries[1].as_ref().unwrap().order_id().unwrap(), b"ID-B");
         assert_eq!(order_entries[2].as_ref().unwrap().order_qty(), 10);
         assert_eq!(order_entries[2].as_ref().unwrap().order_id().unwrap(), b"ID-C");
-        println!("3 orders per level: PASSED");
         "#,
     );
 
@@ -355,7 +353,6 @@ fn l3_roundtrip_12_orders_per_level() -> Result<(), Box<dyn std::error::Error>> 
             let expected = format!("ASK-{:03}", i);
             assert_eq!(e.order_id().unwrap(), expected.as_bytes(), "ask order {} id", i);
         }
-        println!("12 orders per level (bids + asks): PASSED");
         "#,
     );
 

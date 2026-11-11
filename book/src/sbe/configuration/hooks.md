@@ -1,13 +1,13 @@
-# Code-Generation Hooks
+# Code-generation hooks
 
 > **Niche feature.** Hooks are aimed at users who need to attach extra `impl`
-> blocks to generated code — serde, custom validation, company-internal traits.
+> blocks to generated code: serde, custom validation, company-internal traits.
 > Most workflows don't need them; skip this section unless you recognise your
 > use case.
 >
-> Hooks **append tokens after** each generated item; they cannot add a
+> Hooks append tokens after each generated item; they cannot add a
 > `#[derive(...)]` to the item itself (that attribute would have to precede the
-> `struct`/`enum`). Emit the trait `impl` directly instead — that is what a
+> `struct`/`enum`). Emit the trait `impl` directly instead; that is what a
 > derive would expand to anyway.
 
 Hooks let you append arbitrary Rust tokens after each generated item (enum, set,
@@ -16,7 +16,7 @@ composite, message decoder/encoder, domain struct). The closure receives an
 with structured field/variant/choice metadata, plus a `schema` reference for
 full IR access.
 
-**Example — add serde Serialize + Deserialize to every enum and set:**
+**Example**: add serde Serialize + Deserialize to every enum and set:
 
 ```rust,ignore
 // build.rs
@@ -45,7 +45,7 @@ fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
                         match s {
                             #(#labels => Ok(Self::#from_labels),)*
                             "NullVal" => Ok(Self::NullVal),
-                            // Reject unknown values — fallback is app policy,
+                            // Reject unknown values; fallback is app policy,
                             // not codec behaviour.
                             other => Err(serde::de::Error::unknown_variant(
                                 other, &[#(#labels,)* "NullVal"])),
@@ -74,7 +74,7 @@ fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
                         for n in &names {
                             match *n {
                                 #(#labels => { val.#froms(true); })*
-                                // Reject unknown labels — don't silently drop.
+                                // Reject unknown labels; don't silently drop.
                                 other => return Err(serde::de::Error::unknown_variant(
                                     other, &[#(#labels),*])),
                             }
@@ -92,8 +92,8 @@ let config = GenerationConfig::new("msgs").with_hook(serde_hook);
 ```
 
 Each `ItemContext` variant carries the fields, variants, or choices defined in
-the schema — use them to build custom `impl` blocks or trait implementations.
-Hooks fire in registration order; the returned tokens are appended **after** the
+the schema; use them to build custom `impl` blocks or trait implementations.
+Hooks fire in registration order; the returned tokens are appended after the
 generated item (so they extend it with `impl`s, not with derives).
 
 Full runnable example with serde + serde_json round-trip:

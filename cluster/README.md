@@ -14,7 +14,7 @@ protocol.
 
 ## Full documentation
 
-**[ergo-sbe book](https://mimran1980.github.io/ergon/)** is the comprehensive
+The [ergo-sbe book](https://mimran1980.github.io/ergon/) is the full
 guide (also linked from this crate on
 [docs.rs](https://docs.rs/ergo-aeron-cluster/)):
 
@@ -151,7 +151,7 @@ fields declared by the protocol are validated before being exposed as `&str`.
 The high-level client, configuration, listener, state, error, offer, and claim
 types are the consumer-facing surface. The generated protocol codecs are also
 reachable, for advanced direct encode/decode, through the `cluster_codec_types`
-module — but that module is `#[doc(hidden)]` and **not** a stable API: it exists
+module, but that module is `#[doc(hidden)]` and not a stable API: it exists
 for repository tests and low-level experimentation, and its shape may change
 in any release. Normal applications should use `AeronCluster`.
 <!-- ANCHOR_END: egress -->
@@ -173,7 +173,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
         + SessionKeepAliveEncoder::ENCODED_LENGTH];
 
     // fixed() writes the whole fixed block and is the only path to the
-    // tail stages — into_remaining_mut() exists only once it has been called.
+    // tail stages; into_remaining_mut() exists only once it has been called.
     let enc = SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
         .fixed(&SessionMessageHeaderFixedFields {
             leadership_term_id: 7,
@@ -199,7 +199,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
     match AnyMessage::decode(tail, 0)? {
         AnyMessage::SessionKeepAlive(dec) => {
             assert_eq!(dec.cluster_session_id(), 99);
-            // Fully decoded — nothing left
+            // Fully decoded: nothing left
             assert!(dec.get_metadata().remaining().is_empty());
         }
         _ => panic!("unexpected message type"),

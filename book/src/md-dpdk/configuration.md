@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:9b6ba2fea9e9efef564a8db2696a70b9930fc70344e88919ea25568a3ef2aa66 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:96301560e6c9a68c0427aabffda71ba42ecd60e3c9552d27235b3723e9d6a7e3 -->
 # Configuring the DPDK Transport
 
 > Read the [notice](overview.md) first: this transport is a proof of concept,
@@ -63,12 +63,12 @@ process:
 //! future, before the driver starts. SIGINT, SIGTERM and SIGHUP stop it
 //! cleanly. A NIC reset request (`RTE_ETH_EVENT_INTR_RESET`) does not reset
 //! the device under the polling agents: the process stops the driver, then
-//! exits non-zero so the pod can be restarted. The configuration is the library's
-//! ([`ergon_md_dpdk::driver::ConfiguredDriver`]), which a process embedding
-//! the driver shares, host checks included: one stderr line for each
-//! low-latency setting that is not fine, and under
-//! `ERGON_HOST_CHECKS=require` a non-zero exit before any
-//! driver starts while one warns ([`ergon_md_dpdk::checks`]).
+//! exits non-zero so the pod can be restarted. The configuration is the
+//! library's ([`ergon_md_dpdk::driver::ConfiguredDriver`]), which a process
+//! embedding the driver shares, host checks included: one stderr line for each
+//! low-latency setting that is not fine, and under `ERGON_HOST_CHECKS=require`
+//! a non-zero exit before any driver starts while one warns
+//! ([`ergon_md_dpdk::checks`]).
 //! `media_driver --version` prints the version, the architecture, Rust's
 //! target CPU and the native C's CPU flag, and exits without starting a driver.
 
@@ -89,7 +89,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
-    // Flag to indicate when the application should stop
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = Arc::clone(&running);
 
@@ -213,6 +212,14 @@ breaks this.
 | `SHARED_NETWORK` | one thread, both NICs | `AERON_SENDER_CPU_AFFINITY` |
 | `SHARED` | one thread for everything | `AERON_CONDUCTOR_CPU_AFFINITY` |
 | `INVOKER` | your thread, which runs the driver | `AERON_CONDUCTOR_CPU_AFFINITY` |
+
+`SHARED` and `INVOKER` are for benchmarking the modes, never for a node's
+driver. They resolve channel names (`getaddrinfo`) on the one thread that
+also runs the conductor, so a lookup that waits seconds on a resolver
+stalls every client of the driver for as long. `DEDICATED` and
+`SHARED_NETWORK` resolve on the native resource agent's own thread. The
+stack's deployments run those two, and the lab's `aeron-driver` refuses
+the other two at start-up.
 
 One physical core per role, skipping cores the pre-flight spin test flags
 ([hosts](../deploy/hosts.md#cpu-layout)). In a pod, all four come from the

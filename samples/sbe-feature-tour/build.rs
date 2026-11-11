@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "chrono::DateTime<chrono::Utc>",
         )
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"))
-        // Same shape as Decimal, but the app supplies the impl itself — see
+        // Same shape as Decimal, but the app supplies the impl itself; see
         // demo_domain_type_manual_impl in src/lib.rs.
         .with_manual_domain_type(
             ergo_sbe::ConversionSelector::named_type("ManualDecimal"),

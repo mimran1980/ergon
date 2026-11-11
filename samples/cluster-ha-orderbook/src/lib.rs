@@ -1,4 +1,6 @@
-//! HA cluster orderbook sample: try_claim publish + never-stale book.
+//! HA cluster orderbook sample: try_claim publish of complete L2 images and a
+//! follower book that serves nothing from a session loss until a valid
+//! recovery snapshot (rules in [`ha_book`]).
 //!
 //! Recipes: `just samples-cluster-ha`, `just samples-cluster-ha-kill-leader`.
 

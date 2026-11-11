@@ -89,7 +89,7 @@ for profile in lto no-lto; do
         "$RUN_ID" "$profile" "$COMMIT"
 done
 write_gate_log "$RUN_ID"
-# Cluster fixtures — must carry run_id + HEAD commit (no invent-on-package).
+# Cluster fixtures must carry run_id + HEAD commit (no invent-on-package).
 CL_RUN="cluster-fixture-001"
 for pair in \
     "$FAKE_ROOT/target/criterion:lto" \
@@ -134,7 +134,7 @@ mkdir -p "$OUT3"
 check "missing no-lto profile fails" \
     bash -c "! REQUIRE_CLUSTER=0 '$FAKE_ROOT/scripts/package-bench-artifacts.sh' '$OUT3' 2>/dev/null"
 
-# ── 4. Stale run-manifest (commit ≠ HEAD) fails closed — never launder ───
+# ── 4. Stale run-manifest (commit ≠ HEAD) fails closed, never launders ───
 # Present estimates + manifests stamped with a foreign commit must not package.
 STALE_RUN="run-stale-deadbeef"
 STALE_COMMIT="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -239,7 +239,7 @@ check "missing cluster fails closed" \
 # other binaries' groups) and Criterion leaves `new/` in place for groups
 # a run does not touch. `repeats/<k>/` is what the runner snapshotted for this
 # run and what the gate grades, so the archive and the manifest's estimate
-# count must come from there — not from whatever else lives under the home.
+# count must come from there, not from whatever else lives under the home.
 write_cluster_with_repeats() {
     local dir="$1" prof="$2"
     rm -rf "$dir"

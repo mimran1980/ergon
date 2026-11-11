@@ -7,13 +7,12 @@ use roxmltree::Node;
 use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
-    collect_description, earliest_deprecated, element_children, is_primitive_name, opt_u16_attr,
-    opt_usize_attr, parse_deprecated_attr, parse_presence, parse_primitive_type,
-    preceding_xml_comments, reject_unknown_attrs, string_attr, structural, u16_attr,
+    collect_description, earliest_deprecated, element_children, opt_u16_attr,
+    parse_deprecated_attr, parse_presence, reject_unknown_attrs, string_attr, structural, u16_attr,
     validate_sbe_name,
 };
 use super::error::Fault;
-use super::registry::{TypeRegistry, parse_u64_val, resolve_type_to_tokens};
+use super::registry::{TypeRegistry, resolve_type_to_tokens};
 use super::warn::{WarnState, warn_once};
 
 use crate::schema_attrs;
@@ -134,7 +133,7 @@ pub(crate) fn parse_message(
 
 /// Resolve a `valueRef="EnumName.ValidValue"` to its enum's encoding type,
 /// rejecting a malformed reference, an unknown or non-enum type, and an unknown
-/// valid value — the same checks sbe-tool's `Field.validateValueRef` makes.
+/// valid value, as sbe-tool's `Field.validateValueRef` does.
 fn value_ref_enum(
     node: Node<'_, '_>,
     value_ref: &str,
@@ -482,13 +481,11 @@ pub(crate) fn parse_message_child(
                     deprecated: data_deprecated,
                     description: collect_description(node),
                     // `characterEncoding` is legal on `<data>` itself, not only
-                    // on the composite's `varData` member — sbe-tool accepts
-                    // both and real schemas use the element form. Dropping it
-                    // here silently downgraded a declared-text field to raw
-                    // bytes: the generator saw `None` and emitted no
-                    // `*_as_str` accessor, so callers had no choice but to
-                    // handle `&[u8]`. `structured_ir` prefers this value and
-                    // falls back to the composite member.
+                    // on the composite's `varData` member; sbe-tool accepts
+                    // both and real schemas use the element form. Without it a
+                    // declared-text field gets no `*_as_str` accessor.
+                    // `structured_ir` prefers this value and falls back to the
+                    // composite member.
                     character_encoding: node.attribute("characterEncoding").map(str::to_string),
                     ..Encoding::default()
                 },
@@ -562,8 +559,8 @@ pub(crate) fn parse_message_child(
                     ));
                 }
 
-                // Clone and mark the varData member as variable-length
-                // (sbe-tool makeDataFieldCompositeType equivalent — gap 10).
+                // Clone and mark the varData member as variable-length, as
+                // sbe-tool's makeDataFieldCompositeType does.
                 let mut data_tokens = type_tokens.clone();
                 for token in data_tokens.iter_mut() {
                     if token.signal == Signal::BeginField && token.name == "varData" {

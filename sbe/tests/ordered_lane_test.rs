@@ -434,9 +434,9 @@ fn entry_ordered_lane_walks_nested_tails() -> Result<(), Box<dyn std::error::Err
 ///
 /// Group entries are **not** renamed against `DECODER_RESERVED`, unlike message
 /// and memoized decoders, so `ordered()` on such an entry is already a field
-/// getter. Emitting the lane there would be a duplicate method (E0592) — the
-/// same defect class that shipped twice this cycle. The existing accessor wins,
-/// exactly as `<group>_count` / `<field>_len` yield to a colliding sibling.
+/// getter. Emitting the lane there would be a duplicate method (E0592). The
+/// existing accessor wins, as `<group>_count` / `<field>_len` yield to a
+/// colliding sibling.
 #[test]
 fn entry_field_named_ordered_keeps_its_accessor() -> Result<(), Box<dyn std::error::Error>> {
     const XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -606,8 +606,7 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
 }
 
 /// A first tail named `tryFixed` is an ordinary var-data visit: `fixed()`
-/// stays the fixed-block callback. Yielding it was over-broad (HFT review
-/// 2026-09-18).
+/// stays the fixed-block callback; `fixed()` does not yield to it.
 #[test]
 fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let xml = format!(

@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:1be4253c4fda475628fb178bd1942ab9ab20305c7b49627883f103ba7902eaa9 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:f97aca48f163d040ea2649c59b063804807e5dfd30c2a3551f71eee443036ebf -->
 # HTTP client
 
 `HttpClient` keeps a pool of warm HTTP/1.1 connections behind one API. The
@@ -7,10 +7,11 @@ implementation is configuration:
 | `HttpImpl` | What it is | Use it when |
 |---|---|---|
 | `Native` (default) | ergon-io's own client on a `Driver`: each request is one TLS record, each response is parsed in place | latency matters: on the same interrupt-driven path (`epoll-spin`), faster at the median than the source-built libcurl ([measured results](#measured-results)) |
-| `Curl` (feature `curl`) | libcurl, linked in-process, driven without blocking | the endpoint needs redirects, proxies, HTTP/2, other auth schemes or compression |
+| `Curl` (feature `curl`) | libcurl, linked in-process, driven without blocking | the endpoint needs redirects, proxies, HTTP/2 (opt-in, `curl_http2_streams`: [HTTP/2](http2.md)), other auth schemes or compression |
 
 - Same code for both: switching is a configuration change.
-- Linux only (like the `Driver`).
+- Native: Linux, and macOS for development (like the `Driver`). libcurl:
+  Linux only.
 - One level down, `HttpConn` is a single keep-alive connection on your own
   `Driver` (the API reference has it).
 
@@ -85,7 +86,7 @@ fn get(client: &mut HttpClient, path: &str) -> R<(u16, String)> {
             return Err("no connection".into());
         }
     }
-    let id = client.request("GET", path, &[], &[])?; // returns at once
+    let id = client.request(Method::Get, path, &[], &[])?; // returns at once
     while seen.ok.is_empty() && seen.errors.is_empty() {
         client.poll(&mut seen)?; // one non-blocking pass
         if Instant::now() > end {
@@ -97,11 +98,18 @@ fn get(client: &mut HttpClient, path: &str) -> R<(u16, String)> {
     Ok((status, body))
 }
 ```
+The method is a `Method`: `Get`, `Head`, `Post`, `Put`, `Delete`,
+`Patch`, `Options`, or `Method::Custom("PURGE")` for any other token
+(checked when the request is built; a space or separator is
+`Error::Http`). `Post`, `Put` and `Patch` always send `Content-Length`.
+
 *(From `ergon-io/tests/client.rs`. `cargo test -p ergon-io` runs `get` through
 the native client against a local TLS server on Linux; with
 `--features curl`, through libcurl too. `lab` is that server: in your code
 use `Target::new("api.example.com", 443, "")` and
-`tls::client_config(tls::webpki_roots())?`.)*
+`tls::client_config(tls::webpki_roots())?`; for a server without TLS 1.3,
+`.with_tls12()` and `tls::client_config_tls12(…)`, feature `tls12`:
+[Connecting](overview.md#connecting).)*
 
 ## Rules
 
@@ -172,7 +180,7 @@ per-request headers, `Content-Length` and the body:
 ```rust,ignore
     // Once per endpoint and request kind: the request line around the path,
     // `Host` and the target's headers, checked once.
-    let order = RequestTemplate::new(&target, "POST", "/api/order")?;
+    let order = RequestTemplate::new(&target, Method::Post, "/api/order")?;
     // Per request: only what varies.
     let body = br#"{"id":7,"qty":1}"#;
     conn.request_with(
@@ -208,8 +216,20 @@ per-request headers, `Content-Length` and the body:
   records is joined by moving the smaller side: the part before it forward,
   or the new part back (`span_copy_bytes`; 73 B instead of 4,096 B for a
   head and a 4 KiB body in two records).
-- The de-chunk buffer is allocated on first use, at `buf_size` minus two
-  records.
+- The de-chunk buffer is allocated and written at connect, at `buf_size`
+  minus two records: the first chunked or streamed response neither
+  allocates nor takes a page fault (`ergon-io/tests/http_alloc.rs` counts
+  from the first request). Memory per connection:
+  [overview](overview.md#memory-per-connection).
+- A session ticket arriving on a live connection is held in an 8 KiB
+  buffer, not stored, so it costs no allocation; it reaches the session
+  store when the connection closes (on the driver's helper thread) or
+  through `tls_housekeeping()` (`HttpClient::tls_housekeeping()` covers
+  the whole pool, and also prepares the next TLS keys: [key
+  updates](overview.md#tls-key-updates)). A pooled connection dialled
+  while the first is open does a full handshake. Bound and details:
+  [overview](overview.md#tls-session-tickets). Counters:
+  `HttpStats::tickets_held`, `tickets_dropped`, `inline_key_updates`.
 - Counters: `HttpStats::chunk_copy_bytes`, `span_copy_bytes`,
   `compact_bytes`, `head_parses`.
 

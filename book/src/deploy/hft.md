@@ -17,8 +17,8 @@ The shared-CPU grant is [Shared CPUs](shared-cpus.md): public image
 The refusal of an exec probe on a pod labelled `ergon.io/latency: hot` is
 the admission policy in [Latency Pods](latency-pods.md). Hugepages, the
 isolated cpuset partition, io_uring seccomp and the NIC PHC are opt-in
-grants in that same image. The chart writes `seccomp`, `ptp` and
-`schedFifo` as `"off"`. The kind sample
+grants in that same image. The chart writes `seccomp` and `ptp` as
+`"off"`. The kind sample
 `k8s/nri-shared-cpus/examples/try` installs the public chart, prints the
 shared-CPU grant on an unlabelled pod, and shows the two hot-pod refusals:
 the plugin's (no `isolcpus` on kind) and the admission policy's. Not yet
@@ -49,7 +49,7 @@ run on kind. It does not measure the rows below.
 | the CPU that takes the NIC interrupts capped at C1 (`intel_idle`) | an interrupt does not wait for that CPU to wake from C6 | node | measured, AWS c7i, interrupt-driven TCP at 10k msg/s: p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs, max not recorded ([C-states](#c-states)). `acpi_idle` (AWS c7a): nothing deeper than C1 to cap. ergon-tune T20 | per CPU `echo 1 > /sys/devices/system/cpu/cpu<N>/cpuidle/state<i>/disable` for every state past C1, or `pm_qos_resume_latency_us` 1; `intel_idle.max_cstate=1` caps every CPU. Write it at every boot |
 | C-states capped at C1 on every CPU (x86) | an idle housekeeping core wakes faster | node | VM, polling loop: measured, **mixed** ([C-states](#c-states)); metal: no gain ([hosts](hosts.md#c-states)). Not recommended on this evidence | leave unset beyond the IRQ CPU |
 | TCP autocorking off | a small send goes out at once, not after the previous one's transmit completes (`TCP_NODELAY` does not stop autocorking) | pod netns, or node for `hostNetwork` | counted, not timed: c7i corked 49k–164k of ~600k sends a host per point with the IRQ CPU in C6, 42–149 at C1 ([C-states](#c-states)). ergon-tune T21 | `sysctl -w net.ipv4.tcp_autocorking=0`; in a pod `securityContext.sysctls`, allowed by the kubelet's `--allowed-unsafe-sysctls` |
-| `SCHED_FIFO` on the loop | real-time priority | pod | measured, **mixed**: [SCHED_FIFO](#sched_fifo). Off by default | `ergon-cpus --fifo` ([latency pods](latency-pods.md#real-time-scheduling-built-default-off)) |
+| `SCHED_FIFO` on the loop | real-time priority | pod | measured, **mixed**: [SCHED_FIFO](#sched_fifo). Not built into the Kubernetes plugins | the app keeps `SCHED_OTHER` ([latency pods](latency-pods.md#deliberately-not-built)) |
 | ENA receive ring `rx 4096` | room for bursts | node | not measured here | `ethtool -G <if> rx 4096` |
 | global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | not measured as a global sysctl; a per-socket `SO_BUSY_POLL` was ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) (DPDK transport benchmarks, "Measured but no setting recommended") | not recommended on this evidence: leave unset |
 | quiet-core spin test | finds CPUs the platform stalls | node | not measured here: the cloud lab skipped CPUs that stalled 300 µs in a 120 s spin. A pod cannot choose its cores | run it on new nodes; cordon or replace noisy ones |
@@ -96,6 +96,34 @@ Sources: runs `flags-aws-20261014T163114Z` and
 [NO_HZ](https://docs.kernel.org/timers/no_hz.html)) by 97.7 % (Azure) and
 99.9 % (AWS). The longest gap is one event per sample and does not rank the
 two isolated lines.
+
+<div class="ergon-anim" data-anim="isolation-noise" data-title="CPU isolation: what each boot flag removes from the loop's CPU"></div>
+
+*Animation, in words:* one minute on the loop's CPU, with lanes for gaps
+over 5, 20 and 100 µs and a bar for the longest gap, per the table above
+(per minute, one 120 s sample per boot line; where a mark falls is
+illustrative; a lane with too many gaps to draw keeps one scale, set by
+its stock row). On the stock AWS boot, other processes' tasks, device
+interrupts, the scheduler tick and RCU callbacks all reach the CPU: 60,120
+gaps over 5 µs a minute, max 146.95 µs (a softirq TIMER).
+`isolcpus=managed_irq,domain` plus `irqaffinity` moves other processes'
+tasks and interrupts off: gaps over 20 µs fall to 4.0, max 52.30 µs, but
+gaps over 5 µs stay at 60,063.5, because the tick still fires (1,002
+local-timer interrupts a second, ergon-tune's T1 evidence). Adding
+`nohz_full` and `rcu_nocbs` stops the tick and moves RCU callbacks off
+(measured together): 50.0 over 5 µs, 4.5 over 20 µs, 1.0 over 100 µs, max
+133.90 µs. IPIs still arrive on every boot line. On the isolcpus-only boot,
+`ergon-tune --hot 1 --all` prints `T1 warn: … is not nohz_full`, with a fix
+covering every CPU already isolated (`isolcpus=nohz,domain,managed_irq,1-3,5-7
+nohz_full=1-3,5-7 rcu_nocbs=1-3,5-7 irqaffinity=0,4`), and `T1 ok` on the
+full one. A toggle shows the Azure rows (max 612.94, 58.94, 67.82 µs); there
+per-CPU kworkers and timer softirqs stay until `nohz_full`. For every max but
+the AWS stock one the trace shows no kernel event (the hypervisor or kernel
+time it does not see), and none of these flags removed such stalls. The
+costs: housekeeping CPUs, pinning every busy thread, a reboot, and dearer
+kernel entry and exit on `nohz_full` CPUs (NO_HZ docs; not measured here).
+Max causes, kworkers, softirqs and IPIs are the runs' own traces
+(`flags-aws-20261014T163114Z`, `flags-azure-20261014T144146Z`).
 
 ### Interrupt placement
 

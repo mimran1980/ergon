@@ -4,7 +4,10 @@
 # ergon.io/shared-millicpus: 250 = 1 shared CPU.
 #
 # The command is pin-test hold: it prints what the OCI hook gave PID 1, then
-# pins the hot thread to isolated:0 and keeps a helper on the shared CPUs.
+# pins the hot thread to isolated:0 and keeps a helper on the shared CPUs. The
+# helper burns 5 ms of every 10 ms round (load). ergon-cpus --ready-addr
+# serves the placement readiness probe beside it; --affinity keep leaves
+# PID 1 on the mask the hook gave it.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -20,7 +23,15 @@ spec:
     - name: app
       image: ergon-nri-pin-test:e2e
       imagePullPolicy: Never
-      command: ["pin-test", "hold"]
+      command: ["ergon-cpus", "--affinity", "keep", "--ready-addr", ":8086", "--", "pin-test", "hold"]
+      env:
+        - name: PIN_TEST_HELPER_BURN_US
+          value: "5000"
+      readinessProbe:
+        httpGet: { path: /placement, port: 8086 }
+        periodSeconds: 1
+        failureThreshold: 1
+        successThreshold: 1
       resources:
         requests:
           cpu: "2"

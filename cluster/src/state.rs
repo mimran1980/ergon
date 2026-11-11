@@ -1,20 +1,18 @@
-//! Client-side session state machine ([`SessionState`]).
-//!
-//! Mirrors Java `AeronCluster` lifecycle: Connected → AwaitingNewLeader → …
-//! → Closed.
+//! The client-side session state machine ([`SessionState`]).
 
-/// Client-side session state. Mirrors the Java `AeronCluster` state machine.
+/// Client-side session state. It follows the Java `AeronCluster` state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
-    /// Ingress connected to the leader; session is active.
+    /// Ingress is connected to the leader and the session is active.
     Connected,
-    /// Disconnected from leader; waiting for a `NewLeaderEvent` on egress (up to
-    /// the new-leader timeout) or, once one has come, for the new leader's
-    /// ingress publication to connect (up to the message timeout).
+    /// The leader is gone. The client waits for a `NewLeaderEvent` on egress
+    /// (up to the new-leader timeout) or, once one has arrived, for the new
+    /// leader's ingress publication to connect (up to the message timeout).
     AwaitingNewLeader,
-    /// `close()` was called; will finalise on the next poll.
+    /// The cluster closed the session (`SessionEvent(CLOSED)`) or the ingress
+    /// publication reached its maximum position. The next poll moves to `Closed`.
     PendingClose,
-    /// Terminal state. No further operations are valid.
+    /// Terminal state: no further operation is valid.
     Closed,
 }
 

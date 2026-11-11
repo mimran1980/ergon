@@ -81,7 +81,6 @@ pub(crate) fn generate_message_encoder(
     let is_capped = max_encoded_length > STACK_LIMIT;
 
     let span = proc_macro2::Span::call_site();
-    let snake_name = to_snake_case(&msg.name);
     let name_encoder_ident = syn::Ident::new(&format!("{}Encoder", name), span);
     let unfixed_encoder_ident = syn::Ident::new(&format!("{}UnfixedEncoder", name), span);
     let name_decoder_ident = syn::Ident::new(&format!("{}Decoder", name), span);
@@ -237,7 +236,7 @@ pub(crate) fn generate_message_encoder(
     // the generic `H` impl so HeaderAbsent and HeaderPresent share setters.
     let mut impl_consts = proc_macro2::TokenStream::new();
     let mut impl_contents = proc_macro2::TokenStream::new();
-    // Phase transitions (`fixed()` / `raw_fixed()`) — these must stay on the
+    // Phase transitions (`fixed()` / `raw_fixed()`) must stay on the
     // unfixed phase, unlike the individual setters, which are safe in either
     // phase. Splitting them is what lets a conversion setter (`*_from`) reach
     // a terminal method: it can run after `fixed()` has proven every required
@@ -278,8 +277,8 @@ pub(crate) fn generate_message_encoder(
         // Placement utils live only on EncoderMetadata via get_metadata().
     } else {
         let impl_consts_suffix = if is_capped {
-            // When theoretical max exceeds 64KB, do NOT emit MAX_ENCODED_LENGTH —
-            // the constant would be a dangerous lie. Use EncodedLength instead.
+            // When the theoretical max exceeds 64KB, emit no MAX_ENCODED_LENGTH:
+            // the constant would be wrong. Callers use EncodedLength instead.
             quote::quote! {}
         } else {
             quote::quote! {
@@ -307,7 +306,7 @@ pub(crate) fn generate_message_encoder(
                 assert!(Self::HEADER_TEMPLATE.len() == #header_size_lit);
         });
 
-        // compute_length() — convenience factory for the staged length builder
+        // compute_length(): factory for the staged length builder.
         if !encoded_len_gen.standalone.is_empty() {
             let el_ident = syn::Ident::new(&format!("{name}EncodedLength"), span);
             impl_consts.extend(quote::quote! {
@@ -326,6 +325,8 @@ pub(crate) fn generate_message_encoder(
     // compiler keeps the cold `Err` constructor out of the hot icache, and
     // a correctly-sized buffer leaves that branch not-taken on the success path.
     let needed_lit = syn::LitInt::new(&(header_size + block_length).to_string(), span);
+    let msg_offset_short = super::region_exceeds_buffer(header_size + block_length, "msg_offset");
+    let offset_short = super::region_exceeds_buffer(header_size + block_length, "offset");
     let cold_check = quote::quote! {
         /// Cold error constructor — never inlined into the hot path.
         #[cold]
@@ -343,10 +344,10 @@ pub(crate) fn generate_message_encoder(
     impl_consts.extend(cold_check);
 
     // Three-tier constructors:
-    //   try_*        — safe, returns Result on short buffers
-    //   bare name    — safe, panics on short buffers (extent proved before
-    //                  unchecked field setters)
-    //   *_unchecked  — unsafe, caller proves HEADER + fixed body extent
+    //   try_*        safe, returns Result on short buffers
+    //   bare name    safe, panics on short buffers (extent proved before
+    //                unchecked field setters)
+    //   *_unchecked  unsafe, caller proves HEADER + fixed body extent
     let wrap_fn = quote::quote! {
         /// Wrap a mutable buffer for encoding with one bounds/overflow check.
         /// Does **not** write the message header (`HeaderAbsent`).
@@ -360,7 +361,7 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
-            if #needed_lit > buf.len().saturating_sub(msg_offset) {
+            if #msg_offset_short {
                 sbe_rt::cold();
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
@@ -378,7 +379,7 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
-            if #needed_lit > buf.len().saturating_sub(msg_offset) {
+            if #msg_offset_short {
                 panic!("{}", Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
@@ -420,7 +421,7 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
-            if #needed_lit > buf.len().saturating_sub(offset) {
+            if #offset_short {
                 sbe_rt::cold();
                 return Err(Self::buffer_too_short(buf, offset, #needed_lit));
             }
@@ -440,7 +441,7 @@ pub(crate) fn generate_message_encoder(
             buf: &'a mut [u8],
             offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
-            if #needed_lit > buf.len().saturating_sub(offset) {
+            if #offset_short {
                 panic!("{}", Self::buffer_too_short(buf, offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
@@ -601,8 +602,8 @@ pub(crate) fn generate_message_encoder(
         }
     }
 
-    // Placement utils live only on EncoderMetadata via get_metadata() —
-    // see ENCODER_RESERVED in conversion_helpers (inherent methods only).
+    // Placement utils live only on EncoderMetadata via get_metadata(); see
+    // ENCODER_RESERVED in conversion_helpers (inherent methods only).
     for f in &msg.fields {
         let f_name = to_snake_case(&f.name);
         // Offset of this field from the message header start (header + body offset).
@@ -622,7 +623,7 @@ pub(crate) fn generate_message_encoder(
         let f_ident = resolve_field_ident(&f_name, &wire_name, ENCODER_RESERVED);
 
         // Field descriptions must attach to the setter method (impl_contents),
-        // not the outer token stream — otherwise they float free of the API.
+        // not the outer token stream, or they float free of the API.
         let field_doc = f.description.as_ref().map(|d| doc_attr_tokens(d));
 
         match &f.field_type {
@@ -739,7 +740,7 @@ pub(crate) fn generate_message_encoder(
                         });
                     }
                 } else if prim_size == 1 {
-                    // Direct byte write for u8/i8/char — 1 instruction vs 3.
+                    // Direct byte write for u8/i8/char: one instruction, not three.
                     impl_contents.extend(quote::quote! {
                         #field_doc
                         #[inline]
@@ -888,23 +889,23 @@ pub(crate) fn generate_message_encoder(
             }
         }
         // Field id / offset / length / MetaAttribute (also on encoder, Java parity).
-        // Field NULL/MIN/MAX consts on concrete impl — turbofish-free access.
+        // Field NULL/MIN/MAX consts on the concrete impl, for turbofish-free access.
         if enable_meta_attributes {
             impl_consts.extend(emit_field_consts(f));
         }
     }
 
-    // No partial as_bytes on incomplete stages — complete-message byte/length
+    // No partial as_bytes on incomplete stages: complete-message byte/length
     // views exist only on the terminal complete stage.
 
     // Encoded-length support: strategy-classified (computed above).
-    // Length helpers are associated functions — keep on concrete impl for
+    // Length helpers are associated functions, kept on the concrete impl for
     // turbofish-free `CarEncoder::compute_encoded_length_with_message_header(...)`.
     impl_consts.extend(encoded_len_gen.encoder_impl.clone());
 
     // A complete, owned, latest-version snapshot of every required fixed
     // field. Optional fields are `Option<T>`; constants are excluded.
-    // No `Default` — every required field must be explicitly initialised.
+    // No `Default`: every required field must be explicitly initialised.
     {
         let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
         let mut fixed_fields_ts = proc_macro2::TokenStream::new();
@@ -975,7 +976,7 @@ pub(crate) fn generate_message_encoder(
                 ) {
                     Ok(Some(ts)) => ts,
                     Ok(None) => {
-                        // Optional field without a wire image — treat as zero fill
+                        // Optional field without a wire image: treat as zero fill
                         // of the declared field size (defensive; should not happen
                         // for resolved optionals).
                         let sz = f.field_type.size();
@@ -1097,11 +1098,10 @@ pub(crate) fn generate_message_encoder(
             #impl_consts
         }
     });
-    // Unfixed phase: setters plus the phase transitions. Emitted as one
-    // concrete impl, exactly as before — these are the benchmarked hot paths
-    // (`encode_scalar_body_only`, `optional_enum_nullify`), and relocating
-    // them into a generic `impl<H, F>` measurably regressed both against
-    // sbe-tool. Keep this block concrete and unsplit.
+    // Unfixed phase: setters plus the phase transitions, in one concrete
+    // impl. These are benchmarked hot paths (`encode_scalar_body_only`,
+    // `optional_enum_nullify`), and a generic `impl<H, F>` makes both slower
+    // than sbe-tool. Keep this block concrete and unsplit.
     ts.extend(quote::quote! {
         impl<'a, H: sbe_rt::HeaderState> #name_encoder_ident<'a, H, sbe_rt::FieldsUnfixed> {
             #impl_contents
@@ -1109,7 +1109,7 @@ pub(crate) fn generate_message_encoder(
         }
     });
     // Fixed phase: the same individual setters again, so a conversion setter
-    // (`*_from`) can run after `fixed()` and still reach a terminal method —
+    // (`*_from`) can run after `fixed()` and still reach a terminal method;
     // `fixed()` takes wire values, so a domain-typed field has no other route
     // to completion. Phase transitions are deliberately absent: `fixed()`
     // stays one-way, so terminal methods remain locked until every required
@@ -1126,7 +1126,7 @@ pub(crate) fn generate_message_encoder(
     // otherwise this stage is fixed-block only and must not look like a frame.
     let meta_bytes = if msg.is_fixed() {
         // Complete-sounding byte views live on the FieldsFixed encoder, not
-        // on unfixed metadata — wrap + get_metadata().as_bytes_with_header()
+        // on unfixed metadata: wrap + get_metadata().as_bytes_with_header()
         // must not publish an unwritten body.
         quote::quote! {}
     } else {
@@ -1689,7 +1689,7 @@ pub(crate) fn generate_message_encoder(
     }
 
     // Every FieldsState / HeaderState combination is a generated message type.
-    // `fixed()` returns `Encoder<_, FieldsFixed>` — that must stay `SbeMessage`.
+    // `fixed()` returns `Encoder<_, FieldsFixed>`, which must stay `SbeMessage`.
     ts.extend(quote::quote! {
         impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #sealed_path::Sealed
             for #name_encoder_ident<'a, H, F>
@@ -1760,36 +1760,36 @@ pub(crate) fn generate_message_encoder(
     }
 
     // Checked + unsafe unchecked constructors are emitted once on the
-    // concrete impl above. Do not re-emit a second safe zero-check
-    // pair here — that reintroduced UB from safe Rust.
+    // concrete impl above. Do not emit a second, safe zero-check pair here:
+    // it would allow UB from safe Rust.
 
     ts.extend(encoded_len_gen.standalone);
 
     ts
 }
 
-/// `<name>_as_str` — the encode-side counterpart of the decode-side
+/// `<name>_as_str`, the encode-side counterpart of the decode-side
 /// `vardata_text_helpers` (see `message_decoder.rs`).
 ///
 /// `vd_ident` is the checked byte setter this forwards to, so the max-length
 /// and buffer-space checks stay in one place. `&str` is already guaranteed
 /// valid UTF-8 by the type itself, so a UTF-8-declared field needs no
-/// encode-time check at all — only ASCII needs one, because a `&str` can
+/// encode-time check at all. Only ASCII needs one, because a `&str` can
 /// legally hold non-ASCII text that the schema's own declaration forbids.
 ///
 /// Binary / unspecified encoding gets no `_as_str` setter, matching the
 /// decode side: the caller decides what the bytes mean.
 ///
-/// `ret_ty` is the full return-stage type — `#next_stage<'a, H>` at message
+/// `ret_ty` is the full return-stage type: `#next_stage<'a, H>` at message
 /// level, `#next_stage<'a>` on a group entry (entries carry no header-state
-/// generic) — so message and entry callers share this one decision without
-/// forcing entries through a signature shape that doesn't apply to them.
+/// generic). Message and entry callers share this one decision without
+/// forcing entries through a signature shape that does not apply to them.
 ///
 /// `taken` is the accessor names already on this encode stage. A field whose
 /// accessor already spells `<vd>_as_str` wins the name, via the same
 /// [`named_accessor_ident`] yield as decode. Encode stages are one tail each,
-/// so a sibling tail of that name lives on the *next* stage and is not in
-/// `taken` — collapsing those would drop a setter that does not collide.
+/// so a sibling tail of that name lives on the next stage and is not in
+/// `taken`; collapsing those would drop a setter that does not collide.
 /// Entry fields share the first-tail type, which is why they belong here.
 pub(crate) fn vardata_encode_str_setter(
     vd_ident: &syn::Ident,
@@ -1808,7 +1808,7 @@ pub(crate) fn vardata_encode_str_setter(
     let field_lit = syn::LitStr::new(field_name, span);
 
     // Generator-authored prose, not schema-derived text, so it goes straight
-    // into a literal `///` line rather than through `doc_attr_tokens` — that
+    // into a literal `///` line rather than through `doc_attr_tokens`. That
     // helper HTML-escapes untrusted external descriptions, which would turn
     // this doc's own `` `&str` `` code span into the literal text `&amp;str`.
     let (doc, ascii_check) = match super::runtime::text_encoding_kind(character_encoding) {

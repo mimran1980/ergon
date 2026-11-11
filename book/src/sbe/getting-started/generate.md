@@ -15,8 +15,8 @@ schema file and every resolved include, and print generation warnings as
 
 | Source | Means |
 |---|---|
-| `SchemaSource::file(path)` (or a `&Path` / `PathBuf`) | Read the file; `xi:include` resolves relative to it |
-| `SchemaSource::xml(text)` | Inline XML, e.g. `include_str!`; nothing to watch, so add your own `rerun-if-changed` |
+| `SchemaSource::file(path)` (or a `&Path` or `PathBuf`) | Reads the file; `xi:include` resolves relative to it |
+| `SchemaSource::xml(text)` | Inline XML, for example from `include_str!`; nothing to watch, so add your own `rerun-if-changed` |
 
 A bare `&str` does not compile as a source: say whether it is a path or XML.
 

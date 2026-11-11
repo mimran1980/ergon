@@ -10,23 +10,13 @@
 //!
 //! The `compile_and_run*` helpers write a throwaway crate and `cargo build`
 //! it. That crate resolves its own dependency graph (`chrono`, `rust_decimal`,
-//! `proptest`, …), whose transitive closure is **not** a subset of this
-//! workspace's — so a CI runner's cargo cache does not contain it. Forcing
-//! offline therefore fails on whichever transitive crate happens to be
-//! missing, while passing on any developer machine with a warm `~/.cargo`.
-//!
-//! That exact bug turned `CI` red on every release commit from 0.1.19 to
-//! 0.1.22 (`bit-set v0.8.0`, then `ahash v0.7.8`) and on Dependabot PRs
-//! (`coverage` under `cargo llvm-cov` inherits `CARGO_NET_OFFLINE`). Always
-//! `env_remove("CARGO_NET_OFFLINE")` on scratch cargo. Do not reintroduce
-//! `--offline` on these helpers.
-//!
-//! # Codegen bug workaround
-//!
-//! The current codegen emits several known-compile errors. `patch_source()`
-//! applies surgical string replacements so generated code compiles and runs
-//! in tests.  This is a stopgap — each patch is tracked against a fixup todo
-//! and should be removed once the codegen is fixed.
+//! `proptest`, …), whose transitive closure is not a subset of this
+//! workspace's, so a CI runner's cargo cache does not contain it. Forcing
+//! offline fails on whichever transitive crate happens to be missing, while
+//! passing on any developer machine with a warm `~/.cargo`. `coverage` under
+//! `cargo llvm-cov` inherits `CARGO_NET_OFFLINE`, so always
+//! `env_remove("CARGO_NET_OFFLINE")` on scratch cargo and never add
+//! `--offline` to these helpers.
 
 #![allow(missing_docs)]
 #![allow(clippy::all)]
@@ -47,8 +37,8 @@ use scratch::{Mode, ScratchCrate};
 /// `std::env::temp_dir()` is shared OS-wide, not per-process, and every
 /// `compile_and_run*` helper starts by `remove_dir_all`-ing its directory
 /// before recreating it. Two `cargo test` invocations racing on the same
-/// name — a local run overlapping CI, or `just test` and `just bench` both
-/// exercising this suite — could delete the *other* process's in-flight
+/// name (a local run overlapping CI, or `just test` and `just bench` both
+/// exercising this suite) could delete the other process's in-flight
 /// directory mid-build. The crate's name folds in this process's id and a
 /// per-process counter ([`ScratchCrate::new`]), so the path is private to the
 /// call that owns it, whatever name a test happens to reuse.
@@ -126,6 +116,10 @@ impl Paths {
         Self::fixtures_dir().join("all-types-be-schema.xml")
     }
 
+    pub fn zero_length_header_schema() -> PathBuf {
+        Self::fixtures_dir().join("zero-length-header.xml")
+    }
+
     pub fn custom_header_layout_schema() -> PathBuf {
         Self::fixtures_dir().join("custom-header-layout-schema.xml")
     }
@@ -166,7 +160,7 @@ impl Paths {
         Self::fixtures_dir().join("versioned-domain-schema.xml")
     }
 
-    /// A group with 2+ nested groups and 2+ var-data fields — exercises the
+    /// A group with 2+ nested groups and 2+ var-data fields, exercising the
     /// ng_idx and nvd_idx counters in `generate_group_decoder`.
     pub fn multi_nested_group_schema() -> PathBuf {
         Self::fixtures_dir().join("multi-nested-group-schema.xml")
@@ -225,7 +219,7 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
 ///
 /// A plain `src.contains(method)` check cannot tell a method on the type
 /// under test from a same-named method the generator emits on an unrelated
-/// type — e.g. the ordered decode lane's `fixed` callback and the encoder's
+/// type; the ordered decode lane's `fixed` callback and the encoder's
 /// fixed phase share a name but are different invariants.
 /// Parsing scopes the check to the type that actually owns the invariant.
 pub fn impl_for_type_defines_method(src: &str, type_name: &str, method: &str) -> bool {
@@ -248,14 +242,6 @@ pub fn impl_for_type_defines_method(src: &str, type_name: &str, method: &str) ->
             _ => false,
         })
     })
-}
-
-/// Apply surgical patches for known codegen bugs.
-pub fn patch_source(src: &str) -> String {
-    // no patches needed currently; if a new codegen bug requires patching, add the patch here and record the bug; delete this function if it stays empty two releases
-    // Entry encoders use the unsafe borrow split directly.
-    // Message encoders take `mut self` by value so no borrow conflict.
-    src.to_string()
 }
 
 /// Write generated source + a `main()` test body into a temp crate, compile,
@@ -310,8 +296,7 @@ pub fn compile_fails_with_diagnostics_excluding(
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
 
-    let patched = patch_source(source);
-    fs::write(src.join(format!("{module_name}.rs")), &patched).unwrap();
+    fs::write(src.join(format!("{module_name}.rs")), source).unwrap();
 
     let main = format!(
         "#![allow(dead_code,unused_imports,unused_variables)]\n\
@@ -440,8 +425,7 @@ fn _compile_and_run(
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
 
-    let patched = patch_source(source);
-    fs::write(src.join(format!("{module_name}.rs")), &patched).unwrap();
+    fs::write(src.join(format!("{module_name}.rs")), source).unwrap();
 
     let main = format!(
         "#![allow(dead_code,unused_imports,unused_variables)]\n\
@@ -543,8 +527,8 @@ pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &st
     dual_encode_run_inner(test_name, &[("ergo", &ergo_src)], tool_key, code, validate);
 }
 
-/// Like [`dual_encode_run`] but with several ergo-sbe modules in one crate —
-/// e.g. the same schema generated at different `with_encode_version` settings,
+/// Like [`dual_encode_run`] but with several ergo-sbe modules in one crate,
+/// such as the same schema generated at different `with_encode_version` settings,
 /// so one sbe-tool oracle can be given wire from every acting version.
 ///
 /// The first module is also glob-imported (`use <first>::*;`) so single-module
@@ -594,7 +578,7 @@ fn dual_encode_run_inner(
 
     let mut mod_decls = String::new();
     for (name, source) in modules {
-        fs::write(src.join(format!("{name}.rs")), patch_source(source)).unwrap();
+        fs::write(src.join(format!("{name}.rs")), source).unwrap();
         mod_decls.push_str(&format!("mod {name};\n"));
     }
     mod_decls.push_str(&format!("use {}::*;\n", modules[0].0));
@@ -728,7 +712,6 @@ pub fn dual_header_decode_run(test_name: &str, schema: &Path, tool_key: &str, bi
             assert_eq!(tool_header.version(), version, "tool version");
 
         }}
-        println!("PASS: {test_name}");
         "###,
     );
     dual_encode_run(test_name, schema, tool_key, &code);
@@ -768,7 +751,7 @@ pub fn compile_and_run_modules(test_name: &str, modules: &[(&str, &str)], code: 
 
     let mut mod_decls = String::new();
     for (name, source) in modules {
-        fs::write(src.join(format!("{name}.rs")), patch_source(source)).unwrap();
+        fs::write(src.join(format!("{name}.rs")), source).unwrap();
         mod_decls.push_str(&format!("mod {name};\n"));
     }
 

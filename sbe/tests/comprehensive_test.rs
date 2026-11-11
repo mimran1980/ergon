@@ -66,12 +66,12 @@ fn enum_all_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Fixed-block fields are randomly accessible: every accessor reads from a
 /// literal, compile-time byte offset relative to the message/entry start
-/// (`self.offset + N`, `N` a `usize` constant baked in at codegen time — see
+/// (`self.offset + N`, `N` a `usize` constant baked in at codegen time; see
 /// the golden file). There is no cursor that a read advances or consumes, so
 /// access order can never change the result, and reading a field twice with
 /// unrelated reads in between must give the same answer both times. This
 /// mirrors sbe-tool's own generated accessors exactly (same
-/// `self.offset + N` shape) — official-SBE fixed blocks are order-independent
+/// `self.offset + N` shape): official-SBE fixed blocks are order-independent
 /// on both sides, not an ergon-only property.
 #[test]
 fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std::error::Error>> {
@@ -120,7 +120,7 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
         let vcode = fwd.vehicle_code();
         let cap = fwd.engine().capacity();
 
-        // Exact reverse order, on a SEPARATE fresh decode — same buffer.
+        // Exact reverse order, on a separate fresh decode of the same buffer.
         let rev = CarDecoder::try_decode(encoded, 0)?;
         assert_eq!(rev.engine().capacity(), cap);
         assert_eq!(rev.vehicle_code(), vcode);
@@ -130,7 +130,7 @@ fn fixed_fields_are_order_independent_random_access() -> Result<(), Box<dyn std:
         assert_eq!(rev.model_year(), year);
         assert_eq!(rev.serial_number(), serial);
 
-        // Scrambled order, on a THIRD fresh decode — deliberately not
+        // Scrambled order, on a third fresh decode: deliberately not
         // ascending, not descending, not the schema's own field order.
         let mix = CarDecoder::try_decode(encoded, 0)?;
         assert_eq!(mix.code(), code);
@@ -331,7 +331,6 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
             .fixed(&CarFixedFields {
                 serial_number: 42,
                 model_year: 2013,
-                // was `available_bool(true)` — the FixedFields path takes the enum.
                 available: BooleanType::T,
                 code: Model::A,
                 some_numbers: [0u32; 4],
@@ -356,7 +355,6 @@ fn boolean_field_roundtrip_via_bool_api() -> Result<(), Box<dyn std::error::Erro
             .fixed(&CarFixedFields {
                 serial_number: 42,
                 model_year: 2013,
-                // was `available_bool(false)` — the FixedFields path takes the enum.
                 available: BooleanType::F,
                 code: Model::A,
                 some_numbers: [0u32; 4],
@@ -463,7 +461,7 @@ fn boolean_nullval_reads_true() -> Result<(), Box<dyn std::error::Error>> {
 
         let dec = CarDecoder::try_decode(encoded, 0).unwrap();
         assert_eq!(dec.available(), BooleanType::NullVal);
-        // available_bool() must reject NullVal — it is not a valid bool
+        // available_bool() must reject NullVal, which is not a valid bool.
         assert!(dec.available_bool().is_err(), "NullVal must be rejected by available_bool");
     "#,
     );
@@ -694,7 +692,7 @@ fn buffer_too_short_truncated_field() -> Result<(), Box<dyn std::error::Error>> 
         let car = car.model(b"").unwrap();
         let car = car.activation_code(b"").unwrap();
         let encoded = car.as_bytes_with_header();
-        // Truncate buffer mid-message — field read should fail
+        // A buffer truncated mid-message must fail the field read.
         let truncated = &encoded[..10]; // only header + partial block
         assert!(CarDecoder::verify(truncated).is_err());
         assert!(CarDecoder::verify(&encoded[..8]).is_err());
@@ -733,7 +731,7 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         let car = car.activation_code(b"RACE-XYZ").unwrap();
         let encoded = car.as_bytes_with_header();
         let car2 = CarDecoder::try_decode(encoded, 0).unwrap();
-        // Valid varData reads — traverse the groups first (wire order).
+        // Valid varData reads traverse the groups first (wire order).
         let after_perf = car2
             .skip_fuel_figures()?.skip_performance_figures()?;
         let (mfr, a1) = after_perf.into_manufacturer().unwrap();
@@ -747,7 +745,7 @@ fn vardata_truncated_length_detected() -> Result<(), Box<dyn std::error::Error>>
         // Severely truncated buffer fails to parse
         assert!(CarDecoder::verify(&encoded[..20]).is_err(),
             "severely truncated buffer ({}) should fail verify", encoded.len());
-        // VarData with explicit length prefix — cutting mid-way fails
+        // Cutting var-data mid-way, after its length prefix, fails.
         let trunc_at_block_end = &encoded[..45]; // just past header + block, before varData
         assert!(CarDecoder::verify(trunc_at_block_end).is_err());
     "#,
@@ -966,7 +964,7 @@ fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::
             .unwrap()
             .fixed(&AllTypesFixedFields {
                 scalar_composite: scalar,
-                // Never set by the original snippet — kept at the zero image.
+                // Left at the zero image.
                 float_pair: FloatPair::new(0.0, 0.0),
                 enum_field: TestEnum::C,
                 set_field: TestSet::default(),
@@ -990,10 +988,9 @@ fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::
         assert_eq!(ver, 0, "version");
 
         // Prove body uses LE: first body field is i8_val at offset 0 of AllScalars composite.
-        // i8 is a single byte (endian-independent), but u16_val at composite offset 3
-        // should be LE (50000 = 0xC350 → bytes [0x50, 0xC3] in LE)
+        // i8 is a single byte (endian-independent), but u16_val at composite offset 4
+        // must be LE: 50000 = 0xC350 is bytes [0x50, 0xC3].
         let body_start = 8; // after 8-byte header
-        let u16_offset = body_start + 3; // i8(1) + u8(1) + i16(2) = 4, wait — composite offsets
         // AllScalars layout: i8(1) + u8(1) = 2; i16 at offset 2 (2 bytes), u16 at offset 4 (2 bytes)
         let u16_val_bytes = [buf[body_start + 4], buf[body_start + 5]];
         let u16_val = u16::from_le_bytes(u16_val_bytes);
@@ -1021,7 +1018,7 @@ fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::
             .unwrap()
             .fixed(&AllTypesFixedFields {
                 scalar_composite: scalar,
-                // Never set by the original snippet — kept at the zero image.
+                // Left at the zero image.
                 float_pair: FloatPair::new(0.0, 0.0),
                 enum_field: TestEnum::C,
                 set_field: TestSet::default(),
@@ -1030,7 +1027,7 @@ fn endianness_header_and_body_follow_schema() -> Result<(), Box<dyn std::error::
             .var_data(b"endian-test")
             .unwrap();
 
-        // Header follows schema byteOrder (BE) — matching sbe-tool wire output.
+        // The header follows schema byteOrder (BE), as sbe-tool's wire output does.
         let tid = u16::from_be_bytes([buf[2], buf[3]]);
         assert_eq!(tid, 1, "templateId must match schema byteOrder (BE)");
         let sid = u16::from_be_bytes([buf[4], buf[5]]);
@@ -1085,7 +1082,7 @@ fn all_scalars_big_endian_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         let _ = enc
             .fixed(&AllTypesFixedFields {
                 scalar_composite: scalar,
-                // Never set by the original snippet — kept at the zero image.
+                // Left at the zero image.
                 float_pair: FloatPair::new(0.0, 0.0),
                 enum_field: TestEnum::C,
                 set_field: TestSet::default(),
@@ -1170,7 +1167,7 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
         "pub fn manufacturer",
         "pub fn model",
         "pub fn activation_code",
-        // discounted_model is const fn (constant field) — tested separately
+        // discounted_model is a const fn (constant field), tested separately.
     ];
     for m in decoder_methods {
         assert!(src.contains(m), "missing decoder method: {m}");
@@ -1203,8 +1200,8 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
     );
 
     // Composite value type methods (engine_value returns Engine with fields)
-    // Note: most Engine accessors are now pub fn (non-const) after read_bytes change
-    // discounted_model is a constant field — generated as const fn
+    // Most Engine accessors are non-const `pub fn`; discounted_model is a
+    // constant field, generated as a const fn.
     assert!(
         src.contains("const fn discounted_model"),
         "missing discounted_model()"
@@ -1296,7 +1293,7 @@ fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn s
     let source = modules.modules().next().unwrap().source.clone();
 
     let code = r#"
-    // Wire precision converters — each composite is a transparent u64 wrapper.
+    // Wire precision converters: each composite is a transparent u64 wrapper.
     // TimestampNanos  → built-in u64 converter (nsec) works, but we write our own
     //                   per-composite impl to keep all three consistent.
     // TimestampMicros → DateTime from/to microseconds
@@ -1304,7 +1301,7 @@ fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn s
 
     use chrono::{DateTime, Utc, TimeZone};
 
-    // Composite value type is `#[repr(transparent)] TimestampNanos([u8; 8])` —
+    // The composite value type is `#[repr(transparent)] TimestampNanos([u8; 8])`,
     // not a raw u64. Parse the LE bytes to get the integer value.
     fn read_u64(wire: &[u8; 8]) -> u64 { u64::from_le_bytes(*wire) }
     fn write_u64(n: u64) -> [u8; 8] { n.to_le_bytes() }
@@ -1373,7 +1370,7 @@ fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn s
     let millis_ts = Utc.with_ymd_and_hms(2025, 7, 27, 14, 30, 0).unwrap()
                        + chrono::TimeDelta::milliseconds(123);
 
-    // Encode known wire values — each composite is a transparent u64 wrapper.
+    // Encode known wire values; each composite is a transparent u64 wrapper.
     let wire_nanos:  u64 = nanos_ts.timestamp_nanos_opt().unwrap() as u64;
     let wire_micros: u64 = micros_ts.timestamp_micros() as u64;
     let wire_millis: u64 = millis_ts.timestamp_millis() as u64;

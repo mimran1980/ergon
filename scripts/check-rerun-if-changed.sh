@@ -53,7 +53,7 @@ for rel_file in files:
         checked += 1
         if not resolved.exists():
             print(
-                f"check-rerun-if-changed: FAIL — {rel_file} watches {watched}, "
+                f"check-rerun-if-changed: FAIL: {rel_file} watches {watched}, "
                 "which does not exist"
             )
             failed = True

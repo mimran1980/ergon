@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! Admin request/response integration test — exercises
+//! Admin request/response integration test for
 //! `AeronCluster::send_admin_request_to_take_snapshot` against a live Java
 //! cluster and verifies the reply arrives on `on_admin_response`.
 //!
@@ -77,7 +77,7 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     let got_code = listener.admin_code;
     // The round-trip is the parity point: the cluster MUST reply on
     // on_admin_response with the matching correlation id. The response CODE
-    // depends on cluster auth — the default single-node test cluster denies
+    // depends on cluster auth: the default single-node test cluster denies
     // snapshot admin requests as UNAUTHORISEDACCESS (no elevated credentials),
     // which still proves the request was received, processed, and answered.
     assert_eq!(

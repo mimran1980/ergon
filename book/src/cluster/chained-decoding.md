@@ -1,4 +1,4 @@
-# Multi-Message & Framing
+# Multi-message framing
 
 Ergon supports two framing approaches for adjacent messages, and an `AnyMessage`
 dispatch enum for multi-message streams where the next type isn't known until
@@ -7,6 +7,24 @@ runtime.
 Normal Cluster applications use `AeronCluster` and its egress listeners. The
 protocol-codec examples below illustrate framing through the repository's
 `cluster_codec_types` test/benchmark seam, which is not a stable consumer API.
+
+<div class="ergon-anim" data-anim="multi-message-framing" data-title="Back-to-back messages: each decode tells you where the next starts"></div>
+
+*Animation, in words:* the [feature tour](../sbe/feature-tour/multi-template.md)
+buffer holds a Heartbeat (bytes 0 to 24) then a Note (24 to 56).
+`AnyMessage::try_decode` at offset 0 reads the 8-byte header, checks schemaId
+77 and matches templateId 1. Heartbeat has no tail, so 8 + blockLength 16
+moves the offset to 24. The header at 24 names the Note. Its
+`get_metadata().remaining()` starts at 36, which is the Note's own length
+prefix, not the next message. The staged `into_body_as_str()` reads the length
+and the 16-byte body, and the complete stage gives 24 + 8 = 32 bytes, so the
+offset reaches 56 and the loop ends. No byte is read twice. An unknown
+templateId (an illustrative third frame) makes `try_decode` return
+`UnknownTemplateLength`. blockLength covers only the fixed block, so the chain
+stops. `FrameCursor` with a 4-byte length prefix per frame skips that frame as
+`Unknown`. For a fixed-only `SessionMessageHeader`, `remaining()` at byte 32
+is exactly the following `SessionKeepAlive`. These are counts from the
+generated code, not timings.
 
 ## Two framing approaches
 
@@ -115,7 +133,7 @@ fn dispatch(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
             println!("admin response: {msg:?}, {} payload bytes", payload.len());
         }
         AnyMessage::SessionKeepAlive(_) => {
-            // heartbeat — nothing to do
+            // heartbeat: nothing to do
         }
         AnyMessage::Unknown { .. } => {
             // Produced by decode_frame when an external length is supplied.

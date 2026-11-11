@@ -1,6 +1,6 @@
 # Method Chaining
 
-ergo-sbe encoders are designed so **the entire encode reads as one expression**,
+ergo-sbe encoders are designed so the entire encode reads as one expression,
 from `wrap_and_apply_header` through `.fixed(...)` and every dynamic tail,
 ending in `.encoded_length_with_header()`. Bind only the resulting length; do not retain
 intermediate encoder variables.
@@ -10,7 +10,7 @@ intermediate encoder variables.
 ```rust,no_run
 {{#include ../../../examples/heartbeat-encode.rs:staged_chaining}}
 ```
-*(From `book/examples/heartbeat-encode.rs` — compiled against the feature-tour codec.)*
+*(From `book/examples/heartbeat-encode.rs`, compiled against the feature-tour codec.)*
 
 ### Staged chaining vs fixed-only
 
@@ -26,14 +26,14 @@ that complete view.
 
 ```rust,ignore
 // Each `let` breaks the chain and splays the pipeline across the screen.
-// The `.unwrap()` calls are a code smell — the fallible chain should use `?`.
+// The `.unwrap()` calls are a code smell; the fallible chain should use `?`.
 let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0).fixed(&fields);
 let enc = enc.fuel_figures(2, |g| { ... }).unwrap();
 let enc = enc.manufacturer_as_str("Honda").unwrap();
 let len = enc.encoded_length_with_header();
 ```
 
-**Every encoder stage is chainable** — `fixed()` and each tail method return
+Every encoder stage is chainable: `fixed()` and each tail method return
 the next stage (or `Result<NextStage, _>`) and compose with `?` in the same
 expression. Intermediate encoder rebinding and manual `.unwrap()` defeat this
 design.
@@ -56,10 +56,10 @@ callbacks receive bytes or strictly validated text. Every callback returns
 `Result<_, DecodeError>`, so the closures infer. These
 callbacks borrow the original wire buffer, so bytes and text may
 be retained as the chain advances. The message chain ends on
-`encoded_length_with_header()` / `as_bytes_with_header()`, like encode —
+`encoded_length_with_header()` / `as_bytes_with_header()`, like encode;
 `.done()` is only to unwrap the staged complete. A nested `ordered()` walk
 returns that completion to the parent callback directly. The
-[L3 sample](../../samples/l3-book.md#ordered--one-spelling-all-the-way-down)
+[L3 sample](../../samples/l3-book.md#ordered-one-spelling-all-the-way-down)
 shows this recursive form.
 
 The underlying staged API also supports explicit iteration and skipping. Its
@@ -67,7 +67,7 @@ group and var-data spellings can require iterator and tuple bindings:
 
 | Group entries | `into_<group>` gives you | Why |
 |---|---|---|
-| Carry their own groups or var-data | a visit closure, returning the entry's completion | no stride — the completion *is* where the next entry starts |
+| Carry their own groups or var-data | a visit closure, returning the entry's completion | no stride: the completion *is* where the next entry starts |
 | Fixed-stride (no tails of their own) | an iterator, `for e in &mut iter` | the next entry is `offset + block length`, so nothing has to be measured |
 
 Var-data `into_<name>()` returns `(payload, next)`. Text fields also offer

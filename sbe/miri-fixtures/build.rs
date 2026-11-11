@@ -5,6 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("schemas/little-endian.xml", "little_endian"),
         ("schemas/big-endian.xml", "big_endian"),
         ("schemas/nested.xml", "nested"),
+        ("schemas/zero-length-header.xml", "zero_length_header"),
     ] {
         let schema = manifest_dir.join(schema);
         ergo_sbe::generate(

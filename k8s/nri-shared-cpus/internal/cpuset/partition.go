@@ -215,7 +215,7 @@ func MissingExclusive(path string, err error) error {
 
 // HasExclusive reports whether ExclusiveFile exists on a cgroup that has the
 // cpuset controller enabled. A cgroup with cpuset.cpus is the probe: the file
-// sits next to it. dir is where to start looking — its chain up to root first,
+// sits next to it. dir is where to start looking: its chain up to root first,
 // then root's children. probed is false when nothing found has the cpuset
 // controller enabled, so the filesystem cannot answer yet: the caller then
 // lets the write itself report the missing file.

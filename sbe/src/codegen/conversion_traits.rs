@@ -9,7 +9,7 @@ use crate::structured_ir::SchemaElements;
 /// "the trait bound `T: TryFromSbe<Wire>` is not satisfied" with a message
 /// naming the exact missing impl. It fires for both causes: a
 /// `with_conversion` caller who forgot the impl for their chosen `T`, and a
-/// `DomainImpl::Manual` field — the generated accessor's own doc comment
+/// `DomainImpl::Manual` field. The generated accessor's own doc comment
 /// (see `converter_impls.rs`) carries a ready-to-paste snippet for the
 /// latter, which the note below points at.
 pub(crate) fn emit_conversion_traits(src: &mut String) {
@@ -106,9 +106,9 @@ fn decimal_impl_tokens(
         }
     };
     // A mantissa with presence="optional" (and a schema nullValue) has a
-    // genuine null image — `mantissa()` decodes it as `Option<i64>`. The
-    // wire null sentinel is not a valid Decimal, so it fails closed as a
-    // typed error rather than silently decoding as a huge/wrong number.
+    // genuine null image: `mantissa()` decodes it as `Option<i64>`. The
+    // wire null sentinel is not a valid Decimal, so it is a typed error
+    // rather than a huge, wrong number.
     let mantissa_expr: proc_macro2::TokenStream = if mantissa_is_optional {
         quote::quote! { wire.mantissa().ok_or("null Decimal mantissa")? as i128 }
     } else {
@@ -178,23 +178,23 @@ fn chrono_impl_tokens() -> proc_macro2::TokenStream {
 
 /// Pretty-print a token stream of one or more items as standalone Rust
 /// source, for embedding in a doc comment. Falls back to the raw
-/// (unformatted) token text if it somehow fails to parse as a file — still
-/// correct Rust, just ugly, and never worth failing codegen over.
+/// (unformatted) token text if it fails to parse as a file: still correct
+/// Rust, only unformatted, and not worth failing codegen over.
 fn pretty_print(ts: &proc_macro2::TokenStream) -> String {
     syn::parse_str::<syn::File>(&ts.to_string())
         .map(|file| prettyplease::unparse(&file))
         .unwrap_or_else(|_| ts.to_string())
 }
 
-/// Emit `TryFromSbe` / `TryToSbe` impls for well-known **domain-type** mappings
-/// (bool ↔ BooleanType, rust_decimal ↔ Decimal, chrono ↔ u64/UTCTimestamp).
+/// Emit `TryFromSbe` / `TryToSbe` impls for the well-known domain-type mappings
+/// (bool and BooleanType, rust_decimal and Decimal, chrono and u64/UTCTimestamp).
 ///
 /// These built-in impls are gated on `domain_types`, not bare `conversions`:
 /// `with_conversion` alone keeps the seam dependency-free so callers can plug
 /// any adapter (see samples/sbe-feature-tour `FixedPrice` / app-side
-/// rust_decimal). `with_domain_type` opts into a concrete app type *and* these
-/// well-known impls — unless the caller chose [`crate::DomainImpl::Manual`],
-/// in which case use [`generate_manual_impl_snippets`] instead.
+/// rust_decimal). `with_domain_type` opts into a concrete app type and these
+/// well-known impls, unless the caller chose [`crate::DomainImpl::Manual`];
+/// then [`generate_manual_impl_snippets`] applies instead.
 pub(crate) fn generate_conversion_impl_blocks(
     elements: &SchemaElements,
     _conversions: &[crate::ConversionSelector],
@@ -205,9 +205,9 @@ pub(crate) fn generate_conversion_impl_blocks(
     let span = proc_macro2::Span::call_site();
 
     // Built-ins require an explicit domain-type mapping (not conversion-only).
-    // Emit TryFromSbe / TryToSbe for EVERY boolean enum mapped to "bool",
-    // not just the one literally named BooleanType. Skip selectors opted into
-    // DomainImpl::Manual — the caller supplies this impl.
+    // Emit TryFromSbe / TryToSbe for every boolean enum mapped to "bool",
+    // not only the one named BooleanType. Skip selectors opted into
+    // DomainImpl::Manual: the caller supplies this impl.
     for (sel, ty) in domain_types {
         if ty != "bool" || manual_impl_selectors.contains(sel) {
             continue;
@@ -225,8 +225,8 @@ pub(crate) fn generate_conversion_impl_blocks(
             && !manual_impl_selectors.contains(sel)
     });
 
-    // Emit rust_decimal TryFromSbe/TryToSbe for EVERY composite mapped to
-    // "rust_decimal::Decimal" — not just one literally named "Decimal". A
+    // Emit rust_decimal TryFromSbe/TryToSbe for every composite mapped to
+    // "rust_decimal::Decimal", not only one named "Decimal". A
     // schema with Decimal64 / Decimal128 (or any other decimal composite)
     // gets one impl per composite, keyed to that composite's ident. Skip
     // selectors opted into DomainImpl::Manual.
@@ -275,13 +275,12 @@ fn composite_mantissa_is_optional(dec_composite: &[crate::ir::Token]) -> bool {
 /// For every selector opted into [`crate::DomainImpl::Manual`] on one of the
 /// three well-known built-in type paths (`bool` / `rust_decimal::Decimal` /
 /// `chrono::DateTime<Utc>`), render the exact impl ergo-sbe would otherwise
-/// have generated as pretty-printed Rust source — a copy-paste starting
+/// have generated as pretty-printed Rust source: a copy-paste starting
 /// point for the doc comment on the field's generated domain accessor (see
 /// `converter_impls.rs`).
 ///
-/// A `rust_type` outside those three never had generated-impl logic to offer
-/// in the first place, so it produces no snippet — `with_domain_type` never
-/// auto-generates an impl for it regardless of `DomainImpl`.
+/// A `rust_type` outside those three has no built-in impl, so it produces no
+/// snippet; `with_domain_type` never generates an impl for it either.
 pub(crate) fn generate_manual_impl_snippets(
     elements: &SchemaElements,
     domain_types: &[(crate::ConversionSelector, String)],
@@ -591,8 +590,8 @@ pub(crate) fn validate_type_mappings(
 }
 
 /// `TryFromSbe` / `TryToSbe` between a generated enum and its mapped
-/// application enum: an exhaustive `match` each way. `NullVal` — also what
-/// the decoder makes of an undeclared discriminant — is `NullEnum`.
+/// application enum: an exhaustive `match` each way. `NullVal`, which is
+/// also what the decoder makes of an undeclared discriminant, is `NullEnum`.
 pub(crate) fn enum_mapping_impl_tokens(
     tokens: &[crate::ir::Token],
     mapping: &crate::EnumMapping,

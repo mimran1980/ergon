@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! Egress fragmentation tests — verify message reassembly through
+//! Egress fragmentation tests: message reassembly through
 //! `AeronCluster::poll` against a Java Echo service.
 
 use ergo_aeron_cluster::egress::EgressListener;

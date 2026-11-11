@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Every messageHeader field is constant and the message has no fields, so
+     a whole frame is zero bytes long: every length guard sees N = 0. -->
+<messageSchema package="zerohdr" id="202" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16" presence="constant">0</type>
+      <type name="templateId" primitiveType="uint16" presence="constant">1</type>
+      <type name="schemaId" primitiveType="uint16" presence="constant">202</type>
+      <type name="version" primitiveType="uint16" presence="constant">0</type>
+    </composite>
+  </types>
+  <message name="Empty" id="1"/>
+</messageSchema>

@@ -110,6 +110,8 @@ fn all_reference_message_headers_follow_schema_byte_order() {
         ("all_types_le", "all-types-le-schema.xml", false),
         ("all_types_be", "all-types-be-schema.xml", true),
         ("uint64_vardata_be", "uint64-vardata-be-schema.xml", true),
+        ("group_null_init_le", "group-null-init-le-schema.xml", false),
+        ("group_null_init_be", "group-null-init-be-schema.xml", true),
     ];
 
     // Independent cases: run in parallel, fail with the first failing case.
@@ -2417,6 +2419,155 @@ fn optional_enum_nullify_values() {
         }
         println!("PASS: optional_enum_nullify_values");
         "###,
+    );
+}
+
+// ── group_null_init ───────────────────────────────────────────────────────
+
+/// ergon encodes over a garbage-filled buffer setting only `req` at every
+/// location; sbe-tool encodes over a zeroed one, calling
+/// `nullify_optional_fields()` on the message and every entry. sbe-tool's
+/// nullify covers optional scalars, enums and composite members but not
+/// optional arrays, so its arm writes the array nulls explicitly. The frames
+/// must be identical, and sbe-tool must read every ergon optional as null.
+const GROUP_NULL_INIT_BODY: &str = r###"
+        use tool::{
+            Encoder, ReadBuf, WriteBuf,
+            message_header_codec,
+            msg_codec::{
+                MsgDecoder as ToolDec, MsgEncoder as ToolEnc,
+                encoder::{CellsEncoder as ToolCells, RowsEncoder as ToolRows},
+            },
+            side::Side as ToolSide,
+        };
+        const N: u16 = 2;
+
+        let mut ebuf = [0xABu8; 1024];
+        let el = MsgEncoder::wrap_and_apply_header(&mut ebuf, 0)
+            .fixed(&MsgFixedFields {
+                req: 1,
+                opt_scalar: None,
+                opt_enum: None,
+                opt_small: None,
+                opt_pair: None,
+                opt_wide: None,
+                opt_text: None,
+                opt_comp: None,
+                opt_nest: None,
+                opt_late: None,
+            })
+            .rows(N, |g| {
+                for i in 0..N {
+                    g.add(|mut e| {
+                        e.req(10 + u32::from(i));
+                        e.cells(N, |g| {
+                            for j in 0..N {
+                                g.add(|e| {
+                                    e.req(100 + u32::from(i * N + j));
+                                    Ok(())
+                                })?;
+                            }
+                            Ok(())
+                        })
+                    })?;
+                }
+                Ok(())
+            })?
+            .encoded_length_with_header();
+
+        macro_rules! tool_nulls {
+            ($enc:expr) => {{
+                $enc.nullify_optional_fields();
+                $enc.opt_small(&[u8::MAX; 4]);
+                $enc.opt_pair(&[u16::MAX; 2]);
+                $enc.opt_wide(&[i32::MIN; 4]);
+                $enc.opt_text(&[0u8; 12]);
+                $enc.opt_late(&[u16::MAX; 2]);
+            }};
+        }
+        let mut tbuf = [0u8; 1024];
+        let mut t = ToolEnc::default()
+            .wrap(WriteBuf::new(&mut tbuf), message_header_codec::ENCODED_LENGTH);
+        t = t.header(0).parent().unwrap();
+        tool_nulls!(t);
+        t.req(1);
+        let mut rows = t.rows_encoder(N, ToolRows::default());
+        for i in 0..N {
+            assert_eq!(rows.advance().unwrap(), Some(usize::from(i)));
+            tool_nulls!(rows);
+            rows.req(10 + u32::from(i));
+            let mut cells = rows.cells_encoder(N, ToolCells::default());
+            for j in 0..N {
+                assert_eq!(cells.advance().unwrap(), Some(usize::from(j)));
+                tool_nulls!(cells);
+                cells.req(100 + u32::from(i * N + j));
+            }
+            rows = cells.parent().unwrap();
+        }
+        t = rows.parent().unwrap();
+        let tl = t.get_limit();
+        assert_frames_eq("group null images", &ebuf[..el], &tbuf[..tl]);
+
+        macro_rules! assert_tool_nulls {
+            ($dec:expr) => {{
+                assert_eq!($dec.opt_scalar(), None);
+                assert_eq!($dec.opt_enum(), ToolSide::NullVal);
+                assert_eq!($dec.opt_small(), [u8::MAX; 4]);
+                assert_eq!($dec.opt_pair(), [u16::MAX; 2]);
+                assert_eq!($dec.opt_wide(), [i32::MIN; 4]);
+                assert_eq!($dec.opt_text(), [0u8; 12]);
+                assert_eq!($dec.opt_late(), [u16::MAX; 2]);
+                let mut comp = $dec.opt_comp_decoder();
+                assert_eq!((comp.lo(), comp.hi()), (None, 0));
+                let mut nest = comp.parent().unwrap().opt_nest_decoder();
+                assert_eq!(nest.tag(), None);
+                let mut inner = nest.inner_decoder();
+                assert_eq!((inner.lo(), inner.hi()), (None, 0));
+                nest = inner.parent().unwrap();
+                nest.parent().unwrap()
+            }};
+        }
+        let header = message_header_codec::MessageHeaderDecoder::default()
+            .wrap(ReadBuf::new(&ebuf[..el]), 0);
+        let d = ToolDec::default().header(header, 0);
+        assert_eq!(d.req(), 1);
+        let d = assert_tool_nulls!(d);
+        let mut rows = d.rows_decoder();
+        assert_eq!(rows.count(), N);
+        for i in 0..N {
+            assert_eq!(rows.advance().unwrap(), Some(usize::from(i)));
+            assert_eq!(rows.req(), 10 + u32::from(i));
+            rows = assert_tool_nulls!(rows);
+            let mut cells = rows.cells_decoder();
+            assert_eq!(cells.count(), N);
+            for j in 0..N {
+                assert_eq!(cells.advance().unwrap(), Some(usize::from(j)));
+                assert_eq!(cells.req(), 100 + u32::from(i * N + j));
+                cells = assert_tool_nulls!(cells);
+            }
+            assert_eq!(cells.advance().unwrap(), None);
+            rows = cells.parent().unwrap();
+        }
+        assert_eq!(rows.advance().unwrap(), None);
+"###;
+
+#[test]
+fn group_null_init_le_entries_match_sbe_tool_nullify() {
+    dual_encode_run(
+        "group_null_init_le",
+        &schema("group-null-init-le-schema.xml"),
+        "group_null_init_le",
+        GROUP_NULL_INIT_BODY,
+    );
+}
+
+#[test]
+fn group_null_init_be_entries_match_sbe_tool_nullify() {
+    dual_encode_run(
+        "group_null_init_be",
+        &schema("group-null-init-be-schema.xml"),
+        "group_null_init_be",
+        GROUP_NULL_INIT_BODY,
     );
 }
 

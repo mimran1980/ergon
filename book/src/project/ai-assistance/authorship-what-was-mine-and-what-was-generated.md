@@ -52,6 +52,6 @@ For converters, I knew the user-facing capability I wanted but had not fully
 designed the API. The models proposed several shapes. Some were wrong or ugly;
 I showed the kind of calling code I wanted and refined the result.
 
-This is the fairest summary: **the domain requirements and product judgment
+This is the fairest summary: the domain requirements and product judgment
 were human-authored; the implementation and much of the Rust design exploration
-were AI-assisted.**
+were AI-assisted.

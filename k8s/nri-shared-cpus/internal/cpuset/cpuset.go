@@ -206,7 +206,7 @@ func Cores(s Set, siblings map[int]Set) []Set {
 // threads share a core, and without it the layout cannot be checked.
 //
 // siblings maps a CPU to every CPU of its core. Build it with ReadSiblings
-// over all the CPUs under consideration — exclusive and shared both. A map
+// over all the CPUs under consideration, exclusive and shared both. A map
 // built from shared alone leaves every exclusive CPU unlisted, and Cores then
 // calls each of them a separate physical core even when two of them are the
 // two threads of one.

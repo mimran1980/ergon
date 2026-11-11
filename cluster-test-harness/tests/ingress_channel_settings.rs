@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
-//! An ingress publication rebuilt for another member — after a connect-time
-//! REDIRECT or a failover — keeps the configured ingress channel settings and
+//! An ingress publication rebuilt for another member (after a connect-time
+//! REDIRECT or a failover) keeps the configured ingress channel settings and
 //! changes only the endpoint (Java `ChannelUri.put(ENDPOINT, …)`). The
 //! settings fix the message limits a client checks at start-up, so dropping
 //! them would make `offer` fail with `PayloadTooLarge` long after start-up.

@@ -1,4 +1,4 @@
-//! Poll-loop idle helpers (Aeron `IdleStrategy` — not Tokio).
+//! Idle helpers for a poll loop, built on Aeron's `IdleStrategy` rather than Tokio.
 //!
 //! Drive [`crate::AsyncClusterConnect::poll`] from your event loop and call
 //! `IdleStrategy::idle` with the work count.
@@ -8,21 +8,21 @@ use rusteron_client::{BackoffIdleStrategy, IdleStrategy};
 use crate::ClusterError;
 use crate::client::AsyncClusterConnect;
 
-/// Default adaptive backoff for cluster clients (Aeron's backoff parameters).
+/// The default backoff for cluster clients, with Aeron's backoff parameters.
 #[must_use = "the idle strategy is unused; ignoring it skips poll-loop backoff"]
 #[inline]
 pub const fn default_idle() -> BackoffIdleStrategy {
     BackoffIdleStrategy::new()
 }
 
-/// Poll [`AsyncClusterConnect`] until complete or error.
+/// Polls [`AsyncClusterConnect`] until it completes or fails.
 ///
 /// [`AsyncClusterConnect`] is a poll-driven Aeron state machine, not a Rust
-/// [`Future`]. This is the shortest supported path when the application owns
-/// the poll loop: `SessionBuilder` → `connect_async` → `default_idle` →
-/// `poll_connect_until_done` → `finish`. Applications that need to inspect
-/// [`crate::AsyncClusterConnect::step`] or supply their own idle strategy
-/// should drive [`crate::AsyncClusterConnect::poll`] / `step` themselves.
+/// [`Future`]. When the application owns the poll loop, the shortest path is
+/// `SessionBuilder`, `connect_async`, `default_idle`, `poll_connect_until_done`
+/// and `finish`, as in the example. To inspect
+/// [`crate::AsyncClusterConnect::step`], drive
+/// [`crate::AsyncClusterConnect::poll`] and `step` yourself.
 ///
 /// ```rust,no_run
 /// use ergo_aeron_cluster::{default_idle, poll_connect_until_done, SessionBuilder};
@@ -48,9 +48,9 @@ pub fn poll_connect_until_done(
     drive_connect_poll(|| connect.poll(), idle)
 }
 
-/// Drive a poll-until-done loop. `poll` matches
+/// Loops `poll` until it reports done. `poll` follows
 /// [`AsyncClusterConnect::poll`]: `Ok(true)` means more polling is needed, not
-/// that Aeron performed work. Idle with work-count 0 so backoff is applied
+/// that Aeron did work. The loop idles with work count 0 so the backoff grows
 /// instead of pinning a core.
 fn drive_connect_poll(
     mut poll: impl FnMut() -> Result<bool, ClusterError>,

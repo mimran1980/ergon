@@ -50,8 +50,6 @@ fn conformance_fixed_only_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
         assert!(FixedOnlyDecoder::ENCODED_LENGTH >= 29, "ENCODED_LENGTH >= 29");
         assert_eq!(FixedOnlyDecoder::ID_NULL, u64::MAX, "ID_NULL");
         assert_eq!(FixedOnlyDecoder::SIDE_NULL, Side::NullVal, "SIDE_NULL");
-
-        println!("PASS: conformance_fixed_only_roundtrip");
         "#,
     );
     Ok(())
@@ -108,8 +106,6 @@ let mut buf = &mut buf_storage[..body_len];
         assert_eq!(ask_entries[0].1, 30, "ask[0].qty");
         let (desc, _complete) = after_asks.into_description()?;
         assert_eq!(desc, b"test exchange data", "description");
-
-        println!("PASS: conformance_flat_group_known_known");
         "#,
     );
     Ok(())
@@ -155,8 +151,6 @@ fn conformance_flat_group_known_unknown() -> Result<(), Box<dyn std::error::Erro
         }
         assert_eq!(ae.len(), 1);
         assert_eq!(ae[0], 20);
-
-        println!("PASS: conformance_flat_group_known_unknown");
         "#,
     );
     Ok(())
@@ -205,8 +199,6 @@ fn conformance_flat_group_unknown_unknown() -> Result<(), Box<dyn std::error::Er
         assert_eq!(ae[0], 3);
         let (desc, _c) = after_asks.into_description()?;
         assert_eq!(desc, b"uu");
-
-        println!("PASS: conformance_flat_group_unknown_unknown");
         "#,
     );
     Ok(())
@@ -285,8 +277,6 @@ let mut buf = &mut buf_storage[..body_len];
             Ok(())
         })?;
         assert!(complete3.encoded_length_with_header() > 0, "PureFixedNested length > 0");
-
-        println!("PASS: conformance_length_builder_invariants");
         "#,
     );
     Ok(())
@@ -367,8 +357,6 @@ fn conformance_nested_group_roundtrip() -> Result<(), Box<dyn std::error::Error>
         assert_eq!(a0.venue()?, b"NYSE", "asks.venue");
 
         assert_eq!(dec.comment()?, b"test nested group", "comment");
-
-        println!("PASS: conformance_nested_group_roundtrip");
         "#,
     );
     Ok(())
@@ -437,8 +425,6 @@ let mut buf = &mut buf_storage[..body_len];
 
         let (payload, _complete) = after_ents.into_payload()?;
         assert_eq!(payload, b"binary payload data", "payload");
-
-        println!("PASS: conformance_all_types_roundtrip");
         "#,
     );
     Ok(())
@@ -509,8 +495,6 @@ fn conformance_pure_fixed_nested_roundtrip() -> Result<(), Box<dyn std::error::E
         assert_eq!(record_vec[1].1, 20, "record[1].value");
         assert_eq!(record_vec[1].2.len(), 1, "expected 1 tag");
         assert_eq!(record_vec[1].2[0].0, 3, "tag[1][0].id");
-
-        println!("PASS: conformance_pure_fixed_nested_roundtrip");
         "#,
     );
     Ok(())
@@ -542,8 +526,6 @@ let mut buf = &mut buf_storage[..body_len];
         assert!(bids.is_empty(), "bids should be empty");
         let be: Vec<_> = bids.collect();
         assert_eq!(be.len(), 0, "bids len 0");
-
-        println!("PASS: conformance_empty_groups");
         "#,
     );
     Ok(())
@@ -593,8 +575,6 @@ let mut buf2 = &mut buf2_storage[..body_len_2];
         let after_asks3 = dec3.skip_bids()?.skip_asks()?;
         let (desc_str, _c3) = after_asks3.into_description_as_str()?;
         assert_eq!(desc_str, "Hello, \u{4e16}\u{754c}!", "utf-8 description as str");
-
-        println!("PASS: conformance_var_data_edge_cases");
         "#,
     );
     Ok(())
@@ -630,8 +610,6 @@ fn conformance_fixed_raw_fixed_parity() -> Result<(), Box<dyn std::error::Error>
         assert_eq!(d1.price(), d2.price());
         assert_eq!(d1.qty(), d2.qty());
         assert_eq!(d1.side(), d2.side());
-
-        println!("PASS: conformance_fixed_raw_fixed_parity");
         "#,
     );
     Ok(())
@@ -676,8 +654,6 @@ fn conformance_error_buffer_too_short_flat_group() -> Result<(), Box<dyn std::er
             decoded.skip_bids().is_err(),
             "fixed-entry group extent must be validated before iteration"
         );
-
-        println!("PASS: conformance_error_buffer_too_short");
         "#,
     );
     Ok(())
@@ -705,8 +681,6 @@ fn conformance_error_group_full() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         });
         assert!(result.is_ok(), "bids should succeed despite inner overflow");
-
-        println!("PASS: conformance_error_group_full");
         "#,
     );
     Ok(())
@@ -743,8 +717,6 @@ fn conformance_error_group_count_mismatch() -> Result<(), Box<dyn std::error::Er
             Ok(_) => panic!("expected Err, got Ok"),
             _ => panic!("unexpected error variant"),
         }
-
-        println!("PASS: conformance_error_group_count_mismatch");
         "#,
     );
     Ok(())
@@ -773,8 +745,6 @@ fn conformance_error_wrong_template() -> Result<(), Box<dyn std::error::Error>> 
             }
             other => panic!("expected WrongTemplate, got: {other:?}"),
         }
-
-        println!("PASS: conformance_error_wrong_template");
         "#,
     );
     Ok(())
@@ -797,8 +767,6 @@ fn conformance_error_var_data_too_long() -> Result<(), Box<dyn std::error::Error
             Ok(_) => panic!("expected Err, got Ok"),
             _ => panic!("unexpected error variant"),
         }
-
-        println!("PASS: conformance_error_var_data_too_long");
         "#,
     );
     Ok(())

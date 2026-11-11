@@ -1,12 +1,12 @@
-//! Structured intermediate representation — walks the flat token IR into
-//! typed message, group, field, and var-data structures consumed by the
-//! code generator. Query helpers resolve dimension/var-data composites.
+//! Structured intermediate representation: the flat token IR walked into
+//! typed message, group, field, and var-data structures for the code
+//! generator. Query helpers resolve dimension and var-data composites.
 //!
 //! The code generator reads these structures; it never walks raw tokens
 //! directly.
 
 use crate::codegen::{find_matching_end, to_pascal_case, to_snake_case};
-use crate::ir::{ByteOrder, Presence, PrimitiveType, Signal, Token};
+use crate::ir::{Presence, PrimitiveType, Signal, Token};
 
 pub(crate) struct SchemaElements {
     pub(crate) composites: Vec<Vec<Token>>,
@@ -61,8 +61,8 @@ pub(crate) fn partition_tokens(tokens: &[Token]) -> SchemaElements {
 
 /// Shared bool detection: name convention OR semanticType="Boolean".
 /// Used by codegen to emit `_bool()` accessors. Must match the predicate
-/// in generate_enum. Does NOT use value-based heuristics — those are
-/// reserved for [`is_bool_value_enum`] which powers `with_bool_domain_type`.
+/// in generate_enum. It does not look at values; [`is_bool_value_enum`],
+/// which backs `with_bool_domain_type`, does.
 pub(crate) fn is_bool_enum(elements: &SchemaElements, enum_name: &str) -> bool {
     enum_name == "BooleanType"
         || elements.enums.iter().any(|e| {
@@ -112,36 +112,28 @@ pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> 
 
 /// Heuristic: do the two enum value names form a true/false pair?
 pub(crate) const fn is_boolean_value_pair(a: &str, b: &str) -> bool {
-    let (lower, upper) = if a.eq_ignore_ascii_case("true")
-        || a.eq_ignore_ascii_case("yes")
-        || a.eq_ignore_ascii_case("y")
-        || a.eq_ignore_ascii_case("t")
-    {
-        (a, b)
-    } else if b.eq_ignore_ascii_case("true")
-        || b.eq_ignore_ascii_case("yes")
-        || b.eq_ignore_ascii_case("y")
-        || b.eq_ignore_ascii_case("t")
-    {
-        (b, a)
-    } else {
-        return false;
-    };
-    // Now `lower` is the truthy name; `upper` must be the falsy counterpart.
-    upper.eq_ignore_ascii_case("false")
-        || upper.eq_ignore_ascii_case("no")
-        || upper.eq_ignore_ascii_case("n")
-        || upper.eq_ignore_ascii_case("f")
+    (is_truthy_name(a) && is_falsy_name(b)) || (is_truthy_name(b) && is_falsy_name(a))
+}
+
+const fn is_truthy_name(s: &str) -> bool {
+    s.eq_ignore_ascii_case("true")
+        || s.eq_ignore_ascii_case("yes")
+        || s.eq_ignore_ascii_case("y")
+        || s.eq_ignore_ascii_case("t")
+}
+
+const fn is_falsy_name(s: &str) -> bool {
+    s.eq_ignore_ascii_case("false")
+        || s.eq_ignore_ascii_case("no")
+        || s.eq_ignore_ascii_case("n")
+        || s.eq_ignore_ascii_case("f")
 }
 
 #[derive(Clone)]
 pub(crate) struct MessageStructure {
     pub(crate) name: String,
     pub(crate) id: u16,
-    pub(crate) since_version: u16,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: Option<u16>,
-    pub(crate) semantic_type: Option<String>,
     /// Root fixed-block length in bytes (schema `blockLength` when declared and
     /// larger than the tight field packing, else the computed field span).
     pub(crate) block_length: usize,
@@ -157,8 +149,8 @@ pub(crate) struct MessageField {
     /// [`ConversionSelector::FieldPath`](crate::ConversionSelector::FieldPath):
     /// `"Message.field"` at message level, `"Message.group.field"` inside a
     /// group, one segment per nesting level below that. Stamped by
-    /// [`parse_message_structure`] — the parser has no message context, which
-    /// is why `FieldPath` selectors used to match nothing at all.
+    /// [`parse_message_structure`], because the field parser has no message
+    /// context.
     pub(crate) path: String,
     pub(crate) id: Option<u16>,
     pub(crate) offset: usize,
@@ -237,7 +229,6 @@ impl FieldType {
 #[derive(Clone)]
 pub(crate) struct MessageGroup {
     pub(crate) name: String,
-    pub(crate) id: u16,
     pub(crate) since_version: u16,
     pub(crate) deprecated: Option<u16>,
     pub(crate) description: Option<String>,
@@ -263,7 +254,7 @@ pub(crate) fn fixed_extent(fields: &[MessageField]) -> usize {
 ///
 /// The retained fields' tight extent plus whatever trailing padding the schema
 /// declares beyond *every* field. Padding the historical schema declared and
-/// the current one does not is unrecoverable — see
+/// the current one does not cannot be recovered; see
 /// [`with_encode_version`](crate::GenerationConfig::with_encode_version).
 fn projected_block_length(
     all: &[MessageField],
@@ -317,13 +308,13 @@ impl MessageGroup {
         self.block_length.max(fixed_extent(&self.fields))
     }
 
-    /// Entries have nested groups or var-data — no constant stride, so
+    /// Entries have nested groups or var-data, so there is no constant stride:
     /// `entry_at` is not available and the iterator is poisoned on error.
     pub(crate) const fn has_dynamic_entries(&self) -> bool {
         !self.groups.is_empty() || !self.var_data.is_empty()
     }
 
-    /// Constant stride — every entry is exactly `ENTRY_BLOCK_LENGTH` bytes.
+    /// Constant stride: every entry is exactly `ENTRY_BLOCK_LENGTH` bytes.
     pub(crate) fn has_fixed_stride(&self) -> bool {
         !self.has_dynamic_entries()
     }
@@ -366,7 +357,7 @@ impl MessageStructure {
         !self.groups.is_empty() || !self.var_data.is_empty()
     }
 
-    /// No tails — the message body is exactly its fixed block.
+    /// No tails: the message body is exactly its fixed block.
     pub(crate) fn is_fixed(&self) -> bool {
         !self.has_tails()
     }
@@ -375,7 +366,6 @@ impl MessageStructure {
 #[derive(Clone)]
 pub(crate) struct MessageVarData {
     pub(crate) name: String,
-    pub(crate) id: u16,
     pub(crate) since_version: u16,
     pub(crate) deprecated: Option<u16>,
     pub(crate) description: Option<String>,
@@ -391,10 +381,7 @@ pub(crate) fn parse_message_structure(
     let begin_token = &tokens[0];
     let name = begin_token.name.clone();
     let id = begin_token.id.unwrap_or(0);
-    let since_version = begin_token.encoding.since_version;
     let description = begin_token.encoding.description.clone();
-    let deprecated = begin_token.encoding.deprecated;
-    let semantic_type = begin_token.encoding.semantic_type.clone();
     // Populated by `resolve_message_offsets` (max of computed field span and
     // any schema-declared blockLength padding).
     let block_length = begin_token.encoding.offset.unwrap_or(0);
@@ -444,10 +431,7 @@ pub(crate) fn parse_message_structure(
     MessageStructure {
         name,
         id,
-        since_version,
         description,
-        deprecated,
-        semantic_type,
         block_length,
         fields,
         groups,
@@ -569,7 +553,6 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
 pub(crate) fn parse_group_structure(tokens: &[Token], elements: &SchemaElements) -> MessageGroup {
     let begin = &tokens[0];
     let name = begin.name.clone();
-    let id = begin.id.unwrap_or(0);
     let since_version = begin.encoding.since_version;
     let deprecated = begin.encoding.deprecated;
     let description = begin.encoding.description.clone();
@@ -613,7 +596,6 @@ pub(crate) fn parse_group_structure(tokens: &[Token], elements: &SchemaElements)
 
     MessageGroup {
         name,
-        id,
         since_version,
         deprecated,
         description,
@@ -628,7 +610,6 @@ pub(crate) fn parse_group_structure(tokens: &[Token], elements: &SchemaElements)
 pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
     let begin = &tokens[0];
     let name = begin.name.clone();
-    let id = begin.id.unwrap_or(0);
     let since_version = begin.encoding.since_version;
     let deprecated = begin.encoding.deprecated;
     let description = begin.encoding.description.clone();
@@ -658,7 +639,6 @@ pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
 
     MessageVarData {
         name,
-        id,
         since_version,
         deprecated,
         description,
@@ -994,9 +974,7 @@ pub(crate) struct OwnerTailGroup {
 pub(crate) struct OwnerTailVarData {
     pub(crate) accessor_snake: String,
     pub(crate) field_pascal: String,
-    pub(crate) type_pascal: String,
     pub(crate) prefix_size: usize,
-    pub(crate) len_field: String,
     pub(crate) len_type: PrimitiveType,
     pub(crate) max_length: Option<usize>,
     pub(crate) name: String,

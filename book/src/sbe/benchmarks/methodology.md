@@ -1,4 +1,4 @@
-# Benchmark Methodology
+# Benchmark methodology
 
 The fairness rules and the gate are in
 [`sbe/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md);

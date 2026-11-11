@@ -245,7 +245,7 @@ func TestPartitionPlanEnablesCpusetOnTheContainer(t *testing.T) {
 
 // TestPartitionPlanMakesTheChildThreaded is the other half of the P1: a
 // populated container that enables a threaded controller becomes a threaded
-// domain, and a child created under it is "domain invalid" — it accepts no
+// domain, and a child created under it is "domain invalid": it accepts no
 // task, with EOPNOTSUPP, until cgroup.type is written "threaded". The
 // threaded child is still a legal cpuset partition, so one hot thread can
 // live there and the helpers stay on the container's shared CPUs.
@@ -287,7 +287,7 @@ func TestPartitionPlanMakesTheChildThreaded(t *testing.T) {
 // TestPartitionPlanOnlyTheChildReplaces is the P1 regression: cpuset.cpus.
 // exclusive is a replace, not a union. Every directory a partition shares with
 // another container's has to be written as a union with what is already
-// reserved there, and only the new child — this container's alone — may be
+// reserved there, and only the new child (this container's alone) may be
 // written outright. Getting that wrong starts a second pod by taking the
 // exclusive CPUs away from the first one.
 func TestPartitionPlanOnlyTheChildReplaces(t *testing.T) {

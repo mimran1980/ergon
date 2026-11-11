@@ -667,9 +667,9 @@ fn snapshot_removal_of_serial_number_would_fail() -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// T-12 acceptance criteria: `public_surface` must change/fail on each of
-/// five mutation classes the previous names-only snapshot missed, and must
-/// NOT change on a private/body/doc-only edit. Each pair below is real,
+/// `public_surface` must change or fail on each of five mutation classes a
+/// names-only snapshot would miss, and must not change on a private, body or
+/// doc-only edit. Each pair below is real,
 /// `syn`-parseable Rust source differing in exactly one respect.
 mod mutation_sensitivity {
     use super::public_surface;

@@ -8,11 +8,10 @@ use rust_decimal::Decimal;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-/// A bid level — highest price first.
+/// A bid level; the highest price comes first.
 #[derive(Debug, Clone, Copy)]
 pub struct BidLevel {
     pub price: Decimal,
-    #[allow(dead_code)]
     pub size: Decimal,
 }
 
@@ -34,11 +33,10 @@ impl Ord for BidLevel {
     }
 }
 
-/// An ask level — lowest price first.
+/// An ask level; the lowest price comes first.
 #[derive(Debug, Clone, Copy)]
 pub struct AskLevel {
     pub price: Decimal,
-    #[allow(dead_code)]
     pub size: Decimal,
 }
 
@@ -110,16 +108,6 @@ impl LocalBook {
                 self.asks.insert(AskLevel { price: p, size: s });
             }
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn top_bids(&self, n: usize) -> Vec<BidLevel> {
-        self.bids.iter().take(n).copied().collect()
-    }
-
-    #[allow(dead_code)]
-    pub fn top_asks(&self, n: usize) -> Vec<AskLevel> {
-        self.asks.iter().take(n).copied().collect()
     }
 
     pub fn best_bid(&self) -> Option<Decimal> {

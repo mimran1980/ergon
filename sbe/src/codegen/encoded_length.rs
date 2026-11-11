@@ -6,11 +6,10 @@
 //! - `Staged`: nested groups or entry varData → staged builder types.
 
 use crate::structured_ir::{
-    MessageGroup, MessageStructure, MessageVarData, SchemaElements, get_dim_num_layout,
-    get_dimension_info, get_vardata_info, rust_type,
+    MessageStructure, SchemaElements, get_dim_num_layout, get_dimension_info, get_vardata_info,
+    rust_type,
 };
 use proc_macro2::TokenStream;
-use quote::format_ident;
 
 /// How the encoded length of a message should be computed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,7 +156,7 @@ fn generate_staged(
     }
 
     // Stage reached *after* a tail element is recorded, named for the element
-    // just consumed — the same convention as the encoder's `{Msg}After{Element}`
+    // just consumed, the same convention as the encoder's `{Msg}After{Element}`
     // stages. The final element yields `…Complete` instead.
     let tail_pascal: Vec<String> = msg
         .groups
@@ -300,7 +299,7 @@ fn generate_staged(
                         }
                     });
 
-                    // VarData on the nested pending stage — fallible
+                    // VarData on the nested pending stage (fallible).
                     for nvd in &ng.var_data {
                         let nvd_snake =
                             syn::Ident::new(&crate::codegen::to_snake_case(&nvd.name), span);
@@ -414,10 +413,9 @@ fn generate_staged(
                 }
             });
 
-            // A zero-count pending stage has no shorthand to the next tail.
-            // The old forwarder was named for the next group/var-data and took
-            // its `count`/`byte_len` — then discarded the argument, silently
-            // under-sizing that tail. The explicit chain
+            // A zero-count pending stage has no shorthand to the next tail: a
+            // forwarder taking the next tail's `count`/`byte_len` here could
+            // drop the argument and under-size that tail. The explicit chain
             // `pending.finish_empty()?.next_tail(argument)` applies every
             // supplied value at its own named transition.
 
@@ -558,7 +556,7 @@ fn generate_staged(
                 }
             });
         } else {
-            // Flat group — simple, no pending stage.
+            // Flat group: no pending stage.
             standalone.extend(quote::quote! {
                 impl #pending_name {
                     #[inline]
@@ -671,7 +669,6 @@ fn generate_direct(
 ) -> GeneratedEncodedLength {
     let span = proc_macro2::Span::call_site();
     let block_len_lit = syn::LitInt::new(&block_length.to_string(), span);
-    let header_size_lit = syn::LitInt::new(&header_size.to_string(), span);
 
     let mut compat_param_decls = Vec::new();
     let mut compat_param_names = Vec::new();
@@ -1098,7 +1095,7 @@ fn generate_ragged_wrappers(
         }
     });
 
-    // Nested groups — field-named method that enters the nested ragged group
+    // Nested groups: a field-named method that enters the nested ragged group.
     for ng in &group.groups {
         let ng_pascal = crate::codegen::to_pascal_case(&ng.name);
         let ng_snake = crate::codegen::to_snake_case(&ng.name);
@@ -1131,7 +1128,7 @@ fn generate_ragged_wrappers(
         });
     }
 
-    // Var-data — field-named method that bakes the prefix
+    // Var-data: a field-named method that bakes in the prefix.
     for vd in &group.var_data {
         let vd_snake = crate::codegen::to_snake_case(&vd.name);
         let vd_ident = syn::Ident::new(&vd_snake, span);

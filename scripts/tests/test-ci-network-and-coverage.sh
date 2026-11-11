@@ -82,6 +82,6 @@ expect_failure "must pin x86_64-unknown-linux-gnu" \
 
 echo "CI network/coverage self-test: PASS"
 
-# Real tree — this is the gate the policy job runs.
+# Real tree: this is the gate the policy job runs.
 "$checker" --root "$repo_root"
 echo "CI network/coverage live tree: PASS"

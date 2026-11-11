@@ -47,7 +47,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::PathBuf;
 
-use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
+use crate::ir::{Presence, PrimitiveType, Signal};
 use crate::structured_ir::*;
 use crate::{GenerationConfig, Schema};
 
@@ -58,37 +58,35 @@ pub(crate) use conversion_traits::*;
 pub(crate) mod converter_impls;
 pub(crate) use converter_impls::generate_converter_impls;
 pub(crate) mod decoder_display;
-pub(crate) use decoder_display::generate_decoder_display;
 pub(crate) mod domain_cluster;
 pub(crate) use domain_cluster::*;
 pub(crate) mod encoded_length;
 pub(crate) mod field_type;
-pub(crate) use field_type::field_type_ident;
 pub(crate) mod message_header_template;
-pub(crate) use message_header_template::*;
 pub(crate) mod nullification;
-pub(crate) use nullification::*;
+// `runtime`, `group_decoder` and `message_decoder` still hold unused local bindings.
+#[allow(unused)]
 pub(crate) mod runtime;
 mod schema_dispatch;
 pub(crate) mod validate;
-use quote::format_ident;
 pub(crate) use runtime::*;
-pub(crate) mod group_encoder;
-pub(crate) use group_encoder::generate_group_encoder;
+#[allow(unused)]
 pub(crate) mod group_decoder;
-pub(crate) use group_decoder::generate_group_decoder;
+pub(crate) mod group_encoder;
 pub(crate) mod ordered_lane;
 pub(crate) mod tail_stages;
-pub(crate) use ordered_lane::{OrderedFixedFields, generate_ordered_lane};
 pub(crate) use tail_stages::*;
 pub(crate) mod memoized_decoder;
 pub(crate) mod tail_cache;
 pub(crate) use memoized_decoder::generate_memoized_decoder;
+#[allow(unused)]
 pub(crate) mod message_decoder;
 pub(crate) use message_decoder::generate_message_decoder;
 pub(crate) mod message_encoder;
 pub(crate) use message_encoder::generate_message_encoder;
-use sha2::{Digest, Sha256};
+
+const INVALID_MODULE_NAME: &str =
+    r"module name must be one Rust identifier that is not a keyword (no '/', '\', '.' or '..')";
 
 /// One generated Rust source file.
 ///
@@ -152,7 +150,7 @@ pub enum GenerateError {
         selector_b: String,
     },
     /// Generated module source failed its own syntax check. This is always an
-    /// ergo-sbe codegen bug — report it.
+    /// ergo-sbe codegen bug; please report it.
     InvalidGeneratedSource {
         /// Which module produced invalid Rust.
         module: String,
@@ -222,7 +220,7 @@ impl core::fmt::Display for GenerateError {
             } => {
                 write!(
                     f,
-                    "invalid configuration option '{option}': value '{value}' — {reason}"
+                    "invalid configuration option '{option}' = '{value}': {reason}"
                 )
             }
             Self::IncompatibleSharedType {
@@ -306,29 +304,7 @@ impl GeneratedModuleSet {
     }
 }
 
-/// SBE-to-Rust generator.
-/// Bundled schema identity + generation config, resolved once per schema.
-/// Replaces the 6–15 parameter lists threaded through every generator function.
-#[allow(missing_docs)]
-pub(crate) struct GenerationContext {
-    pub elements: SchemaElements,
-    pub byte_order: ByteOrder,
-    pub schema_id: u16,
-    pub schema_version: u16,
-    pub header_type: String,
-    pub header_size: usize,
-    pub schema_name: String,
-    pub multi_message: bool,
-    pub conversions: Vec<crate::ConversionSelector>,
-    pub domain_types: Vec<(crate::ConversionSelector, String)>,
-    pub domain_objects: bool,
-    pub domain_var_data: crate::config::DomainVarData,
-    pub enable_display_debug: bool,
-    pub enable_meta_attributes: bool,
-    pub enable_dispatch: bool,
-}
-
-/// SBE → Rust codec generator.
+/// SBE to Rust codec generator.
 ///
 /// Holds a [`GenerationConfig`]. Call [`Self::generate`] for one schema or
 /// [`Self::generate_multi`] when sharing types across schemas.
@@ -368,9 +344,8 @@ impl Generator {
             .iter()
             .find(|tokens| tokens[0].name == schema.ir.header_type)
         else {
-            // Synthetic `Schema::new` values used by metadata-only callers may
-            // contain no messages or header tokens. XML-parsed schemas have
-            // already had their header structure validated.
+            // A hand-built `Ir` may have no header tokens. XML-parsed schemas
+            // had their header structure validated by the parser.
             return Ok(());
         };
 
@@ -433,15 +408,12 @@ impl Generator {
     /// Validate user-supplied paths that will be parsed by syn later. Catches
     /// typos at config-validation time rather than as panics in codegen.
     fn validate_paths(&self) -> Result<(), GenerateError> {
-        // Module name must be a single Rust identifier (no path separators).
         let mn = self.config.module_name();
         if !crate::config::is_valid_module_ident(mn) {
             return Err(GenerateError::InvalidConfiguration {
                 option: "module_name".into(),
                 value: mn.into(),
-                reason:
-                    "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
-                        .into(),
+                reason: INVALID_MODULE_NAME.into(),
             });
         }
         if let Some(ref rt_path) = self.config.external_sbe_rt_path {
@@ -454,20 +426,19 @@ impl Generator {
             })?;
         }
         // A schema field named after a Rust keyword gets this token appended
-        // (`type` -> `type_`). Prove a representative keyword plus the
-        // configured token forms a valid, non-keyword identifier before
-        // generation — an empty or invalid token produces uncompilable
-        // generated Rust with no clear diagnostic otherwise.
+        // (`type` -> `type_`). Check that a keyword plus the token is a
+        // valid, non-keyword identifier now: otherwise the generated Rust
+        // fails to compile with no clear diagnostic.
         let token = &self.config.keyword_append_token;
         let candidate = format!("type{token}");
         let reason = if syn::parse_str::<syn::Ident>(&candidate).is_err() {
             Some(format!(
-                "\"type{token}\" is not a valid Rust identifier — \
+                "\"type{token}\" is not a valid Rust identifier; \
                  keyword_append_token must combine with a keyword to form one"
             ))
         } else if is_rust_keyword(&candidate) {
             Some(format!(
-                "\"type{token}\" is itself a Rust keyword — \
+                "\"type{token}\" is itself a Rust keyword; \
                  keyword_append_token must produce a non-keyword identifier"
             ))
         } else {
@@ -702,26 +673,22 @@ impl Generator {
                     return Err(GenerateError::InvalidConfiguration {
                         option: format!("schemas[{i}].module_name"),
                         value: module_name.to_string(),
-                        reason:
-                            "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
-                                .into(),
+                        reason: INVALID_MODULE_NAME.into(),
                     });
                 }
                 if !seen.insert(module_name.to_string()) {
                     return Err(GenerateError::InvalidConfiguration {
                         option: format!("schemas[{i}].module_name"),
                         value: module_name.to_string(),
-                        reason:
-                            "duplicate module name — each schema must have a unique module name"
-                                .into(),
+                        reason: "another schema in this set already uses this module name".into(),
                     });
                 }
             }
         }
 
         // Validate shared types have identical wire fingerprints when names
-        // collide. A type name is not wire identity — same-name types with
-        // different layouts or byte order silently produce corrupted codecs.
+        // collide. A type name is not wire identity: same-name types with
+        // different layouts or byte order would produce corrupt codecs.
         if schemas.len() > 1 && self.config.shared_module.is_some() {
             let owner_module = schemas[0].1.to_string();
             let owner_byte_order = schemas[0].0.ir.byte_order;
@@ -1125,16 +1092,16 @@ impl Generator {
         // NOTE: In Rust edition 2024, inner attributes (`#![allow(...)])`) are
         // not permitted inside `include!()` files.  All suppression lints are
         // therefore emitted as outer `#[allow(..)]` on `pub mod sbe_rt`.
-        // Outer doc comment (`///`) — syn/prettyplease preserves it; `//` would
-        // be silently dropped.
+        // An outer doc comment (`///`), because syn/prettyplease keep it and
+        // drop a `//` one.
         writeln!(
             src,
             "/// Generated from SBE schema package `{}` id {} version {}.",
             schema.ir.package, schema.ir.id, schema.ir.version
         )
         .unwrap();
-        // Lint allow list is intentionally narrow — do not re-add
-        // unused_unsafe / unused_imports / dead_code (hide generator bugs).
+        // The allow list stays narrow: unused_unsafe, unused_imports and
+        // dead_code would hide generator bugs.
         // Remaining allows (schema reality):
         // - absurd_extreme_comparisons / identity_op / erasing_op / unnecessary_cast:
         //   schema min/max/const offsets can be tautological after folding.
@@ -1420,7 +1387,7 @@ impl Generator {
             }
         }
 
-        // 7. Generate schema-level constants — SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX
+        // 7. Schema-level constants: SEMANTIC_VERSION, SCHEMA_HASH, SCHEMA_SHA256, SCHEMA_SHA256_HEX.
         if let Some(ref sem_ver) = schema.ir.semantic_version {
             write!(
                 src,
@@ -1442,7 +1409,7 @@ impl Generator {
         src.push_str("];\n\n");
         let hex: String = sha256_hash.iter().map(|b| format!("{:02x}", b)).collect();
         write!(src, "pub const SCHEMA_SHA256_HEX: &str = \"{}\";\n\n", hex).unwrap();
-        // 7.6. Generate prelude module — single import surface for users
+        // 7.6. The prelude module, one import for users.
         generate_prelude(
             &mut src,
             &elements,
@@ -1452,8 +1419,8 @@ impl Generator {
             self.config.enable_dispatch,
         );
         // 7.7. Byte helpers. Checked helpers are public; unchecked raw I/O is
-        // private + unsafe — never a safe public memory-safety
-        // precondition for callers.
+        // private and unsafe, so no safe public function carries a
+        // memory-safety precondition.
         let read_bytes_ts: proc_macro2::TokenStream = quote::quote! {
             /// Read `N` bytes from `buf` at `offset` into a fixed-size array.
             ///
@@ -1545,6 +1512,24 @@ impl Generator {
     }
 }
 
+/// Generated condition that is true when a fixed `needed`-byte region at
+/// `offset` does not fit in `buf`.
+///
+/// `needed > buf.len().saturating_sub(offset)` already fails for every
+/// `offset > buf.len()` when `needed > 0`, so that form is kept unchanged.
+/// For `needed == 0` (an all-constant message header, or such a header with
+/// an empty body) it can never fire, so the offset itself is checked instead:
+/// otherwise a checked entry point would accept an offset past the buffer.
+pub(crate) fn region_exceeds_buffer(needed: usize, offset: &str) -> proc_macro2::TokenStream {
+    let offset = syn::Ident::new(offset, proc_macro2::Span::call_site());
+    if needed == 0 {
+        quote::quote! { #offset > buf.len() }
+    } else {
+        let needed = syn::LitInt::new(&needed.to_string(), proc_macro2::Span::call_site());
+        quote::quote! { #needed > buf.len().saturating_sub(#offset) }
+    }
+}
+
 const fn item_is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
@@ -1554,8 +1539,8 @@ fn attrs_have_doc(attrs: &[syn::Attribute]) -> bool {
 }
 
 /// The concrete value of a literal expression (optionally negated), for use
-/// in a fallback doc. `None` for anything else — callers fall back to
-/// restating the item's name in that case.
+/// in a fallback doc. `None` for anything else, in which case callers
+/// restate the item's name.
 fn literal_value(expr: &syn::Expr) -> Option<String> {
     match expr {
         syn::Expr::Lit(syn::ExprLit { lit, .. }) => literal_text(lit),
@@ -1564,8 +1549,8 @@ fn literal_value(expr: &syn::Expr) -> Option<String> {
             expr,
             ..
         }) => literal_value(expr).map(|v| format!("-{v}")),
-        // A sentinel constant like `AVAILABLE_NULL: BooleanType = BooleanType::NullVal`
-        // — the path itself is the value worth showing.
+        // A sentinel constant like `AVAILABLE_NULL: BooleanType = BooleanType::NullVal`,
+        // where the path itself is the value worth showing.
         syn::Expr::Path(syn::ExprPath { path, .. }) => Some(
             path.segments
                 .iter()
@@ -1592,8 +1577,8 @@ fn literal_text(lit: &syn::Lit) -> Option<String> {
 /// Fallback doc for a public item with no schema-derived description.
 ///
 /// A bare `"Generated {kind} \`x\`."` restates the identifier and tells the
-/// reader nothing the signature didn't already — and drowns out real
-/// descriptions when scanning a large generated file or its rustdoc page.
+/// reader nothing the signature does not, and drowns out real descriptions
+/// in a large generated file or its rustdoc page.
 /// When the item's own value is a literal (a constant's assigned value, an
 /// enum variant's wire discriminant), show that instead: real information a
 /// reader can't get from the signature alone. Only an item with no such
@@ -1838,8 +1823,8 @@ fn validate_selectors(
                 reason: "domain type path must not be empty".into(),
             });
         }
-        // Validate the path is parseable Rust — catch typos at build time,
-        // not as a panic deep in codegen.
+        // Parse the path now, so a typo is a configuration error rather than
+        // a panic deep in codegen.
         syn::parse_str::<syn::Type>(rust_type).map_err(|e| GenerateError::InvalidConversion {
             selector: format!("{sel:?}"),
             reason: format!("domain type path is not a valid Rust type: {e}"),
@@ -1869,7 +1854,7 @@ mod tests {
 
     #[test]
     fn generator_emits_deterministic_module_name() -> Result<(), Box<dyn std::error::Error>> {
-        let mut generator = Generator::new(GenerationConfig::new("market_data"));
+        let generator = Generator::new(GenerationConfig::new("market_data"));
         let schema = Schema::new("fix.sbe", 1, 0);
 
         let modules = generator.generate(&schema)?;
@@ -1887,7 +1872,7 @@ mod tests {
         let mut config = GenerationConfig::new("common");
         config.shared_module = Some("common_types".to_string());
 
-        let mut generator = Generator::new(config);
+        let generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
@@ -1950,7 +1935,7 @@ mod tests {
     fn generate_multi_without_shared_module_emits_sbe_rt_everywhere()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("common");
-        let mut generator = Generator::new(config);
+        let generator = Generator::new(config);
 
         let schema_a = Schema::new("common.sbe", 1, 0);
         let schema_b = Schema::new("market_data.sbe", 2, 0);
@@ -2110,7 +2095,7 @@ mod tests {
           </message>
         </messageSchema>"#;
         let schema = crate::Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml))?);
-        let mut generator = crate::Generator::new(crate::GenerationConfig::new("array_guard"));
+        let generator = crate::Generator::new(crate::GenerationConfig::new("array_guard"));
         let modules = generator.generate(&schema)?;
         let source = &modules
             .modules()
@@ -2271,7 +2256,7 @@ mod tests {
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
             "chrono::DateTime<chrono::Utc>",
         );
-        let mut generator = crate::Generator::new(config);
+        let generator = crate::Generator::new(config);
         let modules = generator.generate(&schema)?;
         let src = modules.modules().next().unwrap().source.clone();
         assert!(
@@ -2328,7 +2313,7 @@ mod tests {
         }
     }
 
-    /// Placement utils live on metadata only — a field named `remaining` keeps
+    /// Placement utils live on metadata only, so a field named `remaining` keeps
     /// its natural accessor name and does not force `_field`.
     #[test]
     fn field_named_remaining_keeps_name_placement_on_metadata()
@@ -2402,7 +2387,7 @@ mod tests {
           <message name="Msg" id="1" blockLength="0"/>
         </messageSchema>"#;
 
-        use crate::{EnumVariantInfo, ItemContext, ItemKind, SetChoiceInfo};
+        use crate::ItemContext;
         use quote::format_ident;
 
         let config = crate::GenerationConfig::new("test")
@@ -2554,7 +2539,7 @@ mod tests {
 
         let schema_a = Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml_a))?);
         let schema_b = Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml_b))?);
-        let mut generator = Generator::new(
+        let generator = Generator::new(
             crate::GenerationConfig::new("common_types")
                 .with_shared_module("common_types")
                 .with_bool_domain_type(true),
@@ -2566,8 +2551,8 @@ mod tests {
 
         // The consumer module should have a bool-typed getter on the field
         // whose type is BooleanType (auto-registered as bool domain type).
-        // The domain getter is `{field}_bool`, not the bare name — the bare
-        // name stays as the wire-type accessor.
+        // The domain getter is `{field}_bool`; the bare name stays the
+        // wire-type accessor.
         let consumer_src = &collected[1].source;
         assert!(
             consumer_src.contains("fn enabled_bool"),

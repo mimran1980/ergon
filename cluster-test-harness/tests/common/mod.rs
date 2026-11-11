@@ -85,7 +85,7 @@ impl EgressListener for Capture {
 }
 
 /// Offer `payload` and poll egress (with best-effort keep-alive) until the
-/// cluster echoes it back. Errors on timeout — a real round-trip failure.
+/// cluster echoes it back. Errors on timeout, which is a real round-trip failure.
 pub fn await_echo(
     client: &mut AeronCluster,
     listener: &mut Capture,

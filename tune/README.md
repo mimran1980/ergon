@@ -6,8 +6,8 @@
 
 Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 
-> **AI assistance.** Like the rest of ergon, this crate was written **with heavy
-> AI assistance**. See
+> **AI assistance.** Like the rest of ergon, this crate was written with heavy
+> AI assistance. See
 > [AI assistance disclosure](https://mimran1980.github.io/ergon/project/ai-assistance.html).
 > It is not production-ready.
 
@@ -36,7 +36,7 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 | T8 | no two busy threads on one CPU or one physical core |
 | T9 | no CPU quota on the process's cgroup (a Kubernetes CPU limit, `docker run --cpus`); `ThrottleWatch` reads its throttling counters while the loop runs. Fix on Kubernetes: kubelet 1.33+, `cpuManagerPolicy: static`, a Guaranteed pod and a whole-number CPU request, so the kubelet drops the quota itself. Never `cpuCFSQuota: false`: it removes every pod's CPU limit on the node |
 | T10 | SMT (hyperthreading) off on x86 (Graviton and arm64 pass: one vCPU is one physical core). On x86 a Kubernetes `cpu: 2` is one physical core, and a busy sibling slows the loop (measured for an `io_uring` SQPOLL thread on the sibling; the finding quotes the figures with their max). The fix is on the node: EKS/EC2 `CpuOptions: ThreadsPerCore: 1`, self-managed `nosmt`, or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6) |
-| K1-K7 | inside a Kubernetes pod only, with T7 and T9: Guaranteed `QoS`, exclusive CPUs (the static CPU manager, not the shared pool), the loop's SMT sibling inside the pod's cpuset, a CPU for the helper threads (`ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`), the capabilities the caller says it uses (`Needs`: busy polling, `SCHED_FIFO`, `mlockall`), no `memory.high` and no CPU/memory pressure (any non-zero reading; no threshold is measured), and, when the caller names the NIC (`Needs::with_nic`), its NUMA node. Each finding says whether the fix goes in the pod spec or on the node, with the exact setting |
+| K1-K7 | inside a Kubernetes pod only, with T7 and T9: Guaranteed `QoS`, exclusive CPUs (the static CPU manager, not the shared pool), the loop's SMT sibling inside the pod's cpuset, a CPU for the helper threads (`ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`), the capabilities the caller says it uses (`Needs`: busy polling, `SCHED_FIFO`, `mlockall`), no `memory.high`, and, when the caller names the NIC (`Needs::with_nic`), its NUMA node. Each finding says whether the fix goes in the pod spec or on the node, with the exact setting |
 | T11 | how `CLOCK_REALTIME` is kept: PTP-grade (chronyd locked to a PTP hardware clock, or phc2sys) is ok; NTP-disciplined or unsynchronised warns, with the chrony `refclock PHC` line for the host's PHC (a node setting); a correction still being slewed out, an error bound wider than 1 ms or a pending leap second warns. What the process cannot see (in a pod: the daemons and chronyd's port) is unknown, never a warning |
 | T12 | the kernel's clock source: the counter (`tsc`, `arch_sys_counter`) is ok; a hypervisor's view of it (`kvm-clock`, Hyper-V's TSC page) is info; anything else (`hpet`, `acpi_pm`) on x86-64 or 64-bit Arm warns: every `CLOCK_REALTIME` and `CLOCK_MONOTONIC` read is a system call. On another architecture a source other than `tsc` or `arch_sys_counter` is unknown |
 | T13 | the unbound workqueue cpumask (`/sys/devices/virtual/workqueue/cpumask`) leaves out the busy-spinning CPUs |
@@ -68,11 +68,11 @@ Callers read one switch, `ERGON_HOST_CHECKS`, through
 | `require` | a warning is an error at start, and so is a check that could not prove a property it must prove (see below) |
 
 `require` is a readiness gate, not a blanket refusal. It refuses on a warning
-(a check fired) and on an **unproven** check whose job is to prove a property
+(a check fired) and on an unproven check whose job is to prove a property
 of this pod or process: its CPUs are its own, they are isolated, there is no
 CPU quota, its helpers have a core. Starting on an unproven claim is the false
 pass those checks exist to stop. An unknown of a check whose subsystem the
-node may not have — PSI and `memory.high`, a NUMA node, a NIC knob, THP — is
+node may not have (`memory.high`, a NUMA node, a NIC knob, THP) is
 printed and allowed through: that is a real host, and refusing there would
 stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
 T6, T11, T13-T21, K6, K7, N1-N4 and M4 do not block; every other id does, a

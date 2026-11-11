@@ -208,6 +208,18 @@ impl TestCluster {
         single_node_with("auction", None)
     }
 
+    /// One echo node behind `ClusterLauncher.TestAuthenticator`: it accepts
+    /// empty credentials and `admin:admin`, challenges `challenge-me` with
+    /// `server-challenge` and accepts the answer `answer`, and rejects
+    /// anything else.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::single_node`].
+    pub fn single_node_auth() -> Result<Self, ClusterError> {
+        single_node_with("auth", None)
+    }
+
     /// Launch a 3-node static cluster. Node 0 is the leader.
     ///
     /// # Errors

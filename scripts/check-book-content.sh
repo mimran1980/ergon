@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-book-content.sh — grep book code fences for known stale/incorrect API
+# check-book-content.sh: grep book code fences for known stale/incorrect API
 # patterns that the allowlist alone doesn't catch, and check every relative
 # link and {{#include}} resolves, plus (check-repo-links.py) absolute links
 # into the repository and book and benchmark anchors cited from code. Called
@@ -40,11 +40,11 @@ echo "=== book content check ==="
 
 # Deprecated chrono: NaiveDateTime::from_timestamp_opt
 check_pattern 'NaiveDateTime::from_timestamp_opt' \
-    'NaiveDateTime::from_timestamp_opt is deprecated — use DateTime::from_timestamp(...)'
+    'NaiveDateTime::from_timestamp_opt is deprecated: use DateTime::from_timestamp(...)'
 
 # Deprecated chrono: NaiveDateTime::timestamp (not DateTime<Utc>::timestamp)
 check_pattern 'naive.*\.timestamp()' \
-    'NaiveDateTime::timestamp() is deprecated — use .and_utc().timestamp()'
+    'NaiveDateTime::timestamp() is deprecated: use .and_utc().timestamp()'
 
 # Old API inside a fence. A line-oriented grep cannot see this: the call is
 # not required to sit on the line after the opening fence, and macOS grep
@@ -223,13 +223,13 @@ if ! python3 "$root/scripts/check-repo-links.py" "${LINK_REPO_ROOT:-$root}" "$bo
     rc=1
 fi
 
-# CString::new in code fences — must use c"…" literals
+# CString::new in code fences: use c"…" literals
 check_pattern 'CString::new' \
-    'CString::new is forbidden — use c"…" literals or cformat!'
+    'CString::new is forbidden: use c"…" literals or cformat!'
 
 # Stale generation-config default model (T-8).
 check_pattern 'All knobs default to `true`' \
-    'GenerationConfig knobs do not all default to true — list enabled vs disabled defaults'
+    'GenerationConfig knobs do not all default to true: list enabled vs disabled defaults'
 
 # Stale ParseError variants that were never shipped (T-7).
 check_pattern 'ParseError::Unsupported' \
@@ -239,7 +239,7 @@ check_pattern 'schema_parse::unsupported' \
 
 # Trust-boundary drift: wrap does not return Result.
 check_pattern 'wrap` return `Result' \
-    'bare wrap panics if short — it does not return Result'
+    'bare wrap panics if short, it does not return Result'
 
 # Copied point estimates (quote a run id instead).
 check_pattern '22-23%' \
@@ -249,6 +249,6 @@ check_pattern '22-23%' \
 if [ $rc -eq 0 ]; then
     echo "check-book-content: PASS"
 else
-    echo "check-book-content: FAIL — fix the patterns above"
+    echo "check-book-content: FAIL: fix the patterns above"
 fi
 exit $rc

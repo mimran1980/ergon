@@ -1,18 +1,18 @@
-//! Egress dispatch: decoded cluster→client messages to an [`EgressListener`].
+//! Egress dispatch: decoded messages from the cluster go to an [`EgressListener`].
 //!
 //! [`crate::AeronCluster::poll`] decodes each reassembled fragment once,
-//! drops what belongs to another session, and calls the listener.
+//! drops what belongs to another session and calls the listener.
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
 use crate::error::ClusterError;
 use crate::fragment::Fragment;
 
-/// Callbacks for egress (cluster→client) messages, passed to
+/// Callbacks for messages from the cluster, passed to
 /// [`crate::AeronCluster::poll`].
 ///
 /// Only [`Self::on_message`] is required. The lifecycle callbacks default to
-/// no-ops: the client acts on session events and new leaders itself, so
-/// implement them only to observe them.
+/// no-ops because the client handles session events and new leaders itself;
+/// implement them to observe those events.
 ///
 /// | Callback | Carries |
 /// |---|---|
@@ -20,24 +20,23 @@ use crate::fragment::Fragment;
 /// | `on_message_with_reserved_value` | the same, plus the Aeron header's reserved value |
 /// | `on_session_event` | OK, ERROR, REDIRECT, `AUTHENTICATION_REJECTED`, CLOSED ([`EventCode`]) |
 /// | `on_new_leader` | a new leader's term, member id and `id=host:port,…` endpoints |
-/// | `on_challenge` | an auth challenge after connect; reported only (connect answers its own through [`CredentialsSupplier`](crate::CredentialsSupplier)) |
+/// | `on_challenge` | an auth challenge after connect; reported only, since connect answers its own through [`CredentialsSupplier`](crate::CredentialsSupplier) |
 /// | `on_admin_response` | the reply to [`send_admin_request_to_take_snapshot`](crate::AeronCluster::send_admin_request_to_take_snapshot) |
 /// | `on_extension_message` | a frame of another template or schema; not an error |
 ///
-/// Only this session's messages reach the listener: every event carrying
-/// another `cluster_session_id` is dropped. Text fields are validated before
-/// they reach a callback. A decode error or a listener panic is returned from
-/// the poll as [`ClusterError`]: a panic becomes
-/// [`ClusterError::ListenerPanicked`].
+/// Only this session's messages reach the listener; an event carrying another
+/// `cluster_session_id` is dropped. Text fields are validated before they reach
+/// a callback. The poll returns a decode error or a listener panic as a
+/// [`ClusterError`]: a panic becomes [`ClusterError::ListenerPanicked`].
 pub trait EgressListener {
-    /// Application message from the clustered service. `buffer` is the raw
-    /// payload bytes after the `SessionMessageHeader` (no SBE framing).
+    /// An application message from the clustered service. `buffer` is the raw
+    /// payload after the `SessionMessageHeader`, without SBE framing.
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]);
 
-    /// [`Self::on_message`] plus the Aeron header's reserved value.
+    /// Like [`Self::on_message`], plus the Aeron header's reserved value.
     ///
-    /// The default calls [`Self::on_message`] and ignores `reserved_value`.
-    /// Override this when the clustered service stamps a send timestamp.
+    /// The default calls [`Self::on_message`] and drops `reserved_value`.
+    /// Override it when the clustered service stamps a send timestamp.
     fn on_message_with_reserved_value(
         &mut self,
         cluster_session_id: i64,
@@ -52,7 +51,7 @@ pub trait EgressListener {
     /// A frame this client does not decode (unknown template or schema).
     ///
     /// `buffer` is the payload after the 8-byte SBE header. The default
-    /// ignores it. A schema mismatch is not an error: the poll continues.
+    /// ignores it. A schema mismatch is not an error and the poll continues.
     fn on_extension_message(
         &mut self,
         acting_block_length: u16,
@@ -64,7 +63,7 @@ pub trait EgressListener {
         let _ = (acting_block_length, template_id, schema_id, acting_version, buffer);
     }
 
-    /// Cluster→client session lifecycle event. `detail` is validated ASCII
+    /// A session lifecycle event from the cluster. `detail` is validated ASCII
     /// text. The default ignores it.
     fn on_session_event(
         &mut self,
@@ -85,8 +84,8 @@ pub trait EgressListener {
         );
     }
 
-    /// A new leader was elected. `ingress_endpoints` is a CSV of
-    /// `member_id=host:port` pairs. The client reconnects itself; the
+    /// A new leader was elected. `ingress_endpoints` is a comma-separated list
+    /// of `member_id=host:port` pairs. The client reconnects itself, and the
     /// default ignores the event.
     fn on_new_leader(
         &mut self,
@@ -103,14 +102,15 @@ pub trait EgressListener {
         );
     }
 
-    /// An auth challenge from the cluster: the opaque bytes of the
-    /// `Challenge` message. The default ignores it.
+    /// An authentication challenge: the opaque bytes of the `Challenge`
+    /// message. The default ignores it.
     fn on_challenge(&mut self, correlation_id: i64, cluster_session_id: i64, encoded_challenge: &[u8]) {
         let _ = (correlation_id, cluster_session_id, encoded_challenge);
     }
 
-    /// Response to an admin request (a snapshot). `message` is validated
-    /// UTF-8; `payload` is the raw bytes after it. The default ignores it.
+    /// The response to an admin request such as a snapshot. `message` is
+    /// validated UTF-8 and `payload` is the raw bytes after it. The default
+    /// ignores it.
     fn on_admin_response(
         &mut self,
         cluster_session_id: i64,
@@ -138,7 +138,7 @@ impl EgressListener for NullListener {
     fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
 }
 
-/// Decode `data` and deliver it to `listener` when it is `session_id`'s.
+/// Decodes `data` and delivers it to `listener` when it belongs to `session_id`.
 #[cfg(test)]
 pub(crate) fn deliver<L: EgressListener>(
     listener: &mut L,
@@ -152,7 +152,7 @@ pub(crate) fn deliver<L: EgressListener>(
     }
 }
 
-/// Deliver a decoded fragment to `listener` unless it carries another
+/// Delivers a decoded fragment to `listener` unless it carries another
 /// session's id. A listener panic becomes [`ClusterError::ListenerPanicked`].
 #[inline]
 pub(crate) fn dispatch<L: EgressListener>(
@@ -355,7 +355,7 @@ mod tests {
                 leader_heartbeat_timeout_ns: None,
             })
             .detail(detail)?;
-        // Expect session 42 — actual is 99 → filter must drop.
+        // The listener expects session 42 and the event carries 99, so the filter must drop it.
         let mut listener = Rec { called: false };
         deliver(&mut listener, 42, &buf, 0)?;
         assert!(!listener.called, "wrong-session SessionEvent must be dropped");
@@ -510,6 +510,118 @@ mod tests {
         assert_eq!(listener.cid, 99);
         assert_eq!(listener.sid, 42);
         assert_eq!(listener.chal, chal);
+        Ok(())
+    }
+
+    /// Java `EgressAdapterTest.onFragmentShouldInvokeOnAdminResponseCallbackIfSessionIdMatches`
+    /// and `onFragmentIsANoOpIfSessionIdDoesNotMatchOnAdminResponse`.
+    #[test]
+    fn an_admin_response_reaches_only_its_session() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::codecs::session::{AdminResponseEncoder, AdminResponseFixedFields};
+
+        type Seen = (i64, i64, AdminRequestType, AdminResponseCode, String, Vec<u8>);
+        #[derive(Default)]
+        struct Rec(Vec<Seen>);
+        impl EgressListener for Rec {
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
+            fn on_admin_response(
+                &mut self,
+                cluster_session_id: i64,
+                correlation_id: i64,
+                request_type: AdminRequestType,
+                response_code: AdminResponseCode,
+                message: &str,
+                payload: &[u8],
+            ) {
+                self.0.push((
+                    cluster_session_id,
+                    correlation_id,
+                    request_type,
+                    response_code,
+                    message.to_owned(),
+                    payload.to_vec(),
+                ));
+            }
+        }
+        let response = |cluster_session_id| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let (message, payload) = (b"denied", [1u8, 2, 3]);
+            let mut buf =
+                vec![
+                    0u8;
+                    AdminResponseEncoder::compute_encoded_length_with_message_header(message.len(), payload.len())
+                ];
+            let _ = AdminResponseEncoder::wrap_and_apply_header(&mut buf, 0)
+                .fixed(&AdminResponseFixedFields {
+                    cluster_session_id,
+                    correlation_id: 5,
+                    request_type: AdminRequestType::SNAPSHOT,
+                    response_code: AdminResponseCode::UNAUTHORISEDACCESS,
+                })
+                .message(message)?
+                .payload(&payload)?;
+            Ok(buf)
+        };
+        let mut listener = Rec::default();
+        deliver(&mut listener, 42, &response(99)?, 0)?;
+        assert!(listener.0.is_empty(), "another session's admin response was delivered");
+        deliver(&mut listener, 42, &response(42)?, 0)?;
+        assert_eq!(
+            listener.0,
+            [(
+                42,
+                5,
+                AdminRequestType::SNAPSHOT,
+                AdminResponseCode::UNAUTHORISEDACCESS,
+                "denied".to_owned(),
+                vec![1, 2, 3]
+            )]
+        );
+        Ok(())
+    }
+
+    /// Java `EgressAdapterTest.onFragmentShouldDelegateToEgressListenerOnUnknownSchemaId`:
+    /// a frame of another schema reaches the extension hook, even when its
+    /// template id is one this schema also uses.
+    #[test]
+    fn another_schema_reaches_the_extension_hook() -> Result<(), Box<dyn std::error::Error>> {
+        #[derive(Default)]
+        struct Rec {
+            extension: Option<(u16, u16, u16, u16, Vec<u8>)>,
+            messages: usize,
+        }
+        impl EgressListener for Rec {
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {
+                self.messages += 1;
+            }
+            fn on_extension_message(
+                &mut self,
+                acting_block_length: u16,
+                template_id: u16,
+                schema_id: u16,
+                acting_version: u16,
+                buffer: &[u8],
+            ) {
+                self.extension = Some((
+                    acting_block_length,
+                    template_id,
+                    schema_id,
+                    acting_version,
+                    buffer.to_vec(),
+                ));
+            }
+        }
+        // The session message header's template id, under schema 999.
+        let mut frame = message(42, b"ext");
+        frame[4..6].copy_from_slice(&999u16.to_le_bytes());
+        let mut listener = Rec::default();
+        deliver(&mut listener, 42, &frame, 0)?;
+        assert_eq!(listener.messages, 0, "another schema's frame is not a session message");
+        let (block_length, template_id, schema_id, version, payload) =
+            listener.extension.ok_or("extension hook not called")?;
+        assert_eq!((template_id, schema_id), (1, 999));
+        assert_eq!(block_length, u16::from_le_bytes([frame[0], frame[1]]));
+        assert_eq!(version, u16::from_le_bytes([frame[6], frame[7]]));
+        assert_eq!(payload, frame[8..]);
         Ok(())
     }
 

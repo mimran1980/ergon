@@ -37,5 +37,6 @@ book-ci: policy book-deps
     # mdbook builds dead links silently: every relative link and include must resolve
     ./scripts/check-book-content.sh
     ./scripts/check-generated-book.py
+    ./scripts/check-book-anim.py
     cd book && mdbook build
     @echo "book-ci: docs validated, book built"

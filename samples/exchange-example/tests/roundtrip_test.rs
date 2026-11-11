@@ -245,7 +245,7 @@ fn binance_server_time_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
 
     let expected_ts: i64 = 1712345678000123;
 
-    // Encode — ServerTimeResponseEncoder has no type-state, just plain methods
+    // ServerTimeResponseEncoder has no type-state, just plain methods
     let mut buf = [0u8; ServerTimeResponseEncoder::ENCODED_LENGTH];
     let encoder = ServerTimeResponseEncoder::try_wrap_and_apply_header(&mut buf, 0)
         .unwrap()
@@ -289,7 +289,7 @@ fn binance_server_time_buffer_too_short() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-// ── Bitget: Trade (template 1003) — group + var-data message ──────────────
+// ── Bitget: Trade (template 1003), a group and var-data message ───────────
 
 #[test]
 fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -350,7 +350,7 @@ fn bitget_trade_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     // Decode
     let decoder = TradeDecoder::try_from(encoded).expect("TradeDecoder::try_from should succeed");
 
-    // Verify scalar fields (fixed block — always available on the body view)
+    // Verify scalar fields (fixed block, always available on the body view)
     assert_eq!(decoder.price_exponent(), -5, "price_exponent");
     assert_eq!(decoder.size_exponent(), -3, "size_exponent");
     assert_eq!(decoder.sts(), 42, "sts");
@@ -505,7 +505,7 @@ fn bitget_trade_zero_values() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── Binance: WebSocketSessionLogonResponse (template 51) — multiple scalars + var data ──
+// ── Binance: WebSocketSessionLogonResponse (template 51), several scalars and var data ──
 
 #[test]
 fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -569,7 +569,7 @@ fn binance_logon_response_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-// ── Binance: WebSocketResponse (template 50) — group + var-data message ───
+// ── Binance: WebSocketResponse (template 50), a group and var-data message ──
 
 #[test]
 fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
@@ -672,7 +672,7 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     let (id, after_id) = after_rates.into_id_as_str().expect("id");
     assert_eq!(id, "test-id-1", "id");
     // `result` (schema type `messageData`) is a raw nested-SBE payload, not
-    // characterEncoding-declared text — no `_as_str` accessor exists for it.
+    // characterEncoding-declared text, so no `_as_str` accessor exists for it.
     let (result_bytes, _complete) = after_id.into_result().expect("result");
     assert_eq!(
         core::str::from_utf8(result_bytes).expect("result_as_str"),
@@ -695,7 +695,7 @@ fn binance_websocket_response_group_buffer_too_short() -> Result<(), Box<dyn std
     buf[8] = 0; // BoolEnum::False
     buf[9..11].copy_from_slice(&200u16.to_le_bytes());
 
-    // The buffer has no group dimension or var data — accessing group should fail
+    // The buffer has no group dimension or var data, so accessing the group should fail
     let decoder = WebSocketResponseDecoder::try_from(&buf[..])
         .expect("try_from should succeed at header level");
     let result = decoder.into_rate_limits();
@@ -742,7 +742,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
         .expect("symbol encoding should succeed");
     let encoded = complete.as_bytes_with_header();
 
-    // Try to decode as binance WebSocketResponse — should fail with WrongSchema
+    // Try to decode as binance WebSocketResponse; it should fail with WrongSchema
     let result = WebSocketResponseDecoder::try_from(encoded);
     assert!(
         result.is_err(),
@@ -756,7 +756,7 @@ fn wrong_schema_bitget_encoded_rejected_by_binance() -> Result<(), Box<dyn std::
 
 #[test]
 fn bitget_type_inventory() -> Result<(), Box<dyn std::error::Error>> {
-    // BestBidAskDecoder (template 1002) — verify SCHEMA_ID, SCHEMA_VERSION, TEMPLATE_ID
+    // BestBidAskDecoder (template 1002): verify SCHEMA_ID, SCHEMA_VERSION, TEMPLATE_ID
     assert_eq!(
         exchange_example::bitget_spot::BestBidAskDecoder::SCHEMA_ID,
         1,
@@ -900,7 +900,7 @@ fn wrong_schema_binance_encoded_rejected_by_bitget() -> Result<(), Box<dyn std::
         .fixed(&ServerTimeResponseFixedFields { server_time: 42 });
     let encoded = encoder.as_bytes_with_header();
 
-    // Try to decode as bitget BestBidAsk — should fail with WrongSchema
+    // Try to decode as bitget BestBidAsk; it should fail with WrongSchema
     let result = BestBidAskDecoder::try_from(encoded);
     assert!(
         result.is_err(),

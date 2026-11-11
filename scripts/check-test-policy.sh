@@ -118,11 +118,11 @@ if [[ ${#documentation_files[@]} -gt 0 ]]; then
         esac
     done
     if [[ ${#rs_files[@]} -gt 0 ]]; then
-        # Rust doc comment fences start with `///` — plain regex still covers them.
+        # Rust doc comment fences start with `///`, so the plain regex still covers them.
         report_matches 'ignored Rust documentation fence is forbidden; use compile-checked rust/no_run or honest text' \
             '```[[:alnum:]_,.:{}=+ -]*\bignore\b' "${rs_files[@]}"
     fi
-    # In .md files: `rust,ignore` is always allowed — gives syntax highlighting
+    # In .md files: `rust,ignore` is always allowed: it gives syntax highlighting
     # without CI compilation requirement. Hand-written schematics and
     # Aeron/rusteron-dependent examples cannot compile in the book-fence harness.
     :  # no-op: do not flag ignored fences in .md files

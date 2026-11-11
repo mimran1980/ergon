@@ -16,16 +16,16 @@
 
 mod common;
 use common::scratch::ScratchCrate;
-use common::{Paths, generate, patch_source};
+use common::{Paths, generate};
 use std::fs;
 
 /// Like `compile_and_run` but creates a proper crate with `proptest` as a
 /// dev-dependency so that the test code can use the `proptest!` macro.
 ///
-/// `test_label`  — unique label for the temp directory (prevents parallel-test collisions).
-/// `module_name` — the Rust module name for the generated types.
-/// `source`      — the raw generated Rust source (will be patched).
-/// `test_code`   — a complete `.rs` file placed in `tests/` of the temp crate.
+/// - `test_label`: unique label for the temp directory, so parallel tests do not collide.
+/// - `module_name`: the Rust module name for the generated types.
+/// - `source`: the generated Rust source.
+/// - `test_code`: a complete `.rs` file placed in `tests/` of the temp crate.
 fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, test_code: &str) {
     // Unique package (and lib) name in the shared target dir; the test file
     // reaches it under the name the test code uses, `prop_<module_name>`.
@@ -37,12 +37,11 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     let src_dir = dir.join("src");
     fs::create_dir_all(&src_dir).unwrap();
 
-    let patched = patch_source(source);
     let module_path = format!("{module_name}.rs");
-    fs::write(src_dir.join(&module_path), &patched)
+    fs::write(src_dir.join(&module_path), source)
         .unwrap_or_else(|e| panic!("write {module_path}: {e}"));
 
-    // lib.rs — re-export everything
+    // lib.rs re-exports everything.
     let lib = format!("mod {module_name};\npub use {module_name}::*;\n");
     fs::write(src_dir.join("lib.rs"), &lib).unwrap();
 
@@ -57,7 +56,7 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     )
     .unwrap();
 
-    // Cargo.toml — the generated module references `ergo_sbe::…` for the
+    // Cargo.toml: the generated module references `ergo_sbe::…` for the
     // optional string/byte types, so the dependency must be present whichever
     // features the outer test run enables. proptest stays a dev-dep.
     // …/sbe/tests/fixtures/schemas/example-schema.xml → …/sbe
@@ -102,7 +101,7 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
     }
 }
 
-/// Test 1 — random scalars + Engine composite.
+/// Random scalars and the Engine composite.
 ///
 /// Generates every scalar field (u64, u16, enums, fixed-size arrays, bit-set)
 /// and the Engine composite, writes an otherwise-empty message, decodes, and
@@ -188,7 +187,7 @@ proptest! {
     Ok(())
 }
 
-/// Test 2 — var-data (string) round-trip: manufacturer, model, activationCode.
+/// Var-data (string) round trip: manufacturer, model, activationCode.
 #[test]
 fn roundtrip_strings() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
@@ -243,7 +242,7 @@ proptest! {
     Ok(())
 }
 
-/// Test 3 — group round-trip: fuel figures with random entries.
+/// Group round trip: fuel figures with random entries.
 ///
 /// Generates 0–8 entries with random speed, mpg, and usage description.
 #[test]
@@ -321,7 +320,7 @@ proptest! {
     Ok(())
 }
 
-/// Test 4 — zero-length edge cases: empty groups, empty var-data.
+/// Zero-length edge cases: empty groups, empty var-data.
 #[test]
 fn roundtrip_zero_length() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");
@@ -376,7 +375,7 @@ fn zero_length_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Test 5 — boundary values: minimum and maximum integer values, all bits set.
+/// Boundary values: minimum and maximum integers, all bits set.
 #[test]
 fn roundtrip_boundary_values() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "car_example");

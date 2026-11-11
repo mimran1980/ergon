@@ -67,7 +67,8 @@ if content || ! grep -F -q 'CString::new is forbidden' "$work/content.out"; then
     cat "$work/content.out" >&2
     exit 1
 fi
-if python3 "$checker" --list "$work/book" 2>/dev/null | grep -q udp; then
+listed=$(python3 "$checker" --list "$work/book" 2>/dev/null || true)
+if grep -q udp <<<"$listed"; then
     echo "--list must leave an edited page out" >&2
     exit 1
 fi

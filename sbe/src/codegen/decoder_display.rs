@@ -29,9 +29,9 @@ pub(crate) fn generate_decoder_display(
     for f in &msg.fields {
         let snake = to_snake_case(&f.name);
         // Domain-converted fields use the fallible domain getter for Display.
-        // The raw getter is renamed to `*_wire` by *any* conversion, not only
-        // by a domain type — keying this off `find_domain_type` made Display
-        // read a getter that conversion-only configs had already renamed.
+        // Any conversion, not only a domain type, renames the raw getter to
+        // `*_wire`, so this keys off `field_has_conversion_free`, not
+        // `find_domain_type`.
         let wire_name = field_has_conversion_free(f, conversions).then(|| format!("{snake}_wire"));
         // Shared list: inherent decoder methods only (not get_metadata placement).
         let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
@@ -40,7 +40,7 @@ pub(crate) fn generate_decoder_display(
         let sep = if out_idx == 0 { "" } else { ", " };
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
-        // Only touch wire when the field's full range is in-buffer — Display must
+        // Only touch wire when the field's full range is in-buffer: Display must
         // not panic on truncated / invalid SBE.
         let in_bounds = quote::quote! {
             self.byte_offset().saturating_add(#end_off_lit) <= self.buf.len()
@@ -93,7 +93,7 @@ pub(crate) fn generate_decoder_display(
                 let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                 if let Some(try_ident) = &domain_try {
-                    // Domain enum (e.g. bool) — fallible domain getter; show value only on Ok.
+                    // Domain enum (e.g. bool): fallible domain getter; show value only on Ok.
                     let fmt_dom = format!("{sep}{snake}: {{:?}}");
                     body.extend(quote::quote! {
                         if #in_bounds {
@@ -140,10 +140,10 @@ pub(crate) fn generate_decoder_display(
                 out_idx += 1;
             }
             FieldType::Set { .. } => {
-                // Bitset's own Display is pipe-separated flag names (A|B|C) —
-                // reuse it via format_args! (Arguments: Debug delegates to
+                // Bitset's own Display is pipe-separated flag names (A|B|C).
+                // Reuse it via format_args! (Arguments: Debug delegates to
                 // Display) so the message-level Debug shows readable flags
-                // instead of raw bits, or silently omitting the field.
+                // instead of raw bits.
                 // Domain-mapped sets use the fallible domain getter and `{:?}`.
                 if f.presence == Presence::Constant {
                     continue;
@@ -183,8 +183,8 @@ pub(crate) fn generate_decoder_display(
                 // Wire-only composites use the *_value() accessor.
                 if find_domain_type(f, domain_types).is_some() {
                     let try_ident = domain_accessor_ident(&snake, DECODER_RESERVED);
-                    // A caller's domain type is only ever required to be
-                    // `Debug` — never assume `Display`.
+                    // A caller's domain type is only required to be `Debug`,
+                    // so never assume `Display`.
                     debug_body.extend(quote::quote! {
                         if #in_bounds {
                             if let Ok(v) = self.#try_ident() {
@@ -286,11 +286,11 @@ pub(crate) fn generate_decoder_display(
     body.extend(quote::quote! {
         write!(f, " }}")
     });
-    // Structural Debug never reads wire bytes — safe for truncated / invalid buffers.
+    // Structural Debug never reads wire bytes, so it is safe on truncated or invalid buffers.
     let ts = quote::quote! {
         impl<'a> core::fmt::Display for #decoder_ident<'a> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                // Display delegates to Debug — one impl, both {} and {:?} work.
+                // Display delegates to Debug: one impl, both {} and {:?} work.
                 // {:?} gives debug_struct (compact), {:#?} gives pretty multi-line.
                 core::fmt::Debug::fmt(self, f)
             }

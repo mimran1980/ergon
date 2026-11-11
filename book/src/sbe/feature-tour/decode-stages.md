@@ -1,14 +1,14 @@
-# Decoder Lanes
+# Decoder lanes
 
-A decoder with groups or var-data has **two jobs**: read some fields in any
+A decoder with groups or var-data has two jobs: read some fields in any
 order, or walk the whole message once in schema order. A group decoder from a
 random-access getter implements `Iterator` for partial traversal; it is not a
 third message-decoding lane.
 
-Encoding is one state machine: each stage **is** the cursor, so the next legal
+Encoding is one state machine: each stage is the cursor, so the next legal
 field is the only method on that type. See
-[Encode and Decode](../getting-started/encode-decode.md) and
-[Method Chaining](../getting-started/method-chaining.md). Decoding is the
+[Encode and decode](../getting-started/encode-decode.md) and
+[Method chaining](../getting-started/method-chaining.md). Decoding is the
 choice, because a decoder can be asked to read in an order the encoder never
 had.
 
@@ -21,7 +21,7 @@ had.
 
 Fixed fields stay random-access in all of them. Ordered also offers a `fixed`
 callback (fixed-fields-only view, not the full decoder). A message with no
-groups and no var-data has **one** lane: the base decoder. `memoized()` and
+groups and no var-data has one lane: the base decoder. `memoized()` and
 `ordered()` are not generated; `AnyMessage` offers only `into_<name>()`.
 
 | If you want… | Use |
@@ -29,13 +29,26 @@ groups and no var-data has **one** lane: the base decoder. `memoized()` and
 | Some fields, any order, share `&Decoder` | Random access (default) |
 | Whole message in wire order | Staged `into_*` / `skip_*` |
 | Whole message, one callback per tail | Ordered (`decoder.ordered()`) |
-| Same decoder, many helpers, mixed tail order | Memoized — benchmark it; not the default |
+| Same decoder, many helpers, mixed tail order | Memoized (benchmark it; not the default) |
+
+<div class="ergon-anim" data-anim="decoder-lanes" data-title="How each decoder lane finds a tail"></div>
+
+*Animation, in words:* the [L3 order book](../../samples/l3-book.md) test
+fixture is 307 bytes: fixed block, bids (3 levels, 2/1/3 orders), asks
+(2 levels, 1/2 orders), then `symbol`. Reading `symbol`, `bids`, `asks`,
+`symbol` in that order, random access walks 14 + 0 + 9 + 14 = 37 entries
+only to find where tails start, because every getter re-walks from the fixed
+block. Memoized walks 14 on the first read, publishing the ends of bids
+(byte 197) and asks (byte 296) to its cache, then hits the cache. Staged walks
+each entry once as it reads it, but only in wire order: reading `symbol`
+first does not compile. Counts come from the generated code; they are not
+timings.
 
 Worked nested example:
 [L3 order book](../../samples/l3-book.md#decoding-random-access-or-one-staged-chain).
 `AnyMessage` can land in a lane directly (`into_car()`, `into_car_memoized()`).
 
-sbe-tool has **one** `&mut` flyweight with a `limit` cursor. Wrong order reads
+sbe-tool has one `&mut` flyweight with a `limit` cursor. Wrong order reads
 the next group's bytes as a length prefix; re-read means re-wrap; no useful
 `&`-sharing. Ergon splits those jobs. Full mapping:
 [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
@@ -47,7 +60,7 @@ are actually there before an entry reaches you.
 ## Random access
 
 Any-order getters. The decoder holds the buffer, offset, and acting header
-values — nothing else. Each dynamic-tail getter re-walks from the fixed block.
+values and nothing else. Each dynamic-tail getter re-walks from the fixed block.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_random_access}}
@@ -70,20 +83,20 @@ read_groups(&decoder)?;
 read_final_tail(&decoder)?;                   // reuses discovered boundaries
 ```
 
-Build it **once** and pass `&CarMemoizedDecoder`. Calling `.memoized()` inside
+Build it once and pass `&CarMemoizedDecoder`. Calling `.memoized()` inside
 every function creates a separate empty cache. `Cell` interior mutability:
 `Send` but not `Sync`. `into_inner()` returns the base decoder.
 
-The base lane's `tail_offset_k` re-walks every preceding tail on **every**
-getter — quadratic even in schema order. Memoized makes that sweep linear.
+The base lane's `tail_offset_k` re-walks every preceding tail on every
+getter, which is quadratic even in schema order. Memoized makes that sweep linear.
 Staged already carries the cursor, so it needs no cache.
 
 Use it when several helpers read the same decoder, or when you jump to a late
 tail and come back. Skip it for one tail and stop, a full wire-order walk
 (use staged), or if you need `Sync`.
 
-The cache covers **message-level** tails only. Nested groups inside an entry
-use an ordinary entry decoder. `just bench-diagnostics` → `versioned_l3_bench`.
+The cache covers message-level tails only. Nested groups inside an entry
+use an ordinary entry decoder. `just bench-diagnostics` runs `versioned_l3_bench`.
 
 ## Staged (`into_*` / `skip_*`)
 
@@ -92,10 +105,10 @@ order is a missing method.
 
 | Group entries | `into_<group>` | Why |
 |---|---|---|
-| Own groups or var-data | visit closure returning the entry's completion | No stride — the completion *is* the next offset |
+| Own groups or var-data | visit closure returning the entry's completion | No stride: the completion *is* the next offset |
 | Fixed-stride (no tails) | iterator | Next entry is `offset + acting block length` |
 
-`Iterator` is implemented for `&mut Iter` only — `for entry in iter` does not
+`Iterator` is implemented for `&mut Iter` only, so `for entry in iter` does not
 compile, so a loop cannot drop the rest of the message. Also
 `ExactSizeIterator` and `FusedIterator`.
 
@@ -103,10 +116,10 @@ compile, so a loop cannot drop the rest of the message. Also
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_decode_stages}}
 ```
 
-Each `into_*_as_str()` returns `(&'a str, NextStage<'a>)` — the `&str` borrows
+Each `into_*_as_str()` returns `(&'a str, NextStage<'a>)`; the `&str` borrows
 the original buffer. See [Method chaining](../getting-started/method-chaining.md#decoding).
 
-Start with `try_decode` / `try_from`. Do not `verify` first then walk — that
+Start with `try_decode` / `try_from`. Do not `verify` first then walk: that
 is two structural passes. Inside a dynamic-entry callback, consume nested
 tails with `into_*` / `skip_*` / `ordered()` and return that
 completion. Random-access getters or a root `manufacturer_len()` before
@@ -129,8 +142,8 @@ A fixed-stride iterator need not be drained: `finish()`, or the next tail's
 
 Absent versioned tails are `0`. If a primary getter already uses that name,
 the convenience accessor is omitted on that owner. Non-consuming is not
-constant-time on random-access owners — lookahead may scan preceding tails.
-Group **byte** length is not available from the count when entries have tails.
+constant-time on random-access owners, because lookahead may scan preceding tails.
+Group byte length is not available from the count when entries have tails.
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_visit_entries}}
@@ -147,8 +160,8 @@ One callback per tail, same spelling at message and nested-entry level, plus
 entries that carry tails. An entry whose existing accessor is named `ordered`
 keeps that accessor and does not get this lane.
 
-`ordered()` is `sbe_rt::Ordered<S>` over the staged stage — no second cursor.
-A nested `ordered()` walk **is** the completion the parent callback owes.
+`ordered()` is `sbe_rt::Ordered<S>` over the staged stage, with no second cursor.
+A nested `ordered()` walk is the completion the parent callback owes.
 `.done()` only unwraps the staged complete. The message chain ends on
 `encoded_length_with_header()` / `as_bytes_with_header()`, like encode.
 
@@ -159,12 +172,12 @@ A nested `ordered()` walk **is** the completion the parent callback owes.
 | Tail | Callback |
 |------|----------|
 | Fixed block | `fixed(\|&{Name}DecoderFixedView\|)` |
-| Group, entries with tails | `group(\|entry, EntryInfo\|)` → entry completion, or `Ordered<completion>` from nested `ordered()` |
-| Group, fixed-stride | `group(\|entry, EntryInfo\|)` → `()` |
+| Group, entries with tails | `group(\|entry, EntryInfo\|)`, returning the entry completion, or `Ordered<completion>` from nested `ordered()` |
+| Group, fixed-stride | `group(\|entry, EntryInfo\|)`, returning `()` |
 | Var-data | `field(\|&[u8]\|)`, and `field_as_str(\|&str\|)` when the schema declares text encoding |
 
 `EntryInfo` is `index`, wire-declared `count`, acting `block_length`, plus
-`is_first()` / `is_last()` / `remaining()`. No entry scan. Group **byte**
+`is_first()` / `is_last()` / `remaining()`. No entry scan. Group byte
 length is absent: entries with tails only settle it by traversing.
 
 Message-level `fixed` is optional. Skip it, or call it and lose the view.

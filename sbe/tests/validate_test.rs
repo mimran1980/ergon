@@ -377,7 +377,6 @@ fn validate_reports_each_wire_violation() -> Result<(), GenerateError> {
         assert_eq!(e.to_string(), "field 'Quote.pct': value 101 outside schema range [0, 100]");
         let decode = ValidateError::from(DecodeError::InvalidAscii { field: "x" });
         assert!(std::error::Error::source(&decode).is_some());
-        println!("PASS: validate_reports_each_wire_violation");
         "#,
     );
     Ok(())

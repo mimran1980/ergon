@@ -20,7 +20,8 @@ checks the rest:
   file the path names (a bare name resolves upward from the citing file).
 
 Scanned: the book source and every Markdown and source file under the
-repository, except .git, target, node_modules, git submodules, any other
+repository, except .git, target, node_modules, git submodules, directories
+git ignores, any other
 checkout inside it (a directory holding its own .git, such as a worktree) and a file
 whose first 10 lines say "check-repo-links: fixtures" (a self-test that
 writes dead links on purpose). Links are
@@ -32,6 +33,7 @@ Usage: check-repo-links.py REPO_ROOT BOOK_SRC
 import html
 import pathlib
 import re
+import subprocess
 import sys
 from urllib.parse import unquote
 
@@ -127,8 +129,22 @@ def submodules(repo):
     }
 
 
+def ignored_dirs(repo):
+    # A directory git ignores (tmp/, a cargo home, scratch copies of old
+    # checkouts) is not part of the repository. No git repo: nothing skipped.
+    out = subprocess.run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return set()
+    return {(repo / p).resolve() for p in out.stdout.split("\0") if p.endswith("/")}
+
+
 def walk(repo):
-    skip = submodules(repo)
+    skip = submodules(repo) | ignored_dirs(repo)
     stack = [repo]
     while stack:
         here = stack.pop()

@@ -7,7 +7,7 @@ or a vendor's documentation and "not measured here".
 It changes nothing. Call the checks from your own process, or run the
 `ergon-tune` command on the node ([where](#where-the-checks-run)).
 
-> **AI assistance.** Like the rest of ergon, this crate was written with heavy
+> AI assistance: like the rest of ergon, this crate was written with heavy
 > AI assistance ([disclosure](../project/ai-assistance.md)). It is not
 > production-ready.
 
@@ -107,13 +107,13 @@ In brackets: the check (T1–N4). Times are in µs.
 | T21 | TCP autocorking | `net.ipv4.tcp_autocorking` in the process's network namespace. On: a small send waits for the previous one's transmit to complete, `TCP_NODELAY` or not. A warning for latency-sensitive TCP, info otherwise. |
 | T22 | Aeron affinity names | Aeron's affinity settings named as before 1.54 (`AERON_DRIVER_CPUSET_AFFINITY`, `AERON_DRIVER_CPUSET_WARNINGS_AS_ERRORS`) in the environment. Aeron 1.54 ignores them: rename to `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` and `AERON_THREAD_AFFINITY_FAIL_ON_VALIDATION_ERRORS`. |
 | T23 | Aeron on 2 MiB pages | `AERON_DIR` on hugetlbfs without `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`. The shared-CPU plugin sets both from `hugepages.ergon.io/<container>: "2M"`. The process still sets `AERON_DIR`. Address, gateway and PCI stay unset. |
-| T24 | a DPDK NIC pair | For a caller on DPDK (the `fstack-spin` and `smoltcp-spin` line formats, or a `dpdk-ena` media driver), which needs a NIC device plugin, not shipped here, to inject the pair: `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` missing, empty or unparsable, warn with the exact keys. All three set: the finding prints the shortest `fstack-spin` and `smoltcp-spin` lines built from them (copied, never guessed); a bare `fstack-spin` or an empty smoltcp line takes the same values itself. Not on DPDK, or no pair granted: ok — no device plugin granted a pair, not a guessed address. Reads only: it exports nothing, binds no NIC, sets no `AERON_DIR`, and is never unknown. |
+| T24 | a DPDK NIC pair | For a caller on DPDK (the `fstack-spin` and `smoltcp-spin` line formats, or a `dpdk-ena` media driver), which needs a NIC device plugin, not shipped here, to inject the pair: `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` missing, empty or unparsable, warn with the exact keys. All three set: the finding prints the shortest `fstack-spin` and `smoltcp-spin` lines built from them (copied, never guessed); a bare `fstack-spin` or an empty smoltcp line takes the same values itself. Not on DPDK, or no pair granted: ok: no device plugin granted a pair, not a guessed address. Reads only: it exports nothing, binds no NIC, sets no `AERON_DIR`, and is never unknown. |
 | K1 | the pod's `QoS` class | Anything but Guaranteed gets a CPU limit and shares CPUs; the loop runs at the cap or with a neighbour. Fix (pod spec): `resources.requests` = `resources.limits`. |
 | K2 | exclusive CPUs | The shared pool means other pods land on the loop's CPU. Fix (node): kubelet `cpuManagerPolicy: static` (with `full-pcpus-only` on x86); fix (pod spec): whole-CPU requests in a Guaranteed pod. |
 | K3 | the loop's SMT sibling | A sibling in another pod is a busy neighbour (the T10 numbers). Fix (node): turn SMT off; fix (pod spec): ask for whole cores so both siblings come together. |
 | K4 | a CPU for the helper threads | One CPU means the handshake and the warning thread share the loop's core. Fix (pod spec): `cpu: 2`, or name `ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`. |
 | K5 | capabilities | Busy polling needs `CAP_NET_ADMIN`, `SCHED_FIFO` `CAP_SYS_NICE`, `mlockall` `CAP_IPC_LOCK` (or `RLIMIT_MEMLOCK`). Warns only for what the caller says it uses (`Needs`). Fix (pod spec): `securityContext.capabilities.add`. |
-| K6 | `memory.high`, CPU/memory pressure | At `memory.high` the kernel reclaims and throttles the cgroup. Any non-zero PSI `avg10` warns: no threshold is measured. Fix (pod spec): drop `memory.high` (set requests = limits); fix (node): less load on the node. |
+| K6 | `memory.high` | At `memory.high` the kernel reclaims and throttles the cgroup. Fix (pod spec): drop `memory.high` (set requests = limits); fix (node): less load on the node. |
 | K7 | the NIC's NUMA node | Same as T6, for a pod. Runs only when the caller names the NIC (`Needs::with_nic`). Fix (node): kubelet `topologyManagerPolicy: single-numa-node`; fix (pod spec): ask for CPU and device together. |
 | N1 | ENA adaptive RX moderation | Moderation makes the NIC wait so one interrupt covers several packets. ENA re-tunes that wait from a kernel worker on the CPU that polls the queue: a busy-polling loop's own CPU. |
 | N2 | deferred interrupts | `napi_defer_hard_irqs` and `gro_flush_timeout` hold interrupts back so a busy-polling socket (one whose reads poll the NIC queue) can take the packets. With no busy poller, packets wait for the timer. |
@@ -195,11 +195,11 @@ service-account mount, or `KUBERNETES_SERVICE_HOST`) and each says whether its
 fix is in the pod spec or on the node.
 
 `require` is a readiness gate, not a blanket refusal. It refuses on a warning
-(a check fired) and on a check that could not **prove** a property of this pod
-or process — its CPUs are its own, they are isolated, there is no CPU quota,
-its helpers have a core — because starting on an unproven claim is the false
+(a check fired) and on a check that could not prove a property of this pod
+or process (its CPUs are its own, they are isolated, there is no CPU quota,
+its helpers have a core) because starting on an unproven claim is the false
 pass those checks exist to stop. An unknown of a check whose subsystem the
-node may not have (PSI and `memory.high`, a NUMA node, a NIC knob, THP) is
+node may not have (`memory.high`, a NUMA node, a NIC knob, THP) is
 printed and allowed through: that is a real host, and refusing there would
 stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
 T6, T11, T13-T21, K6, K7, N1-N4 and M4 do not block; every other id does, a

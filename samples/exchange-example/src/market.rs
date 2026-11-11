@@ -1,4 +1,4 @@
-//! Normalized market data types — the vocabulary shared by the three deep
+//! Normalized market data types, the vocabulary shared by the three deep
 //! modules (`BitgetIngestor`, `ClaimPublisher`, `ForegroundPersistor`).
 
 /// A wire decimal value: `mantissa × 10^exponent`. Matches the SBE
@@ -23,7 +23,7 @@ pub struct Level {
 }
 
 /// Borrowed normalized event emitted by the ingestor. Publication encodes
-/// straight from these borrows — no owned intermediate message objects.
+/// straight from these borrows, with no owned intermediate message objects.
 #[derive(Debug, Clone, Copy)]
 pub enum NormalizedEventRef<'a> {
     L2Book {

@@ -202,6 +202,32 @@ grep -F -q 'src/c.rs:1: docs/BENCHMARKS.md#round-6-recommended-configuration: no
 grep -F -q 'no heading #tune-the-nic' "$fixture/abs-book.out"
 grep -F -q 'docs/README.md:1: BENCHMARKS.md#experiment-log: no heading' "$fixture/abs-relative.out"
 
+# A directory git ignores (scratch, a cargo home, copies of old checkouts) is
+# not part of the repository: its dead links are not checked. A file git does
+# not ignore, next to it, still is.
+make_repo ignored
+repo="$fixture/abs/ignored"
+git -C "$repo" init -q
+printf 'scratch/\n' >"$repo/.gitignore"
+mkdir -p "$repo/scratch/old"
+printf '[gone](missing.md)\n' >"$repo/scratch/old/README.md"
+LINK_REPO_ROOT="$repo" BOOK_CONTENT_ROOT="$repo/book/src" "$checker" >"$fixture/abs-ignored.out" 2>&1 || {
+    echo "a dead link in a directory git ignores failed the check" >&2
+    cat "$fixture/abs-ignored.out" >&2
+    exit 1
+}
+grep -F -q 'check-book-content: PASS' "$fixture/abs-ignored.out"
+printf '[gone](missing.md)\n' >"$repo/kept.md"
+if LINK_REPO_ROOT="$repo" BOOK_CONTENT_ROOT="$repo/book/src" "$checker" >"$fixture/abs-kept.out" 2>&1; then
+    echo "expected a dead link in a file git does not ignore to fail" >&2
+    exit 1
+fi
+grep -F -q 'kept.md:1: missing.md' "$fixture/abs-kept.out"
+if grep -F -q 'scratch/' "$fixture/abs-kept.out"; then
+    echo "an ignored directory's links were checked" >&2
+    exit 1
+fi
+
 env -u LINK_REPO_ROOT "$checker" >"$fixture/real.out"
 grep -F -q 'check-book-content: PASS' "$fixture/real.out"
 echo "test-book-content: PASS"

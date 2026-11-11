@@ -1,10 +1,10 @@
-//! T-20: generated pure observers carry `#[must_use]`.
+//! Generated pure observers carry `#[must_use]`.
 //!
-//! AST/source scan over regenerated codecs — discarding a getter is almost
-//! always a caller mistake; setters and transitions must remain usable
+//! AST/source scan over regenerated codecs. Discarding a getter is almost
+//! always a caller mistake; setters and transitions must stay usable
 //! without `must_use` noise on mutating APIs.
 //!
-//! Categories covered (T-20 + T-1 acceptance):
+//! Categories covered:
 //! - message fixed-field getters (primitive / array / enum / set / composite)
 //! - set predicates (`is_*`) and set `raw()`
 //! - enum `raw()` observers

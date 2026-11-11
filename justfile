@@ -43,19 +43,28 @@ policy:
         'bash scripts/tests/test-repository-hygiene.sh' \
         'bash scripts/tests/test-packaged-cluster-features.sh' \
         'bash scripts/tests/test-bench-historic.sh' \
+        'bash scripts/tests/test-bench-ab.sh' \
         'bash scripts/tests/test-stale-deny-ignores.sh' \
+        'bash scripts/tests/test-no-grep-q-pipefail.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
         'bash scripts/tests/test-book-content.sh' \
         'bash scripts/tests/test-generated-book.sh' \
+        'bash scripts/tests/test-book-anim.sh' \
+        'python3 -I scripts/tests/test-performance-page.py' \
         'bash scripts/tests/test-rerun-if-changed.sh' \
         'bash scripts/tests/test-aeron-version.sh' \
         'bash scripts/tests/test-publish-set.sh' \
+        'bash scripts/tests/test-workflow-paths.sh' \
+        'bash scripts/tests/test-fix-sbe-conformance-pin.sh' \
+        'bash scripts/tests/test-no-secrets.sh' \
+        './scripts/check-no-secrets.sh' \
         './scripts/check-test-policy.sh' \
         './scripts/check-mutation-config.sh' \
         './scripts/check-stale-deny-ignores.sh' \
         './scripts/check-cluster-ergo-sbe-features.sh' \
         './scripts/check-rerun-if-changed.sh' \
-        './scripts/check-publish-set.sh'
+        './scripts/check-publish-set.sh' \
+        './scripts/check-workflow-paths.sh'
 
 # Every cheap correctness gate in one pass — the ones that otherwise only run
 # inside `just release`.
@@ -97,18 +106,28 @@ preflight:
         'bash scripts/tests/test-instruction-probe-pairs.sh' \
         'bash scripts/tests/test-packaged-cluster-features.sh' \
         'bash scripts/tests/test-bench-historic.sh' \
+        'bash scripts/tests/test-bench-ab.sh' \
         'bash scripts/tests/test-stale-deny-ignores.sh' \
+        'bash scripts/tests/test-no-grep-q-pipefail.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
         'bash scripts/tests/test-book-content.sh' \
         'bash scripts/tests/test-generated-book.sh' \
+        'bash scripts/tests/test-book-anim.sh' \
+        'python3 -I scripts/tests/test-performance-page.py' \
         'bash scripts/tests/test-rerun-if-changed.sh' \
         'bash scripts/tests/test-aeron-version.sh' \
         'bash scripts/tests/test-publish-set.sh' \
+        'bash scripts/tests/test-workflow-paths.sh' \
+        'bash scripts/tests/test-fix-sbe-conformance-pin.sh' \
         'bash scripts/test-package-bench-artifacts.sh' \
+        'bash scripts/tests/test-no-secrets.sh' \
+        './scripts/check-no-secrets.sh' \
         './scripts/check-repository-hygiene.sh' \
         './scripts/check-book-fences.sh' \
         './scripts/check-book-content.sh' \
         './scripts/check-generated-book.py' \
+        './scripts/check-book-anim.py' \
+        'python3 -I scripts/generate-performance-page.py --check' \
         'bash scripts/tests/test-generated-public-api.sh && ./scripts/check-generated-public-api.sh' \
         'bash scripts/check-packaged-cluster-features.sh --list' \
         './scripts/regenerate-golden.sh --check' \
@@ -119,7 +138,8 @@ preflight:
         './scripts/check-cluster-ergo-sbe-features.sh' \
         './scripts/check-rerun-if-changed.sh' \
         './scripts/check-aeron-version.sh' \
-        './scripts/check-publish-set.sh'
+        './scripts/check-publish-set.sh' \
+        './scripts/check-workflow-paths.sh'
     @echo ""
     @echo "audit: all cheap gates pass"
 
@@ -198,6 +218,7 @@ _release-check-extras: check-coverage check-generated-rustdoc
     ./scripts/check-generated-book.py
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
+    ./scripts/check-book-anim.py
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
     cargo publish -p ergon-tune --dry-run --allow-dirty
@@ -206,6 +227,12 @@ _release-check-extras: check-coverage check-generated-rustdoc
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
     @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
     bash scripts/measure-codegen-cold-path.sh
+
+# FIX SBE conformance: byte-identity of ergon's responses, then the Java
+# RLValidator over them, against the suite commit in scripts/fix-sbe-conformance-pin.txt.
+# Needs Java 17+ and Maven; fetches the suite on first use.
+test-fix-sbe-conformance:
+    bash scripts/run-fix-sbe-conformance.sh
 
 # Release when the benchmark gates were already proven on a QUIET machine.
 #
@@ -288,6 +315,13 @@ _release-post:
     just check-bench-reference
     @echo "=== 8/9 release check (what step 2 did not already run) ==="
     just _release-check-extras
+    # Not in `_release-check-extras`, which the hosted release workflow runs on
+    # Java 25 and 4 CPUs: the conformance suite is only exercised on Java 17
+    # (also weekly in nightly.yml), and the kind lane needs Docker with 6 CPUs.
+    @echo "=== 8b/9 FIX SBE conformance: pinned suite, Java RLValidator ==="
+    just test-fix-sbe-conformance
+    @echo "=== 8c/9 published chart and image on kind ==="
+    just test-nri-published
     @echo "=== 9/9 package benchmark evidence (fail-closed) ==="
     mkdir -p release-assets
     bash scripts/package-bench-artifacts.sh release-assets
@@ -396,6 +430,10 @@ update-golden:
 check-golden:
     ./scripts/regenerate-golden.sh --check
 
+# Regenerate book/src/project/performance.md from the benchmark artifacts.
+perf-page:
+    python3 -I scripts/generate-performance-page.py
+
 # Compile all libFuzzer targets and run the deterministic corpus replay.
 check-fuzz:
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
@@ -449,6 +487,16 @@ fix:
 bench:
     ./scripts/run-sbe-bench.sh
 
+# Base-vs-branch A/B with an A/A control (base rebuilt with a layout salt):
+# three arms in rotated order under the Mac bench lock, judged per scenario
+# against the larger of the round spread and the A/A cross-build shift.
+# Exit 0 PASS, 1 FAIL, 2 missing evidence, bad arguments or a failed run,
+# 3 UNSTABLE rows, 4 no salt size moves the timed code.
+# Usage: just bench-ab <base> <branch> [--suite sbe|cluster] [--rounds 3|6|...] [--salt-only]
+# Base vs branch, judged against an A/A rebuild of base; see sbe/BENCHMARKS.md
+bench-ab base branch *args:
+    ./scripts/bench-ab.sh {{base}} {{branch}} {{args}}
+
 # Group-codegen comparison under both optimization profiles. sbe-tool is
 # intentionally measured in both: the audit found it stable without LTO while
 # pre-fix ergon regressed because generated entry setters did not inline.
@@ -499,8 +547,9 @@ bench-cold:
 # Mechanism-level evidence: raw Callgrind instruction/branch counts plus
 # disassembly for the named perf-probe symbols, in both optimisation profiles.
 # Requires a Linux host with Valgrind and llvm-objdump; it fails closed rather
-# than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool.
-# Callgrind instruction counts and disassembly per probe; fails if ergon Ir/op exceeds sbe-tool
+# than degrading to a timing harness, and fails if ergon Ir/op exceeds sbe-tool
+# outside the exceptions documented in scripts/compare-sbe-probe-pairs.py.
+# Callgrind instruction counts and disassembly per probe; fails if ergon Ir/op exceeds sbe-tool beyond its documented exception
 bench-instructions:
     ./scripts/run-sbe-instruction-probes.sh --all-profiles
 
@@ -540,6 +589,13 @@ check-bench-reference:
 # three invocations on 2026-10-20 while each run's own ratio CI was ±0.5 %.
 # The gate grades the envelope of the invocations, and a pair it cannot
 # separate establishes no winner rather than a breach.
+#
+# Every invocation is taken twice, arms in registration order and then reversed
+# (`ERGON_BENCH_ARM_ORDER`), the second into `repeats-reversed/<k>/`: the arm
+# that runs first in a Criterion group is measured differently from the one
+# after it. The gate combines the two orders per invocation, so neither arm
+# gains from going first, and refuses a run that lacks either order. This
+# doubles the invocations: BENCH_REPEATS=5 is 20 `cargo bench` runs.
 # Cluster codec benches, ergon vs sbe-tool, both LTO profiles
 bench-cluster:
     #!/usr/bin/env bash
@@ -556,34 +612,56 @@ bench-cluster:
     run_id="cluster-$(date -u +%Y%m%dT%H%M%SZ)-$(git -C "$root" rev-parse --short HEAD)"
     stamp="$root/scripts/stamp-cluster-bench-manifest.sh"
     snap="$root/scripts/snapshot-bench-repeat.sh"
-    # A stale snapshot from an earlier run would widen this run's envelope
-    # with foreign evidence; the gate refuses a mixed one, so clear it here.
-    rm -rf "$lto_crit/repeats" "$no_lto_crit/repeats"
+    # measure <label> <criterion dir> [NAME=value ...]: `repeats` invocations,
+    # each in both arm orders, snapshotted per invocation.
+    measure() {
+        local label="$1" crit="$2" k order tree
+        shift 2
+        up_start="$(uptime)"
+        echo "=== uptime at the start of cluster $label ===" && echo "$up_start"
+        # A stale snapshot from an earlier run would widen this run's envelope
+        # with foreign evidence; the gate refuses a mixed one, so clear it here.
+        rm -rf "$crit/repeats" "$crit/repeats-reversed"
+        for k in $(seq 1 "$repeats"); do
+            for order in forward reversed; do
+                tree=repeats
+                [ "$order" = reversed ] && tree=repeats-reversed
+                echo "=== cluster $label — invocation $k/$repeats, $order arm order ==="
+                # The Criterion home is shared with other bench binaries, and
+                # Criterion leaves `new/` in place for groups this binary does
+                # not touch. The marker bounds the snapshot to what this
+                # invocation is about to write.
+                touch "$crit/.bench-since"
+                env "$@" CRITERION_HOME="$crit" ERGON_BENCH_ARM_ORDER="$order" \
+                    cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --noplot
+                "$snap" "$crit" "$k" "$tree"
+            done
+        done
+        up_end="$(uptime)"
+        echo "=== uptime at the end of cluster $label ===" && echo "$up_end"
+    }
     # LTO-on (release profile: lto=true, codegen-units=1)
-    for k in $(seq 1 "$repeats"); do
-        echo "=== cluster LTO — invocation $k/$repeats ==="
-        # The Criterion home is shared with other bench binaries, and Criterion
-        # leaves `new/` in place for groups this binary does not touch. The
-        # marker bounds the snapshot to what this invocation is about to write.
-        touch "$lto_crit/.bench-since"
-        CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --noplot
-        "$snap" "$lto_crit" "$k"
-    done
-    "$stamp" "$lto_crit" lto "$run_id" "$commit" "$rustc_v" "$target"
+    measure LTO "$lto_crit"
+    BENCH_UPTIME_START="$up_start" BENCH_UPTIME_END="$up_end" "$stamp" "$lto_crit" lto "$run_id" "$commit" "$rustc_v" "$target"
     # LTO-off — publish both profiles per the benchmark fairness matrix
-    for k in $(seq 1 "$repeats"); do
-        echo "=== cluster no-LTO — invocation $k/$repeats ==="
-        touch "$no_lto_crit/.bench-since"
+    measure no-LTO "$no_lto_crit" \
         CARGO_TARGET_DIR="$no_lto_target" \
-          CARGO_PROFILE_BENCH_LTO=false \
-          CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
-          CRITERION_HOME="$no_lto_crit" \
-          cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --noplot
-        "$snap" "$no_lto_crit" "$k"
-    done
-    "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"
+        CARGO_PROFILE_BENCH_LTO=false \
+        CARGO_PROFILE_BENCH_CODEGEN_UNITS=1
+    BENCH_UPTIME_START="$up_start" BENCH_UPTIME_END="$up_end" "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"
     echo ""
+    echo "=== uptime at the end of the run ===" && uptime
+    # Each gate's stdout is kept as gate.txt beside its estimates; the report
+    # reads it to list PASS, INCONCLUSIVE and FAIL apart.
+    gate_rc=0
     echo "=== Gate (LTO) ==="
-    ./scripts/check-bench-gate.sh "$lto_crit" 0 cluster --run-id "$run_id"
+    ./scripts/check-bench-gate.sh "$lto_crit" 0 cluster --run-id "$run_id" > "$lto_crit/gate.txt" || gate_rc=1
+    cat "$lto_crit/gate.txt"
     echo "=== Gate (no-LTO) ==="
-    ./scripts/check-bench-gate.sh "$no_lto_crit" 0 cluster --run-id "$run_id"
+    ./scripts/check-bench-gate.sh "$no_lto_crit" 0 cluster --run-id "$run_id" > "$no_lto_crit/gate.txt" || gate_rc=1
+    cat "$no_lto_crit/gate.txt"
+    echo "=== Per arm: n, mean, batch-mean min, p50, p99, p99.99, max; gate verdicts (LTO) ==="
+    python3 -I ./scripts/bench-cluster-report.py "$lto_crit" LTO --gate "$lto_crit/gate.txt"
+    echo "=== Per arm: n, mean, batch-mean min, p50, p99, p99.99, max; gate verdicts (no-LTO) ==="
+    python3 -I ./scripts/bench-cluster-report.py "$no_lto_crit" no-LTO --gate "$no_lto_crit/gate.txt"
+    exit "$gate_rc"

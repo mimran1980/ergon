@@ -1,5 +1,5 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:e8709b675d73b32fea07c61b97c3b1398eac668d939a585f4ba47f656b974ccf -->
-# Low-Latency Kubernetes
+<!-- Generated page: edits here are overwritten by the next export. sha256:521d9f520ce66d7d62b942e67b638b65c647a8237d082e142940ee5abd052f20 -->
+# Low-latency Kubernetes
 
 This sample
 is the whole stack in one place: an Aeron ping and pong that each

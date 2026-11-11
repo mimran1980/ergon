@@ -1,4 +1,4 @@
-# Trust Boundaries
+# Trust boundaries
 
 Checked entry points validate the message header and fixed block. `verify`
 walks the complete dynamic tail before bulk access:
@@ -8,26 +8,15 @@ walks the complete dynamic tail before bulk access:
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
-## Three-tier constructors
+## Where the tiers are specified
 
-| Tier | Entry | Bad buffer |
-|------|-------|------------|
-| **Checked** | `try_wrap` / `try_wrap_and_apply_header` / `try_decode` | `Result::Err` (all failures) |
-| **Trusted** | bare `wrap` / `wrap_and_apply_header` | **panic** after the same extent proof |
-| **Trusted hybrid** | bare `decode` | **panic** if short; **`Err`** on wrong template/schema only |
-| **Unchecked** | `unsafe wrap_unchecked` / `wrap_and_apply_header_unchecked` | **UB** — prove extent first |
-| **Unchecked hybrid** | `unsafe decode_unchecked` | **UB** on OOB extent; **`Err`** on wrong template/schema |
-
-Bare `decode` looks like `try_decode` (`Result`) but short buffers still panic
-— prefer `try_decode` when every failure must be a `Result`. Full table and
-the ladder from untrusted bytes to typed fields:
-[Trust Boundary (core concepts)](../core-concepts/trust-boundary.md). sbe-tool
+Checked `try_*`, trusted bare `wrap` / `decode`, and `unsafe *_unchecked`
+are specified once, with the encoder and decoder tables, in
+[Trust boundary](../core-concepts/trust-boundary.md). Prefer `try_decode`
+when every failure, including a short buffer, must be a `Result`. sbe-tool
 offsets: [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
 
-## Trust boundary
-
-The constructor is the single trust checkpoint. After a safe constructor
-proves header + version-aware fixed extent, field accessors and setters are
-branch-free (unchecked loads/stores justified by that proof). Dynamic
-group/var-data tails still check on consume. Use `*_unchecked` only when you
-have proven the fixed extent independently (benchmarks, pre-validated buffers).
+The constructor is the trust checkpoint. After a safe constructor proves
+the header and the version-aware fixed extent, field accessors do not
+re-check that extent. Dynamic tails still check when they are read. Use
+`*_unchecked` only after an independent extent proof.

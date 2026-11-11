@@ -30,6 +30,32 @@ jobs:
           ./scripts/check-ci-network-and-coverage.sh
           ./scripts/check-mutation-config.sh
 
+  fix-sbe-conformance:
+    # The official Java RLValidator over ergo-sbe's responses, against the
+    # suite commit in scripts/fix-sbe-conformance-pin.txt. Weekly, not per
+    # push: it builds the Java suite with Maven.
+    needs: policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: extractions/setup-just@v4
+
+      - name: Pinned FIX SBE conformance suite, byte identity and RLValidator
+        run: just test-fix-sbe-conformance
+
   miri:
     needs: policy
     runs-on: ubuntu-24.04

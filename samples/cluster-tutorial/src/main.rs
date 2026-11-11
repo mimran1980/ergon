@@ -1,4 +1,4 @@
-//! Aeron Cluster client tutorial — connect, offer, poll, keep-alive, close.
+//! Aeron Cluster client tutorial: connect, offer, poll, keep-alive, close.
 //!
 //! Demonstrates the five most common `AeronCluster` client patterns:
 //!
@@ -114,6 +114,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // becomes Closed.
     client.poll(&mut listener, 0)?;
     assert_eq!(client.state(), SessionState::Closed);
-    println!("tutorial complete — session closed");
+    println!("tutorial complete: session closed");
     Ok(())
 }

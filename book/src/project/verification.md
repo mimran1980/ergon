@@ -1,4 +1,4 @@
-# Verification & Release
+# Verification and release
 
 ```sh
 cargo test -p ergo-sbe --all-features
@@ -33,6 +33,8 @@ release commit:
 | 4/8 | fuzz replay: one `cargo fuzz build`, then all six targets at once, 30 s each (`scripts/run-fuzz-replay.sh`) |
 | 5/8 | bench gates with `--noplot` (gates read only the JSON estimates). The parity and cluster gates reject estimates from another run id; `bench-historic` deletes earlier historic estimates first |
 | 8/9 | `_release-check-extras`: coverage, book checks (generated pages' hashes included), publish dry runs, packaged checks. `just release-check` is `just test` plus this |
+| 8b/9 | `just test-fix-sbe-conformance`: the FIX SBE conformance suite at its pinned commit and the Java RLValidator over ergo-sbe's responses (also weekly in `nightly.yml`). Not in `release-check`, which the hosted release workflow runs on Java 25 |
+| 8c/9 | `just test-nri-published`: installs the published `ergon-shared-cpus` chart and image into a throwaway kind cluster ([Latency pods](../deploy/latency-pods.md)). Needs Docker with 6 CPUs, which a hosted runner lacks. Not yet run |
 
 `check-publish-set.sh` fails if `_release-pre` stops running `just test`, if
 a release recipe skips `_release-pre`, or if either path stops reaching the
@@ -58,4 +60,4 @@ material codegen change:
 just bench   # stamps target/bench-runs/<run-id>/ and runs the gate
 ```
 
-Do **not** raise ceilings to pass.
+Do not raise ceilings to pass.

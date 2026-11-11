@@ -1,10 +1,16 @@
 # with_conversion vs with_domain_type
 
-Do **not** call both for the same selector — domain type already enables conversion.
+This is the only full comparison of `with_conversion` and `with_domain_type`.
+An owned DTO (`with_domain_objects`) is a different switch:
+[Domain objects](../feature-tour/domain-objects.md),
+[Domain DTOs](../recipes/domain-dtos.md),
+[Flyweight vs whole struct](../core-concepts/flyweight-vs-struct.md).
 
-| | **A** `with_conversion` | **B** `with_domain_type` |
+Do not call both for the same selector: a domain type already enables conversion.
+
+| | A: `with_conversion` | B: `with_domain_type` |
 |--|---------------------------|---------------------------|
-| **Idea** | Generic convert API; **you** plug any app type | Always use **this** Rust path |
+| Idea | Generic convert API; you plug in any app type | Always use this Rust path |
 | **build.rs** | `.with_conversion(named_type("Decimal"))` | `.with_domain_type(…, "rust_decimal::Decimal")` |
 | **You write** | `TryFromSbe<Decimal>` / `TryToSbe<Decimal>` for your type | Usually nothing for bool / rust_decimal / chrono |
 | **Decode** | `let p: Cents = dec.price_as()?` | `let p: rust_decimal::Decimal = dec.price()?` |
@@ -14,8 +20,8 @@ Do **not** call both for the same selector — domain type already enables conve
 
 ### Which fields a selector reaches, and what shape you get
 
-A selector matches by precedence — exact `FieldPath`, then `SemanticType`, then
-`NamedType` — so a blanket mapping plus one per-field override behaves the way
+A selector matches by precedence (exact `FieldPath`, then `SemanticType`, then
+`NamedType`), so a blanket mapping plus one per-field override behaves the way
 it reads, whatever order you register them in. Paths are `"Message.field"`,
 extended with group names inside a group (`"Order.legs.price"`).
 
@@ -47,38 +53,38 @@ the raw accessor it delegates to:
 | `sinceVersion > 0` | `Result<Option<T>, _>` | `Result<Option<T>, _>` |
 | `presence="optional"` scalar | `Result<Option<T>, _>` | `Result<Option<T>, _>` |
 
-The `Option` layer means "no value on the wire" — absent at this version, or
+The `Option` layer means "no value on the wire": absent at this version, or
 the schema null value. It is never used to report a bad value; an invalid wire
 value is the `Err`.
 
-Composites, enums, and sets all take domain types. **Fixed arrays and optional
-scalars keep their wire type in a domain DTO** even when a selector matches
-them — the flyweight still gets the converted accessor, but the owned struct
+Composites, enums, and sets all take domain types. Fixed arrays and optional
+scalars keep their wire type in a domain DTO even when a selector matches
+them. The flyweight still gets the converted accessor, but the owned struct
 stores `[u8; N]` / `Option<i64>`.
 
-### Option A — you choose the app type (`Cents`)
+### Option A: you choose the app type (`Cents`)
 
 ```rust,no_run
 {{#include ../../../examples/conversion-config.rs:with_conversion}}
 ```
-*(From `book/examples/conversion-config.rs` — a self-contained program that compiles against `ergo-sbe`.)*
+*(From `book/examples/conversion-config.rs`, a self-contained program that compiles against `ergo-sbe`.)*
 
 ```rust,no_run
 {{#include ../../../examples/conversion-app-code.rs:adapter_impl}}
 ```
-*(From `book/examples/conversion-app-code.rs` — app adapter pattern, compiles against tour_codec.)*
+*(From `book/examples/conversion-app-code.rs`: the app adapter pattern, compiled against tour_codec.)*
 
 ```rust,ignore
 {{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
 ```
-*(Same file — generic `_from`/`_as` encode/decode with `with_conversion`.)*
+*(Same file: generic `_from`/`_as` encode/decode with `with_conversion`.)*
 
-### Option B — one fixed app type
+### Option B: one fixed app type
 
 ```rust,no_run
 {{#include ../../../examples/conversion-config.rs:with_domain_type}}
 ```
-*(Same source file — `book/examples/conversion-config.rs`.)*
+*(Same source file, `book/examples/conversion-config.rs`.)*
 
 ```rust,ignore
 {{#include ../../../examples/conversion-app-code.rs:conversion_encode_decode}}
@@ -91,13 +97,13 @@ Both styles on different fields:
 ```
 *(This code comes from the `sbe-feature-tour` sample crate.)*
 
-### Option B, manual impl — concrete signatures, your own conversion logic
+### Option B, manual impl: concrete signatures, your own conversion logic
 
 `with_domain_type(selector, path)` is the common case: ergo-sbe also generates
 the `TryFromSbe`/`TryToSbe` impl for `bool` / `rust_decimal::Decimal` /
 `chrono::DateTime<Utc>`. If you need different conversion behaviour for one of
-those exact three types — a custom rounding rule, stricter validation,
-different null handling — call additive [`with_manual_domain_type`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.GenerationConfig.html#method.with_manual_domain_type)
+those exact three types (a custom rounding rule, stricter validation,
+different null handling), call additive [`with_manual_domain_type`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.GenerationConfig.html#method.with_manual_domain_type)
 instead: same generated `price(...)?` / `price()?` signatures, but you
 write the impl:
 
@@ -109,12 +115,12 @@ write the impl:
 {{#include ../../../../sbe/tests/baseline_test.rs:with_domain_type_manual_impl_usage}}
 ```
 *(From `domain_type_manual_impl_uses_callers_own_impl` in
-`sbe/tests/baseline_test.rs` — a real generated-and-compiled test. Any
+`sbe/tests/baseline_test.rs`, a real generated-and-compiled test. Any
 `rust_type` string that *isn't* one of the three built-ins never gets an
-auto-generated impl regardless of `DomainImpl` — it only matters for opting
-those three in or out.)*
+auto-generated impl regardless of `DomainImpl`; the setting only matters for
+opting those three in or out.)*
 
-**Forgot the impl?** Two things soften it. First, the compile error names the
+If you forget the impl, two things soften it. First, the compile error names the
 missing impl directly instead of the default trait-bound message:
 
 ```text
@@ -128,7 +134,7 @@ error[E0277]: `rust_decimal::Decimal` has no `TryFromSbe<Decimal>` impl
 
 Second, for the three built-ins, that pointer is real: the generated
 `price` method's own doc comment (visible on hover, or in `cargo doc`)
-carries the *exact* impl `DomainImpl::Generated` would have written — copy it
+carries the *exact* impl `DomainImpl::Generated` would have written; copy it
 out and adjust. `sbe/tests/baseline_test.rs`'s
 `domain_type_manual_impl_doc_comment_has_generated_snippet` asserts this
 snippet is present in the generated source.
@@ -136,14 +142,14 @@ snippet is present in the generated source.
 ### What your domain type must implement
 
 Only `Debug`. The generated `Display`/`Debug` bodies format domain values with
-`{:?}`, so a plain `#[derive(Debug)]` struct works — `Display` is never
+`{:?}`, so a plain `#[derive(Debug)]` struct works; `Display` is never
 required. Note that `TryFromSbe::Error` / `TryToSbe::Error` is a separate
 associated type and *does* need `Debug + Display`; `&'static str` satisfies it.
 
-### Option C — generated mappings for enums and composites
+### Option C: generated mappings for enums and composites
 
-When the application type mirrors the SBE type — an enum with the same
-variants, a struct with the same members — `with_enum_mapping` and
+When the application type mirrors the SBE type (an enum with the same
+variants, a struct with the same members), `with_enum_mapping` and
 `with_composite_mapping` generate the `TryFromSbe` / `TryToSbe` impls
 (exhaustive, with renames) and register the domain type in one call. The
 accessors look exactly like Option B's. See

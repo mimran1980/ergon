@@ -1,13 +1,13 @@
-# Getting Started
+# Getting started
 
 Add `ergo-sbe` as a build dependency, generate a module, include it, encode
 and decode.
 
-- [Depend on the Generator](getting-started/depend.md)
+- [Depend on the generator](getting-started/depend.md)
 - [Generate in build.rs](getting-started/generate.md)
-- [Include Generated Code](getting-started/include.md)
-- [Encode and Decode](getting-started/encode-decode.md)
-- [Method Chaining](getting-started/method-chaining.md)
-- [Multi-Schema Patterns](getting-started/multi-schema.md)
+- [Include generated code](getting-started/include.md)
+- [Encode and decode](getting-started/encode-decode.md)
+- [Method chaining](getting-started/method-chaining.md)
+- [Multi-schema patterns](getting-started/multi-schema.md)
 - [Coming from sbe-tool](getting-started/from-sbe-tool.md)
-- [Error Diagnostics](getting-started/error-diagnostics.md)
+- [Error diagnostics](getting-started/error-diagnostics.md)

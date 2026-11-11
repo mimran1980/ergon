@@ -806,7 +806,7 @@ fn tail_accessors_yield_to_colliding_field_names() -> Result<(), Box<dyn std::er
 /// Group-entry metadata getters must yield to schema fields of the same name.
 /// A field `actingVersion` / `actingBlockLength` keeps `acting_version()` /
 /// `acting_block_length()`; the convenience methods are omitted. Unconditional
-/// emission is E0592 (HFT review 2026-09-15).
+/// emission is E0592.
 #[test]
 fn entry_fields_named_acting_version_and_block_length_compile()
 -> Result<(), Box<dyn std::error::Error>> {

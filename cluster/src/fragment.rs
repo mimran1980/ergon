@@ -6,8 +6,7 @@ use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, Ev
 use crate::error::ClusterError;
 
 /// Every SBE frame begins with an 8-byte message header (blockLength,
-/// templateId, schemaId, version). Per the SBE specification § Message
-/// Header, this field is fixed and never varies.
+/// templateId, schemaId, version).
 const SBE_MESSAGE_HEADER_LENGTH: usize = 8;
 
 /// A [`ClusterError::ProtocolError`] for a malformed frame. Out of line so
@@ -20,16 +19,16 @@ fn protocol_error(reason: std::fmt::Arguments<'_>) -> ClusterError {
     }
 }
 
-/// A fully-decoded egress fragment, ready for listener dispatch.
+/// A decoded egress fragment, ready for listener dispatch.
 #[derive(Debug, Clone, Copy)]
 pub enum Fragment<'a> {
-    /// Application message with its payload slice.
+    /// An application message and its payload.
     Message {
         cluster_session_id: i64,
         timestamp: i64,
         payload: &'a [u8],
     },
-    /// Session lifecycle event.
+    /// A session lifecycle event.
     SessionEvent {
         correlation_id: i64,
         cluster_session_id: i64,
@@ -40,20 +39,20 @@ pub enum Fragment<'a> {
         /// Leader heartbeat from the event, when the cluster sent one.
         leader_heartbeat_timeout_ns: Option<i64>,
     },
-    /// New leader elected.
+    /// A new leader was elected.
     NewLeader {
         cluster_session_id: i64,
         leadership_term_id: i64,
         leader_member_id: i32,
         ingress_endpoints: &'a str,
     },
-    /// Credential challenge.
+    /// An authentication challenge.
     Challenge {
         correlation_id: i64,
         cluster_session_id: i64,
         encoded_challenge: &'a [u8],
     },
-    /// Administrative response.
+    /// The response to an admin request.
     AdminResponse {
         cluster_session_id: i64,
         correlation_id: i64,
@@ -76,12 +75,12 @@ impl<'a> Fragment<'a> {
         }
     }
 
-    /// Decode one egress fragment from wire bytes.
+    /// Decodes one egress fragment from wire bytes.
     ///
-    /// Returns `Ok(None)` for unknown template IDs (not an error — the
-    /// cluster may send messages not in our schema). Returns `Err` for
-    /// malformed frames (including frames too short to contain a complete
-    /// 8-byte SBE header), invalid text, or buffer overruns.
+    /// Returns `Ok(None)` for an unknown template id or a frame of another
+    /// schema, which is not an error because the cluster may send messages
+    /// outside our schema. Returns `Err` for a malformed frame (including one
+    /// shorter than the 8-byte SBE header), invalid text or a buffer overrun.
     pub(crate) fn decode(data: &'a [u8]) -> Result<Option<Self>, ClusterError> {
         if data.len() < SBE_MESSAGE_HEADER_LENGTH {
             return Err(protocol_error(format_args!(
@@ -92,7 +91,9 @@ impl<'a> Fragment<'a> {
         }
         let msg = match AnyMessage::decode(data, 0) {
             Ok(m) => m,
-            Err(DecodeError::UnknownTemplateLength { .. }) => return Ok(None),
+            // Another schema is an extension frame, as in Java's client,
+            // whatever its template id.
+            Err(DecodeError::UnknownTemplateLength { .. } | DecodeError::WrongSchema { .. }) => return Ok(None),
             Err(e) => {
                 return Err(protocol_error(format_args!("fragment decode: {e}")));
             }
@@ -100,9 +101,8 @@ impl<'a> Fragment<'a> {
 
         Ok(Some(match msg {
             AnyMessage::SessionMessageHeader(decoder) => {
-                // Explicit size guard: AnyMessage::decode only validates the
-                // 8-byte frame header, not the full body. Reject truncated data
-                // before slicing the payload.
+                // `AnyMessage::decode` checks only the 8-byte frame header, so
+                // reject a truncated body before slicing the payload.
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
                     return Err(protocol_error(format_args!("session message too short")));
                 }

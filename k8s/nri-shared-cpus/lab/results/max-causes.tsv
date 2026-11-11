@@ -1,0 +1,5 @@
+# The reviewed cause of each arm's max, read by scripts/generate-performance-page.py.
+# An arm not listed here prints "unexplained". Evidence is a repository path (with an optional #heading).
+# run	arm	cause	evidence
+azure-20261024234841	plugin-on	host stall below the guest kernel (hypervisor or hardware)	k8s/nri-shared-cpus/BENCHMARKS.md#the-floor-below-the-guest-kernel
+azure-20261024234841	trace	preemption: a kworker LRU drain after systemd's daily generators (node event)	k8s/nri-shared-cpus/BENCHMARKS.md#remaining-risk-node-events

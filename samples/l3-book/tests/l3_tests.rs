@@ -370,7 +370,7 @@ fn l3book_vardata_nested_exact_length() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 fn l3book_vardata_ragged_orders() -> Result<(), Box<dyn std::error::Error>> {
-    // Compute exact length via the staged builder — no magic buffers.
+    // Compute exact length via the staged builder, so there are no magic buffers.
     let len = L3BookVarDataEncoder::compute_length()
         .bids_ragged(2, |g| {
             g.add()?.orders(|og| {
@@ -507,7 +507,7 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
     let actual = l3_book::encode_book(buf, bids, asks, symbol)?;
     assert_eq!(len, actual);
 
-    // 1. Decoder Display + Debug — shows field values.
+    // 1. Decoder Display and Debug show field values.
     let dec = L3BookDecoder::try_from(&buf[..actual])?;
     let dec_display = format!("{}", dec);
     let dec_debug = format!("{:?}", dec);
@@ -522,7 +522,7 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
         "decoder Display must show price"
     );
 
-    // 2. Encoder Display + Debug — delegates to decoder for field values.
+    // 2. Encoder Display and Debug delegate to the decoder for field values.
     let enc = L3BookEncoder::try_wrap_and_apply_header(buf, 0)?;
     let enc_display = format!("{}", enc);
     eprintln!("encoder Display: {enc_display}");
@@ -531,7 +531,7 @@ fn l3book_display_debug_tostring_comparison() -> Result<(), Box<dyn std::error::
         "encoder Display must show symbol"
     );
 
-    // 3. DTO Debug — domain-typed fields.
+    // 3. DTO Debug shows domain-typed fields.
     let dto = L3BookDomain::try_from_decoder(L3BookDecoder::try_from(&buf[..actual])?)?;
     let dto_debug = format!("{:?}", dto);
     eprintln!("DTO Debug:       {dto_debug}");
@@ -606,7 +606,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
             "L3Book DTO round-trip must be byte-identical"
         );
 
-        // Truncated (header only) — must not panic.
+        // Truncated (header only): must not panic.
         if let Ok(td) = L3BookDecoder::try_from(&buf[..8]) {
             let _ = format!("{td}");
             let _ = format!("{td:?}");
@@ -635,7 +635,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         eprintln!("[VarData] decoder Debug:   {dec_debug}");
         assert!(dec_display.contains("ORD-1"));
 
-        // Truncated — must not panic.
+        // Truncated: must not panic.
         if let Ok(td) = L3BookVarDataDecoder::try_from(&buf[..8]) {
             let _ = format!("{td}");
             let _ = format!("{td:?}");
@@ -663,7 +663,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         eprintln!("[Depth3] decoder Debug:   {dec_debug}");
         assert!(dec_display.contains("test"));
 
-        // Truncated — must not panic.
+        // Truncated: must not panic.
         if let Ok(td) = Depth3TestDecoder::try_from(&buf[..8]) {
             let _ = format!("{td}");
             let _ = format!("{td:?}");
@@ -671,7 +671,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
         eprintln!("[Depth3] truncated: no panic");
     }
 
-    // ── All-zeros invalid buffer — must not panic for any message ──
+    // ── All-zeros invalid buffer: must not panic for any message ──
     let zeros = [0u8; 64];
     if let Ok(d) = L3BookDecoder::try_from(&zeros[..]) {
         let _ = format!("{d}");
@@ -719,7 +719,7 @@ fn roundrobin_all_messages_display_debug_safety() -> Result<(), Box<dyn std::err
 // ── Fuzzy tests: random bytes through every decoder's Display + Debug ────
 
 proptest::proptest! {
-    /// Feed random bytes to L3BookDecoder — must never panic on Display or Debug.
+    /// Feed random bytes to L3BookDecoder; it must never panic on Display or Debug.
     #[test]
     fn fuzz_l3book_display_debug(data in proptest::collection::vec(any::<u8>(), 0..512)) {
         if data.len() >= 8
@@ -729,7 +729,7 @@ proptest::proptest! {
             }
     }
 
-    /// Feed random bytes to L3BookVarDataDecoder — must never panic.
+    /// Feed random bytes to L3BookVarDataDecoder; it must never panic.
     #[test]
     fn fuzz_l3book_vardata_display_debug(data in proptest::collection::vec(any::<u8>(), 0..512)) {
         if data.len() >= 8
@@ -739,7 +739,7 @@ proptest::proptest! {
             }
     }
 
-    /// Feed random bytes to Depth3TestDecoder — must never panic.
+    /// Feed random bytes to Depth3TestDecoder; it must never panic.
     #[test]
     fn fuzz_depth3_display_debug(data in proptest::collection::vec(any::<u8>(), 0..512)) {
         if data.len() >= 8
@@ -749,13 +749,13 @@ proptest::proptest! {
             }
     }
 
-    /// Feed random bytes through the egress adapter — must never panic.
+    /// Feed random bytes through the egress adapter; it must never panic.
     #[test]
     fn fuzz_egress_adapter(data in proptest::collection::vec(any::<u8>(), 0..512)) {
         let _ = crate::fragment_decode_safe(&data);
     }
 
-    /// Feed random bytes to AnyMessage::decode — must never panic.
+    /// Feed random bytes to AnyMessage::decode; it must never panic.
     #[test]
     fn fuzz_any_message_decode(data in proptest::collection::vec(any::<u8>(), 0..512)) {
         if data.len() >= 8 {
@@ -771,7 +771,7 @@ fn fragment_decode_safe(data: &[u8]) -> Option<String> {
     if data.len() < 8 {
         return None;
     }
-    // Try each known decoder template ID — if the header matches, decode it.
+    // Try each known decoder template ID; if the header matches, decode it.
     let tid = u16::from_le_bytes([data[2], data[3]]);
     let _ = tid; // We don't route; just verify no panic.
     Some(format!("template_id={tid}, len={}", data.len()))
@@ -907,7 +907,7 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
         .bids(NUM_LEVELS as u16, |g| {
             for i in 0..NUM_LEVELS {
                 g.add(|mut e| {
-                    // Valid Decimal values — unwrap is safe here.
+                    // Valid Decimal values, so unwrap is safe here.
                     e.price(d((i % 50000) as i64)).unwrap();
                     e.size(d(100)).unwrap();
                     e.orders(0, |_og| Ok(()))
@@ -959,7 +959,7 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
 // ─────────────────────────────────────────────────────────────────────────
 
 // ANCHOR: lane_snapshot
-/// Everything the fixture contains, in wire order — in the schema's *domain*
+/// Everything the fixture contains, in wire order, in the schema's *domain*
 /// types, not its wire types.
 ///
 /// This sample generates with `with_domain_type`, so `price` is
@@ -970,8 +970,8 @@ fn large_book_exceeds_64kb_and_roundtrips() -> Result<(), Box<dyn std::error::Er
 ///
 /// `symbol` is borrowed, not owned: every lane hands back `&'a str` pointing
 /// into the wire buffer. Copying it would defeat the flyweight. The `Vec`s
-/// are the *test's* comparison scaffolding — a decode has to materialise
-/// something to compare — not part of the decode path, which allocates
+/// are the *test's* comparison scaffolding (a decode has to materialise
+/// something to compare), not part of the decode path, which allocates
 /// nothing.
 #[derive(Debug, PartialEq, Eq)]
 struct Snapshot<'a> {
@@ -985,7 +985,7 @@ struct Snapshot<'a> {
 }
 
 /// A decoded level, owned so lanes can be compared. The decode itself borrows
-/// — see `best_bid_and_depth` for the shape a hot path actually uses.
+/// (see `best_bid_and_depth` for the shape a hot path actually uses).
 type OwnedLevel = (Rd, Rd, Vec<(u64, Rd)>);
 // ANCHOR_END: lane_snapshot
 
@@ -1013,6 +1013,11 @@ fn fixture() -> (Vec<u8>, Vec<OwnedLevel>, Vec<OwnedLevel>) {
     let mut storage = vec![0u8; len];
     let actual = l3_book::encode_book(&mut storage, bids, asks, symbol).expect("encode");
     assert_eq!(len, actual, "computed length must match encoded length");
+    let mut short = vec![0u8; len - 1];
+    assert!(
+        l3_book::encode_book(&mut short, bids, asks, symbol).is_err(),
+        "one byte short must fail, not truncate"
+    );
 
     let own = |lv: &(Rd, Rd, &[(u64, Rd)])| (lv.0, lv.1, lv.2.to_vec());
     (
@@ -1024,7 +1029,7 @@ fn fixture() -> (Vec<u8>, Vec<OwnedLevel>, Vec<OwnedLevel>) {
 // ANCHOR_END: lane_fixture
 
 // ANCHOR: decode_random_access
-/// Lane 1 — random access (the base decoder from `try_decode`).
+/// Lane 1: random access (the base decoder from `try_decode`).
 ///
 /// Getters may be called in any order and the decoder is `Sync`. Each
 /// dynamic-tail getter re-walks from the fixed block, so reading `bids`,
@@ -1035,7 +1040,7 @@ fn decode_random_access(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error:
 
     // Deliberately out of wire order: symbol (the last tail) first, then back
     // to the groups. Only a lane that resolves tails independently can do
-    // this. The `&str` borrows the wire buffer — nothing is copied.
+    // this. The `&str` borrows the wire buffer, so nothing is copied.
     let symbol = dec.symbol_as_str()?;
 
     let mut bids = Vec::new();
@@ -1074,7 +1079,7 @@ fn decode_random_access(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error:
 // ANCHOR_END: decode_random_access
 
 // ANCHOR: decode_staged
-/// Sequential decode — `into_*` / `skip_*`, compile-time order. The group
+/// Sequential decode with `into_*` / `skip_*`, compile-time order. The group
 /// iterator is the stage: `into_asks` skips unread bids.
 fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
     let dec = L3BookDecoder::try_decode(wire, 0)?;
@@ -1083,7 +1088,7 @@ fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>
     let is_active = dec.is_active()?;
 
     // Levels carry a nested `orders` group, so they have no stride and take a
-    // visit closure — the completion it returns is where the next level starts.
+    // visit closure: the completion it returns is where the next level starts.
     // `orders` entries are fixed-stride, so they are a plain iterator.
     let mut bids = Vec::new();
     let mut asks = Vec::new();
@@ -1124,11 +1129,11 @@ fn decode_staged(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>
 // ANCHOR_END: decode_staged
 
 // ANCHOR: decode_memoized
-/// Lane 3 — memoized (`decoder.memoized()`).
+/// Lane 3: memoized (`decoder.memoized()`).
 ///
 /// Same getter names as the base lane, plus a progressive cache of discovered
-/// tail boundaries. Read here in the worst order for the base lane — symbol
-/// first, then back to the groups, then symbol again — which is exactly the
+/// tail boundaries. Read here in the worst order for the base lane: symbol
+/// first, then back to the groups, then symbol again. That is exactly the
 /// shape the cache exists for.
 fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
     let dec = L3BookDecoder::try_decode(wire, 0)?.memoized();
@@ -1171,24 +1176,24 @@ fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Erro
 // ANCHOR_END: decode_memoized
 
 // ANCHOR: decode_ordered
-/// Lane 4 — ordered (`decoder.ordered()`). One callback per tail, in wire
+/// Lane 4: ordered (`decoder.ordered()`). One callback per tail, in wire
 /// order, with the *same spelling* at every tail, plus an `EntryInfo` giving
 /// each entry's position.
 ///
 /// Compare with `decode_staged`: there, `bids` takes a visit closure and
 /// `orders` is an iterator, because their shapes genuinely differ. Here every
-/// message-level tail — fixed block, both groups, and the var-data — reads the
+/// message-level tail (fixed block, both groups and the var-data) reads the
 /// same way. That uniformity is why this lane exists: code that walks whole
 /// messages writes one form instead of branching on each tail's shape.
 ///
 /// It goes all the way down. A `bids` level carries its own tail (the nested
 /// `orders` group), so it has an `ordered()` of its own, and the spelling does
 /// not change at the entry boundary. Returning that nested walk is the
-/// completion the parent owes — no `.done()` on the way out. The message
+/// completion the parent owes, with no `.done()` on the way out. The message
 /// chain ends on `encoded_length_with_header()`, like encode.
 ///
 /// The staged `level.into_orders()` iterator is still generated beside it and
-/// is still the better tool when you want to `break` early — `orders` is
+/// is still the better tool when you want to `break` early: `orders` is
 /// fixed-stride, so its iterator is an `ExactSizeIterator` and stopping short
 /// still reaches the next tail by arithmetic. The lane adds a spelling; it
 /// removes nothing.
@@ -1196,7 +1201,7 @@ fn decode_memoized(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Erro
 /// `EntryInfo::count` is the wire-declared `numInGroup`, read from the group's
 /// dimension header before the walk starts, so the `Vec` is sized once rather
 /// than grown. It costs no scan. `bids` and `asks` still need separate bodies
-/// because their entry decoders are distinct types — the lane unifies how a
+/// because their entry decoders are distinct types; the lane unifies how a
 /// tail is *reached*, not what its entries are.
 fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error>> {
     // Ordered callbacks return `DecodeError`; a domain getter fails with its
@@ -1229,8 +1234,8 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
             }
             let price = domain("price", level.price())?;
             let size = domain("size", level.size())?;
-            // Nested `ordered()` returns the completion the parent owes —
-            // no `.done()` on the way out.
+            // Nested `ordered()` returns the completion the parent owes,
+            // with no `.done()` on the way out.
             let mut orders = Vec::new();
             let complete = level.ordered().orders(|order, _oinfo| {
                 orders.push((order.order_id(), domain("quantity", order.quantity())?));
@@ -1277,7 +1282,7 @@ fn decode_ordered(wire: &[u8]) -> Result<Snapshot<'_>, Box<dyn std::error::Error
 /// The lane functions above build owned collections because a test has to
 /// materialise something to compare. Real consumption does not. Here every
 /// level and every nested order is visited, `symbol` is used as a borrowed
-/// `&str`, and the only state is a handful of scalars in registers — the
+/// `&str`, and the only state is a handful of scalars in registers; the
 /// generated decoders are flyweights over the wire buffer and allocate
 /// nothing, so this whole walk is allocation-free.
 ///
@@ -1293,12 +1298,13 @@ fn best_bid_and_depth(wire: &[u8]) -> Result<(Rd, u64, usize, &str), sbe_rt::Dec
     let (symbol, _done) = L3BookDecoder::try_decode(wire, 0)?
         .into_bids(|level| -> Result<_, sbe_rt::DecodeError> {
             levels += 1;
-            let px = level
-                .price()
-                .map_err(|reason| sbe_rt::DecodeError::DomainConversionFailed {
-                    field: "price",
-                    reason,
-                })?;
+            let px =
+                level
+                    .price()
+                    .map_err(|reason| sbe_rt::DecodeError::DomainConversionFailed {
+                        field: "price",
+                        reason,
+                    })?;
             if best_bid.is_none_or(|b| px > b) {
                 best_bid = Some(px);
             }
@@ -1400,7 +1406,7 @@ fn remaining_lanes_decode_the_same_nested_book() -> Result<(), Box<dyn std::erro
     let memoized = decode_memoized(&wire)?;
     let ordered = decode_ordered(&wire)?;
 
-    // Against the encoder's inputs first — otherwise identical wrong
+    // Against the encoder's inputs first, since otherwise identical wrong
     // answers would agree with each other and pass.
     assert_eq!(random, expected, "random access");
     assert_eq!(staged, expected, "staged");
@@ -1433,7 +1439,7 @@ fn memoized_lane_caches_boundaries_across_reads() -> Result<(), Box<dyn std::err
     assert_eq!(dec.sequence(), 42);
     assert_eq!(dec.decode_cache_stats().known_through, 0);
 
-    // Reaching `symbol` — the final tail — discovers and publishes every
+    // Reaching `symbol`, the final tail, discovers and publishes every
     // boundary before it: bids, then asks.
     let symbol = dec.symbol_as_str()?;
     let warm = dec.decode_cache_stats();
@@ -1443,7 +1449,7 @@ fn memoized_lane_caches_boundaries_across_reads() -> Result<(), Box<dyn std::err
     );
     let walks = warm.boundary_calcs;
 
-    // Every later read — in any order — is served from the cache.
+    // Every later read, in any order, is served from the cache.
     assert_eq!(dec.symbol_as_str()?, symbol);
     assert_eq!(dec.bids()?.remaining_entries(), 3);
     assert_eq!(dec.asks()?.remaining_entries(), 2);
@@ -1463,7 +1469,7 @@ fn memoized_lane_caches_boundaries_across_reads() -> Result<(), Box<dyn std::err
 #[test]
 fn symbol_as_str_matches_the_byte_setter() -> Result<(), Box<dyn std::error::Error>> {
     // `symbol` declares `characterEncoding="ASCII"`, so the generated encoder
-    // carries `symbol_as_str(&str)` alongside the raw byte setter — the sample
+    // carries `symbol_as_str(&str)` alongside the raw byte setter; the sample
     // wrapper (`encode_book`) takes `&str` directly since every caller here
     // always holds text, but the underlying byte setter is still there for a
     // caller that only has `&[u8]`. Both must produce an identical wire image

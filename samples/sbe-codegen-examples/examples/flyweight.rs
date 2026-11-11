@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         modules.modules().len()
     );
     for m in modules.modules() {
-        println!("  {} — {} bytes", m.path, m.source.len());
+        println!("  {}: {} bytes", m.path, m.source.len());
         for line in m.source.lines() {
             if line.starts_with("pub struct") || line.starts_with("pub fn") {
                 println!("    {line}");

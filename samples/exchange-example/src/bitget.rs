@@ -1,4 +1,4 @@
-//! `BitgetIngestor` — the pure Bitget → normalized state machine.
+//! `BitgetIngestor`, the pure state machine that turns Bitget messages into normalized events.
 //!
 //! Owns WebSocket-frame-shaped borrowed events in, borrowed
 //! [`NormalizedEventRef`] out through a generic callback. Callback errors
@@ -75,7 +75,7 @@ pub struct BitgetIngestor {
     have_snapshot: bool,
     sequence: u64,
     counters: Counters,
-    // Reused emission scratch — retains capacity across events.
+    // Reused emission scratch; keeps its capacity across events.
     bid_scratch: Vec<Level>,
     ask_scratch: Vec<Level>,
 }

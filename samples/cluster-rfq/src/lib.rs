@@ -1,4 +1,4 @@
-//! RFQ protocol codecs — generated from protocol-codecs.xml (schema 101).
+//! RFQ protocol codecs, generated from protocol-codecs.xml (schema 101).
 //!
 //! **Build-dep only:** codecs in `src/generated/rfq_codec.rs` (gitignored).
 

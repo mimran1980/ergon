@@ -1,0 +1,95 @@
+########## step 18: plugin outages: detect, NotReady, recover (timed) ##########
+  pod A container cgroup on the node: /sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-pod1365bc57_fd5c_4a49_8390_58f6bab72351.slice/cri-containerd-0dd19e518e002b60698cfe736a3cf9a2cfcf594c6207df82e28b688e18b780d4.scope
+  uptime: 12:06  up 1 day,  9:21, 4 users, load averages: 9.89 19.16 20.99
+  20 cycles; outage held 5 s after detection; probe periodSeconds 1; helper burns 5 ms per 10 ms round
+  kubelet restarted (systemctl)
+  ok:   cycle 1: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 1: the helper ran on an exclusive CPU (the harm is real)
+  row: 1	174.6	5809.2	510.4	95.3	-18.1	1806.3	361
+  kubelet restarted (systemctl)
+  ok:   cycle 2: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 2: the helper ran on an exclusive CPU (the harm is real)
+  row: 2	983.7	7094.3	627.3	898.4	-8.2	2227.2	445
+  kubelet restarted (systemctl)
+  ok:   cycle 3: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 3: the helper ran on an exclusive CPU (the harm is real)
+  row: 3	107.6	5795.3	556.1	39.8	-21.1	1830.8	366
+  kubelet restarted (systemctl)
+  ok:   cycle 4: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 4: the helper ran on an exclusive CPU (the harm is real)
+  row: 4	135.1	5881.5	590.2	10.4	-36.5	1822.1	364
+  kubelet restarted (systemctl)
+  ok:   cycle 5: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 5: the helper ran on an exclusive CPU (the harm is real)
+  row: 5	130.7	5838.9	587.9	19.3	-10.2	1815.7	363
+  kubelet restarted (systemctl)
+  ok:   cycle 6: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 6: the helper ran on an exclusive CPU (the harm is real)
+  row: 6	107.4	6024.6	678.7	817.6	-22.6	1886.3	377
+  kubelet restarted (systemctl)
+  ok:   cycle 7: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 7: the helper ran on an exclusive CPU (the harm is real)
+  row: 7	186.3	5878.8	532.7	34.1	-21.3	1825.2	365
+  kubelet restarted (systemctl)
+  ok:   cycle 8: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 8: the helper ran on an exclusive CPU (the harm is real)
+  row: 8	153.4	5761.4	508.1	113.7	-15.4	1771.3	354
+  kubelet restarted (systemctl)
+  ok:   cycle 9: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 9: the helper ran on an exclusive CPU (the harm is real)
+  row: 9	228.2	5876.8	548.1	76.4	-24.6	1805.6	361
+  kubelet restarted (systemctl)
+  ok:   cycle 10: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 10: the helper ran on an exclusive CPU (the harm is real)
+  row: 10	126.8	5765.0	522.4	94.7	-12.5	1780.4	356
+  kubelet restarted (systemctl)
+  ok:   cycle 11: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 11: the helper ran on an exclusive CPU (the harm is real)
+  row: 11	242.7	6430.6	515.1	535.8	-14.3	1990.5	398
+  kubelet restarted (systemctl)
+  ok:   cycle 12: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 12: the helper ran on an exclusive CPU (the harm is real)
+  row: 12	203.9	6407.3	539.1	517.6	-11.1	1990.1	398
+  kubelet restarted (systemctl)
+  ok:   cycle 13: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 13: the helper ran on an exclusive CPU (the harm is real)
+  row: 13	146.1	5804.1	528.8	71.8	-29.0	1795.3	359
+  kubelet restarted (systemctl)
+  ok:   cycle 14: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 14: the helper ran on an exclusive CPU (the harm is real)
+  row: 14	230.6	5933.5	542.2	27.5	-16.6	1835.1	367
+  kubelet restarted (systemctl)
+  ok:   cycle 15: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 15: the helper ran on an exclusive CPU (the harm is real)
+  row: 15	167.0	5836.0	529.1	57.4	-27.8	1790.5	358
+  kubelet restarted (systemctl)
+  ok:   cycle 16: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 16: the helper ran on an exclusive CPU (the harm is real)
+  row: 16	233.4	5888.4	520.2	73.6	-31.6	1800.2	360
+  kubelet restarted (systemctl)
+  ok:   cycle 17: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 17: the helper ran on an exclusive CPU (the harm is real)
+  row: 17	209.8	5872.5	510.5	71.8	-12.0	1805.3	361
+  kubelet restarted (systemctl)
+  ok:   cycle 18: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 18: the helper ran on an exclusive CPU (the harm is real)
+  row: 18	195.7	5834.4	535.4	86.8	-10.7	1800.0	360
+  kubelet restarted (systemctl)
+  ok:   cycle 19: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 19: the helper ran on an exclusive CPU (the harm is real)
+  row: 19	236.2	5888.3	522.7	72.2	-10.4	1825.2	365
+  kubelet restarted (systemctl)
+  ok:   cycle 20: the probe verified placement only after the cpuset was whole again
+  ok:   cycle 20: the helper ran on an exclusive CPU (the harm is real)
+  row: 20	225.8	5919.5	552.4	43.6	-18.5	1840.3	368
+  uptime: 12:10  up 1 day,  9:25, 4 users, load averages: 4.64 11.38 17.14
+
+  functional timings on kind (not a latency platform), ms; p99.99 is the max at this n
+  metric                          n       min       p50       p99    p99.99       max
+  detect: shrink -> probe 503    20     107.4     186.3     983.7     983.7     983.7
+  harm: shrink -> whole          20    5761.4    5876.8    7094.3    7094.3    7094.3
+  recover: plugin -> whole       20     508.1     532.7     678.7     678.7     678.7
+  verify: whole -> probe 200     20      10.4      72.2     898.4     898.4     898.4
+  helper back: whole -> last     20     -36.5     -18.1      -8.2      -8.2      -8.2
+  helper CPU on exclusive        20    1771.3    1815.7    2227.2    2227.2    2227.2
+  helper rounds off S (count)    20     354.0     363.0     445.0     445.0     445.0

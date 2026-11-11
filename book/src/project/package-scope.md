@@ -1,4 +1,4 @@
-# Package Scope
+# Package scope
 
 crates.io ships each crate's source, its README, and the manifest.
 
@@ -13,7 +13,7 @@ and upstream reference trees. Those live on GitHub.
 
 Samples and `ergo-sbe-benchmarks` are `publish = false`. Cluster codecs are
 `#[doc(hidden)] pub` in `cluster_codec_types`, re-exported for integration
-tests and benches only — not a stable consumer API. Use `AeronCluster` for
+tests and benches only, not a stable consumer API. Use `AeronCluster` for
 normal usage.
 
 Apache-2.0.

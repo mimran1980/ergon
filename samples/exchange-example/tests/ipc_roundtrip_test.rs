@@ -15,7 +15,7 @@ use std::time::Duration;
 use exchange_example::config::CHANNEL;
 use rusteron_client::cformat;
 
-/// Embedded driver launches and pub+sub connect — basic smoke test.
+/// Embedded driver launches and pub+sub connect (basic smoke test).
 #[test]
 fn embedded_driver_launches_and_pub_sub_created() -> Result<(), Box<dyn std::error::Error>> {
     let driver =
@@ -147,8 +147,8 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-// fn pointer — can't capture, state flows through ctx param
-fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
+// fn pointer: it can't capture, so state flows through the ctx param
+fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: &rusteron_client::AeronHeader) {
     use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
 
     let outer = AppMessageDecoder::try_decode(buf, 0).expect("wrap decoder");

@@ -58,9 +58,6 @@ const (
 	// PtpPrefix + container name is the pod annotation that hands the pod the
 	// NIC PHC: "off", "auto" or a /dev/ptp* path.
 	PtpPrefix = "ptp.ergon.io/"
-	// SchedFifoPrefix + container name is the pod annotation that grants
-	// SCHED_FIFO on the hot thread only ("thread") or refuses ("off").
-	SchedFifoPrefix = "sched-fifo.ergon.io/"
 	// HugepagesPrefix + container name is the pod annotation that asks for a
 	// sized hugetlbfs mount at /dev/hugepages for AERON_DIR. The only value
 	// is "2M". The size comes from the container's hugepages-2Mi limit.

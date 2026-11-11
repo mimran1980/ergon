@@ -1,4 +1,4 @@
-//! Deterministic E2E — AppMessage(L2Book) → Aeron IPC → decode → verify.
+//! Deterministic end-to-end test: publish an `AppMessage(L2Book)` over Aeron IPC, decode it and verify the fields.
 //!
 //! Covers 0/1/typical/large/asymmetric group counts. Expected values travel
 //! through the poll context (no shared statics), so tests are correct in any
@@ -16,7 +16,7 @@ use exchange_example::normalized_app::{
 use rusteron_client::cformat;
 
 /// The embedded media driver aborts when several launch concurrently in one
-/// process — serialise it (real singleton resources only).
+/// process, so serialise it (real singleton resources only).
 static DRIVER_LOCK: Mutex<()> = Mutex::new(());
 
 /// Per-test expectations carried through the poll context.
@@ -123,7 +123,7 @@ fn run_roundtrip(symbol: &str, bids: u16, asks: u16, seq: u64) {
     assert!(expect.received, "no message for bids={bids} asks={asks}");
 }
 
-fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: rusteron_client::AeronHeader) {
+fn verify_counts(expect: &mut Expect, buf: &[u8], _hdr: &rusteron_client::AeronHeader) {
     let outer = AppMessageDecoder::try_decode(buf, 0).expect("wrap");
     let (_name, after_name) = outer.into_app_name().expect("app");
     let (frame, _complete) = after_name.into_payload_as_message().expect("payload");

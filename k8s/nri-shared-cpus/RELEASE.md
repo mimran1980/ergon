@@ -16,8 +16,8 @@
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | measured on EKS | a helper's wake-up wait on the shared CPU, the 1 ns timer slack, the pin's cost ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
 
-The EKS lane is verified for 0.1.2; 0.1.3 changed environment exports only. Do not invent the figures of the
-benchmarks still open below.
+The EKS lane is verified for 0.1.2; 0.1.3 changed environment exports only. Do not invent the figures of
+any benchmark row still open below.
 
 ## 1. Code defects
 
@@ -107,7 +107,7 @@ written "not measured", never invented.
 
 ## 6. How to publish
 
-The benchmark rows still open block a tag. Order for a tag:
+A benchmark row still open blocks a tag. Order for a tag:
 
 1. Keep sections 1 and 2 green.
 2. Run the benchmarks in section 3 and put the numbers in a

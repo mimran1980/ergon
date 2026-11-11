@@ -1,10 +1,10 @@
-//! [`SessionBuilder`] — channel/stream/timeout configuration for connect.
+//! [`SessionBuilder`]: the channel, stream and timeout settings for connect.
 //!
-//! Mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101, egress
-//! stream 102, 5s message timeout.
+//! It mirrors Java `AeronCluster.Context`. Defaults: ingress stream 101,
+//! egress stream 102, 5 s message timeout.
 //!
-//! Channels are stored as **`CString`** (rusteron-ready). Performance over
-//! convenience: do not convert to `String`/`&str` and back for FFI.
+//! Channels are stored as **`CString`** so connect can hand rusteron a `&CStr`
+//! without converting through `String`.
 
 use std::ffi::{CStr, CString};
 use std::sync::{Arc, Mutex};
@@ -21,9 +21,8 @@ pub(crate) type ErrorHandler = Arc<dyn Fn(i32, &str) + Send + Sync>;
 
 /// Builds and connects an [`crate::AeronCluster`].
 ///
-/// Channel setters normalize via
-/// `AeronUriStringBuilder` and store
-/// **`CString`** so connect can pass `&CStr` to rusteron with no second alloc.
+/// Channel setters normalise the URI with `AeronUriStringBuilder` and store it
+/// as a `CString`, so connect passes `&CStr` to rusteron without allocating again.
 ///
 /// # Example
 ///
@@ -40,9 +39,7 @@ pub(crate) type ErrorHandler = Arc<dyn Fn(i32, &str) + Send + Sync>;
 #[derive(Clone)]
 #[must_use = "retain the builder; each setter consumes self and returns a new builder"]
 pub struct SessionBuilder {
-    /// Normalized ingress channel (C string for rusteron).
     ingress_c: Option<CString>,
-    /// Normalized egress channel (C string for rusteron).
     egress_c: Option<CString>,
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
@@ -54,13 +51,8 @@ pub struct SessionBuilder {
     pub(crate) credentials: Option<Arc<dyn CredentialsSupplier>>,
     /// Multi-member ingress endpoints: `"0=host:port,1=host:port,..."`.
     pub(crate) ingress_endpoints: Option<String>,
-    /// Ingress publication mode — always exclusive (`true`); shared
-    /// ingress is deferred (Java default: exclusive). See the parity matrix.
-    pub(crate) is_ingress_exclusive: bool,
-    /// `false` when [`Self::aeron`] supplied the client. Connect then clones
-    /// it and does not install an error handler or client name.
-    pub(crate) owns_aeron: bool,
-    /// An existing Aeron client. Connect clones it and does not call `start`.
+    /// An existing Aeron client. Connect clones it and does not call `start`,
+    /// install an error handler or set a client name.
     pub(crate) shared_aeron: Option<Aeron>,
     /// Aeron client name. `None` uses [`DEFAULT_CLIENT_NAME`] when this
     /// builder creates the client.
@@ -72,7 +64,7 @@ pub struct SessionBuilder {
     pub(crate) idle: Option<Arc<Mutex<dyn IdleStrategy + Send + Sync>>>,
 }
 
-/// Reject zero, sub-millisecond, and overflow durations before they reach
+/// Rejects zero, sub-millisecond and overflowing durations before they reach
 /// the protocol poll state machine.
 fn checked_timeout_ms(d: Duration, field: &'static str) -> Result<u64, ClusterError> {
     let millis = d.as_millis();
@@ -99,8 +91,6 @@ impl Default for SessionBuilder {
             new_leader_timeout_ms: None,
             credentials: None,
             ingress_endpoints: None,
-            is_ingress_exclusive: true,
-            owns_aeron: true,
             shared_aeron: None,
             client_name: None,
             error_handler: None,
@@ -133,8 +123,6 @@ impl core::fmt::Debug for SessionBuilder {
             .field("message_timeout_ms", &self.message_timeout_ms)
             .field("new_leader_timeout_ms", &self.new_leader_timeout_ms)
             .field("ingress_endpoints", &self.ingress_endpoints)
-            .field("is_ingress_exclusive", &self.is_ingress_exclusive)
-            .field("owns_aeron", &self.owns_aeron)
             .field(
                 "client_name",
                 &self
@@ -180,83 +168,84 @@ impl core::fmt::Debug for SessionBuilder {
 }
 
 impl SessionBuilder {
-    /// Set the ingress channel URI (validated + stored as `CString`).
+    /// Sets the ingress channel URI.
     ///
     /// # Errors
     ///
-    /// Malformed URIs fail immediately. A later successful call replaces the
-    /// previous value; there is no deferred error slot.
+    /// A malformed URI fails immediately. A later successful call replaces the
+    /// previous value.
     pub fn ingress_channel(mut self, channel: impl AsRef<str>) -> Result<Self, ClusterError> {
         self.ingress_c = Some(uri::channel_cstr(channel.as_ref())?);
         Ok(self)
     }
 
-    /// Set the egress channel URI (validated + stored as `CString`).
+    /// Sets the egress channel URI.
     ///
     /// # Errors
     ///
-    /// Malformed URIs fail immediately.
+    /// A malformed URI fails immediately.
     pub fn egress_channel(mut self, channel: impl AsRef<str>) -> Result<Self, ClusterError> {
         self.egress_c = Some(uri::channel_cstr(channel.as_ref())?);
         Ok(self)
     }
 
-    /// Override the ingress stream id (default: cluster-configured).
+    /// Overrides the ingress stream id (default 101).
     pub const fn ingress_stream_id(mut self, stream_id: i32) -> Self {
         self.ingress_stream_id = stream_id;
         self
     }
 
-    /// Override the egress stream id (default: cluster-configured).
+    /// Overrides the egress stream id (default 102).
     pub const fn egress_stream_id(mut self, stream_id: i32) -> Self {
         self.egress_stream_id = stream_id;
         self
     }
 
-    /// Deadline for the connect sequence, keep-alives, and re-offers, and for
-    /// a new leader's ingress publication to connect after its
-    /// `NewLeaderEvent`. Default: 5 seconds.
+    /// Sets the deadline for the connect sequence and for a new leader's
+    /// ingress publication to connect after its `NewLeaderEvent`. It also sets
+    /// the keep-alive interval:
+    /// [`AeronCluster::keep_alive_if_due`](crate::AeronCluster::keep_alive_if_due)
+    /// sends one every quarter of it, clamped to 50 ms to 1 s. Default: 5 seconds.
     ///
     /// # Errors
     ///
-    /// Zero, sub-millisecond, or overflow durations fail immediately.
+    /// A zero, sub-millisecond or overflowing duration fails immediately.
     pub fn message_timeout(mut self, timeout: Duration) -> Result<Self, ClusterError> {
         self.message_timeout_ms = checked_timeout_ms(timeout, "message_timeout")?;
         Ok(self)
     }
 
-    /// Deadline for awaiting a `NewLeaderEvent` after the current leader is
-    /// lost (Java `Context.newLeaderTimeoutNs`). Unset, connect uses twice
+    /// Sets how long to wait for a `NewLeaderEvent` after the current leader
+    /// is lost (Java `Context.newLeaderTimeoutNs`). Unset, connect uses twice
     /// the leader heartbeat from the OK `SessionEvent`, or 20 seconds when
-    /// that field is absent. A value set here wins. When it elapses,
-    /// [`crate::AeronCluster::poll`] transitions the session to
-    /// [`crate::ClusterError::Disconnected`]. Once the event has come, the
+    /// that field is absent. A value set here wins. When the wait runs out,
+    /// [`crate::AeronCluster::poll`] moves the session to
+    /// [`crate::ClusterError::Disconnected`]. Once the event has arrived, the
     /// message timeout bounds the wait instead.
     ///
     /// # Errors
     ///
-    /// Zero, sub-millisecond, or overflow durations fail immediately.
+    /// A zero, sub-millisecond or overflowing duration fails immediately.
     pub fn new_leader_timeout(mut self, timeout: Duration) -> Result<Self, ClusterError> {
         self.new_leader_timeout_ms = Some(checked_timeout_ms(timeout, "new_leader_timeout")?);
         Ok(self)
     }
 
-    /// Use an existing Aeron client instead of creating one.
+    /// Uses an existing Aeron client instead of creating one.
     ///
-    /// Connect clones `aeron` and does not call `start`, `set_client_name`,
-    /// or `set_error_handler`. `aeron_dir` passed to connect is ignored.
+    /// Connect clones `aeron` and does not call `start`, `set_client_name`
+    /// or `set_error_handler`. The `aeron_dir` passed to connect is ignored.
     /// The caller's clone keeps the client open after this session drops.
     pub fn aeron(mut self, aeron: Aeron) -> Self {
         self.shared_aeron = Some(aeron);
-        self.owns_aeron = false;
         self
     }
 
-    /// Aeron client name, included in the connect request's `clientInfo`.
+    /// Sets the Aeron client name sent in the connect request's `clientInfo`.
     ///
-    /// The default is `cluster-client`. Names longer than 100 bytes, or
-    /// containing an interior NUL, are rejected. Applied only when this
-    /// builder creates the Aeron client.
+    /// The default is `cluster-client`. The builder rejects a name longer than
+    /// 100 bytes or with an interior NUL, and applies it only when it creates
+    /// the Aeron client.
     ///
     /// # Errors
     ///
@@ -272,40 +261,40 @@ impl SessionBuilder {
         Ok(self)
     }
 
-    /// Error handler for the Aeron client this builder creates.
+    /// Sets the error handler for the Aeron client this builder creates.
     ///
     /// The handler runs on Aeron's conductor and must not panic; a panic is
-    /// caught and written to stderr. Ignored when [`Self::aeron`] supplied
-    /// the client, which already has its own handler. The default writes
+    /// caught and written to stderr. It is ignored when [`Self::aeron`]
+    /// supplied the client, which has its own handler. The default writes
     /// `ERROR: ({code}): {message}` to stderr.
     pub fn error_handler(mut self, handler: impl Fn(i32, &str) + Send + Sync + 'static) -> Self {
         self.error_handler = Some(Arc::new(handler));
         self
     }
 
-    /// Idle strategy for the connect retry loop (Java `Context.idleStrategy`).
-    /// Replaces the default spin-then-1µs backoff during the sync handshake.
+    /// Sets the idle strategy for the connect retry loop (Java
+    /// `Context.idleStrategy`), replacing the default spin-then-1µs backoff in
+    /// the synchronous handshake.
     pub fn idle_strategy(mut self, strategy: impl IdleStrategy + Send + Sync + 'static) -> Self {
         self.idle = Some(Arc::new(Mutex::new(strategy)));
         self
     }
 
-    /// Set the credentials supplier for challenge/response auth.
+    /// Sets the credentials supplier for challenge-response authentication.
     pub fn credentials(mut self, supplier: Arc<dyn CredentialsSupplier>) -> Self {
         self.credentials = Some(supplier);
         self
     }
 
-    /// Set multi-member ingress endpoints: `member_id=host:port` pairs
-    /// separated by commas (`"0=host:9002,1=host:9003"`), no `aeron:`
-    /// prefix. Member IDs must be unique; every endpoint must be non-empty.
+    /// Sets the ingress endpoints of a multi-member cluster: comma-separated
+    /// `member_id=host:port` pairs (`"0=host:9002,1=host:9003"`) with no
+    /// `aeron:` prefix. Member ids must be unique and every endpoint non-empty.
     ///
     /// # Errors
     ///
-    /// A missing `=`, non-numeric member ID, empty endpoint, empty map,
-    /// empty comma-separated entry (leading, trailing, or repeated comma),
-    /// or duplicate member ID fails immediately instead of at `validate()` or
-    /// the first `poll()`.
+    /// A missing `=`, a non-numeric member id, an empty endpoint, an empty map,
+    /// an empty entry (leading, trailing or repeated comma) or a duplicate
+    /// member id fails here, not at `validate()` or the first `poll()`.
     pub fn ingress_endpoints(mut self, endpoints: impl Into<String>) -> Result<Self, ClusterError> {
         let endpoints = endpoints.into();
         crate::endpoints::parse_ingress_endpoints(&endpoints)?;
@@ -313,19 +302,19 @@ impl SessionBuilder {
         Ok(self)
     }
 
-    /// Ingress channel as `CStr` for rusteron (after a successful set/validate).
+    /// The ingress channel as a `CStr`, once one has been set.
     #[inline]
     pub fn ingress_channel_c_str(&self) -> Option<&CStr> {
         self.ingress_c.as_deref()
     }
 
-    /// Egress channel as `CStr` for rusteron (after a successful set/validate).
+    /// The egress channel as a `CStr`, once one has been set.
     #[inline]
     pub fn egress_channel_c_str(&self) -> Option<&CStr> {
         self.egress_c.as_deref()
     }
 
-    /// Synchronous connect — equivalent to [`crate::AeronCluster::connect`].
+    /// Connects synchronously, like [`crate::AeronCluster::connect`].
     ///
     /// # Errors
     ///
@@ -334,12 +323,12 @@ impl SessionBuilder {
         crate::AeronCluster::connect(&self, aeron_dir)
     }
 
-    /// Poll-driven Aeron async connect (not Tokio).
+    /// Starts a poll-driven connect. It is an Aeron state machine, not a Tokio future.
     pub fn connect_async(self, aeron_dir: impl Into<String>) -> crate::AsyncClusterConnect {
         crate::AeronCluster::connect_async(self, aeron_dir)
     }
 
-    /// Validate required fields and that channel URIs are valid.
+    /// Checks that the required fields are set and the channel URIs are valid.
     ///
     /// # Errors
     ///
@@ -372,14 +361,13 @@ impl SessionBuilder {
         Ok(())
     }
 
-    /// FFI form of egress channel (cached).
     pub(crate) fn egress_for_aeron(&self) -> Result<&CString, ClusterError> {
         self.egress_c
             .as_ref()
             .ok_or_else(|| ClusterError::connect("egress channel missing (call validate first)"))
     }
 
-    /// FFI form of the initial ingress channel for connect.
+    /// The ingress channel connect starts on: the configured channel, else the first endpoint.
     pub(crate) fn resolve_initial_ingress_for_aeron(&self) -> Result<CString, ClusterError> {
         if let Some(c) = self.ingress_c.as_ref() {
             return Ok(c.clone());

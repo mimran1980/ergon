@@ -51,8 +51,7 @@ The 2026-07-29 audit found:
 Ergon now emits explicit inline intent for fixed/composite/set/enum setters,
 stage transitions, group iterators, entry writers, var-data methods,
 encoded-length builders, `bulk_add`, and built-in conversion methods. Both
-profiles remain required so this does not regress. On the audited 2026-07-29
-run, every maintained parity ratio was at or below `1.00` in both profiles.
+profiles remain required so this does not regress.
 
 ## Maintained suites
 

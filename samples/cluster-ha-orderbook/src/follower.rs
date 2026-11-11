@@ -1,36 +1,35 @@
-//! Follower: apply cluster egress app payloads into [`LeadershipAwareBook`].
+//! Follower: decode cluster egress app payloads and offer them to
+//! [`LeadershipAwareBook`], counting what happened.
 //!
-//! On `NewLeader` / session release, marks book stale. Snapshots resume serving.
+//! The caller reports the session: [`BookFollower::on_session_lost`] as soon as
+//! it sees the loss (the client leaves `Connected`, `NewLeader` arrives, or the
+//! session closes), and [`BookFollower::on_session_up`] with the client's
+//! `leadership_term_id()` on connect and whenever the client is `Connected`
+//! again. `NewLeader` is a loss, not an up. Every payload is a complete image;
+//! see [`crate::ha_book`] for the accept and reject rules.
 
 use crate::ha_book::{ApplyOutcome, LeadershipAwareBook};
-use crate::market::{Level, WireDec};
-use crate::normalized_app::{AppMessageDecoder, L2BookDecoder};
+use crate::market::{L2Snapshot, Level, WireDec};
+use crate::normalized_app::{AppMessageDecoder, DecimalDecoder, L2BookDecoder};
 
 /// Follower view of the HA book with apply counters.
+#[derive(Default)]
 pub struct BookFollower {
     book: LeadershipAwareBook,
-    pub applied_snapshots: u64,
-    pub applied_increments: u64,
-    pub dropped: u64,
-    pub resyncs: u64,
-}
-
-impl Default for BookFollower {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Frames installed.
+    pub applied: u64,
+    /// Frames dropped (session down, stale epoch, old sequence).
+    pub rejected: u64,
+    /// Sequence numbers skipped by applied frames within an epoch.
+    pub missed: u64,
+    /// Session losses reported.
+    pub losses: u64,
 }
 
 impl BookFollower {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            book: LeadershipAwareBook::new(),
-            applied_snapshots: 0,
-            applied_increments: 0,
-            dropped: 0,
-            resyncs: 0,
-        }
+        Self::default()
     }
 
     #[must_use]
@@ -38,93 +37,85 @@ impl BookFollower {
         &self.book
     }
 
-    /// Call when egress delivers NewLeaderEvent or session is released.
-    pub fn on_leadership_release(&mut self) {
-        self.book.on_leadership_release();
-        self.resyncs += 1;
+    /// The session is (re-)established on leadership term `epoch` (the
+    /// client is `Connected`); see [`LeadershipAwareBook::on_session_up`].
+    pub fn on_session_up(&mut self, epoch: i64) {
+        self.book.on_session_up(epoch);
     }
 
-    /// Apply a full L2 snapshot for the given leadership term.
-    pub fn apply_snapshot(
-        &mut self,
-        term: i64,
-        seq: u64,
-        symbol: &str,
-        bids: Vec<Level>,
-        asks: Vec<Level>,
-        exchange_ts_ns: u64,
-    ) -> ApplyOutcome {
-        let o = self
-            .book
-            .apply_snapshot(term, seq, symbol, bids, asks, exchange_ts_ns);
-        if o == ApplyOutcome::SnapshotApplied {
-            self.applied_snapshots += 1;
-        }
-        o
+    /// The session is lost; the book stops serving at once.
+    pub fn on_session_lost(&mut self) {
+        self.book.on_session_lost();
+        self.losses += 1;
     }
 
-    /// Apply an increment; may resync.
-    pub fn apply_increment(
-        &mut self,
-        term: i64,
-        seq: u64,
-        bids: Vec<Level>,
-        asks: Vec<Level>,
-        exchange_ts_ns: u64,
-    ) -> ApplyOutcome {
-        let o = self
-            .book
-            .apply_increment(term, seq, bids, asks, exchange_ts_ns);
+    /// Offer one decoded image to the book.
+    pub fn apply(&mut self, snapshot: L2Snapshot) -> ApplyOutcome {
+        let o = self.book.apply(snapshot);
         match o {
-            ApplyOutcome::IncrementApplied => self.applied_increments += 1,
-            ApplyOutcome::DroppedNotServing => self.dropped += 1,
-            ApplyOutcome::ResyncRequired(_) => self.resyncs += 1,
-            ApplyOutcome::SnapshotApplied => {}
+            ApplyOutcome::Applied { missed } => {
+                self.applied += 1;
+                self.missed += missed;
+            }
+            ApplyOutcome::Rejected(_) => self.rejected += 1,
         }
         o
     }
 
-    /// Decode an AppMessage payload (after SessionMessageHeader) as L2Book
-    /// and apply as snapshot when not serving, else as increment.
+    /// Decode an AppMessage payload (after SessionMessageHeader) carrying an
+    /// `L2Book` image and offer it to the book.
+    ///
+    /// # Errors
+    ///
+    /// The payload is not a well-formed AppMessage(L2Book).
     pub fn on_app_payload(
         &mut self,
-        term: i64,
         payload: &[u8],
     ) -> Result<ApplyOutcome, Box<dyn std::error::Error>> {
-        let app = AppMessageDecoder::try_decode(payload, 0)?;
-        let (_name, after) = app.into_app_name()?;
-        let (inner, _done) = after.into_payload()?;
-        let book = L2BookDecoder::try_decode(inner, 0)?;
-        let exchange_ts = book.exchange_timestamp();
-        let seq = book.sequence();
+        Ok(self.apply(decode_snapshot(payload)?))
+    }
+}
 
-        let mut bids = Vec::new();
-        let mut asks = Vec::new();
-        let mut bid_iter = book.into_bids()?;
-        for entry in &mut bid_iter {
-            let px = entry.price_wire();
-            let sz = entry.size_wire();
-            bids.push(Level {
-                price: WireDec::new(px.mantissa(), px.exponent()),
-                size: WireDec::new(sz.mantissa(), sz.exponent()),
-            });
-        }
-        let mut ask_iter = bid_iter.into_asks()?;
-        for entry in &mut ask_iter {
-            let px = entry.price_wire();
-            let sz = entry.size_wire();
-            asks.push(Level {
-                price: WireDec::new(px.mantissa(), px.exponent()),
-                size: WireDec::new(sz.mantissa(), sz.exponent()),
-            });
-        }
-        let (symbol, _) = ask_iter.into_symbol_as_str()?;
+/// Decode an AppMessage payload (after SessionMessageHeader) into the
+/// `L2Book` image it carries.
+///
+/// # Errors
+///
+/// The payload is not a well-formed AppMessage(L2Book).
+pub fn decode_snapshot(payload: &[u8]) -> Result<L2Snapshot, Box<dyn std::error::Error>> {
+    let app = AppMessageDecoder::try_decode(payload, 0)?;
+    let (_name, after) = app.into_app_name()?;
+    let (inner, _done) = after.into_payload()?;
+    let book = L2BookDecoder::try_decode(inner, 0)?;
+    let epoch = book.epoch();
+    let sequence = book.sequence();
+    let exchange_ts_ns = book.exchange_timestamp();
 
-        let outcome = if self.book.is_serving() {
-            self.apply_increment(term, seq, bids, asks, exchange_ts)
-        } else {
-            self.apply_snapshot(term, seq, symbol, bids, asks, exchange_ts)
-        };
-        Ok(outcome)
+    let mut bids = Vec::new();
+    let mut bid_iter = book.into_bids()?;
+    for entry in &mut bid_iter {
+        bids.push(level(entry.price_wire(), entry.size_wire()));
+    }
+    let mut asks = Vec::new();
+    let mut ask_iter = bid_iter.into_asks()?;
+    for entry in &mut ask_iter {
+        asks.push(level(entry.price_wire(), entry.size_wire()));
+    }
+    let (symbol, _) = ask_iter.into_symbol_as_str()?;
+
+    Ok(L2Snapshot {
+        epoch,
+        sequence,
+        symbol: symbol.to_owned(),
+        exchange_ts_ns,
+        bids,
+        asks,
+    })
+}
+
+fn level(px: DecimalDecoder<'_>, sz: DecimalDecoder<'_>) -> Level {
+    Level {
+        price: WireDec::new(px.mantissa(), px.exponent()),
+        size: WireDec::new(sz.mantissa(), sz.exponent()),
     }
 }

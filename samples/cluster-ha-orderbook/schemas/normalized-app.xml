@@ -48,6 +48,8 @@
     <field name="exchangeTimestamp" id="2" type="uint64" semanticType="UTCTimestamp"/>
     <field name="receiveTimestamp" id="3" type="uint64" semanticType="UTCTimestamp"/>
     <field name="sequence" id="4" type="uint64"/>
+    <!-- Leadership term the publisher saw when it published this image. -->
+    <field name="epoch" id="8" type="int64"/>
     <group name="bids" id="5" dimensionType="groupSizeEncoding">
       <field name="price" id="1" type="Decimal" semanticType="Price"/>
       <field name="size" id="2" type="Decimal" semanticType="Qty"/>

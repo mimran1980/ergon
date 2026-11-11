@@ -1,0 +1,28 @@
+=== Cluster bench gate (strict, tolerance 0) ===
+  provenance ok: run cluster-20261106T151023Z-c8d9b86 profile lto commit c8d9b8646a52a01ac1fee48265d09f6ea7d4a18f rustc rustc 1.99.0 (b940084d7 2026-09-28) target x86_64-unknown-linux-gnu host Intel(R) Core(TM) i5-8500T CPU @ 2.10GHz
+  arm order ok: 5 invocations in each of the two orders
+  repeats ok: 5 independent invocations
+  A/A null (cluster/control aa_encode_keep_alive + aa_encode_claim_shaped): ratio CI [0.9403, 1.0654] — envelope over every invocation of the harness control; a pair inside it has no established winner
+  cluster_encode_session_message_header (ergo-sbe/sbe-tool) 0.9836–1.0514 (max 1.00)  above ceiling
+      ratio CI [0.9720, 1.0631]  inconclusive — no winner  inside A/A null band  over 5 repeats (last 27204.1552 / 27111.7052 = 1.0034)
+  cluster_encode_session_keep_alive (ergo-sbe/sbe-tool) 0.9433–1.0586 (max 1.00)  above ceiling
+      ratio CI [0.9347, 1.0687]  inconclusive — no winner  inside A/A null band  over 5 repeats (last 18543.4781 / 19658.3299 = 0.9433)
+  cluster_decode_session_message_header (ergo-sbe/sbe-tool) 0.9520–1.0465 (max 1.01)  above ceiling
+      ratio CI [0.9429, 1.0904]  inconclusive — no winner  inside A/A null band  over 5 repeats (last 12088.8377 / 11983.9147 = 1.0088)
+  cluster_decode_session_event (ergo-sbe/sbe-tool) 0.8068–0.8491 (max 1.01)  ok
+      ratio CI [0.7995, 0.8725]  resolved  outside A/A null band  over 5 repeats (last 28181.8970 / 33191.2512 = 0.8491)
+  cluster_encode_claim_shaped_header_plus_app (ergo-sbe/sbe-tool) 0.9555–1.0521 (max 1.00)  above ceiling
+      ratio CI [0.9462, 1.0636]  inconclusive — no winner  inside A/A null band  over 5 repeats (last 42299.9575 / 42718.9754 = 0.9902)
+
+inconclusive — no winner established for: cluster_encode_session_message_header (ergo-sbe/sbe-tool) cluster_encode_session_keep_alive (ergo-sbe/sbe-tool) cluster_decode_session_message_header (ergo-sbe/sbe-tool) cluster_encode_claim_shaped_header_plus_app (ergo-sbe/sbe-tool)
+  A **measured** A/A null band (the harness's own noise for a pair of identical
+  arms) reaches as far as these pairs, so the measurement cannot separate the two
+  code objects at this resolution. They are not reported as an ergon loss and not
+  as an ergon win. Ceilings are unchanged.
+
+  An over-ceiling pair the band does not reach is not inconclusive: it is either a
+  resolved breach or unproven, and unproven blocks. "The measurement could not
+  resolve it" is not "the ceiling was met".
+
+PASS: every resolved maintained ratio is within its strict ceiling
+      4 pair(s) inconclusive — no winner established (listed above)

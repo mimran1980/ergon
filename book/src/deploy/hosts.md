@@ -1,4 +1,4 @@
-# AWS and Azure Hosts, x86 and Graviton
+# AWS and Azure hosts, x86 and Graviton
 
 How to apply each node setting on a VM or a Kubernetes node. Which settings
 have evidence, and the figures: [Kubernetes HFT tuning](hft.md).

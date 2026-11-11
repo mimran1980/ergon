@@ -1,19 +1,19 @@
-# Domain Objects (DTOs)
+# Domain objects (DTOs)
 
 > **Latency-sensitive paths: never use DTOs.** Domain objects allocate (`Vec`,
 > `String`) and copy every field out of the wire buffer. If latency matters,
 > use the zero-copy flyweight decoder instead. DTOs are for tooling, logging,
-> and offline processing — not the hot path.
+> and offline processing, not the hot path.
 
-DTO construction still owns and allocates its `Vec`/`String` fields. Re-encode
-does not add another allocation: wire-compatible flat groups automatically use
-the generated `bulk_add_domain(&[EntryDomain])` path, which validates one
-complete output region and writes directly from the DTO slice. Groups with
-nested tails, var-data, optional/versioned fields, domain conversions, or bool
-domain remapping retain the general per-entry path.
+`with_domain_objects` builds that owned struct. It is not `with_domain_type`.
+Borrowed view versus owned snapshot:
+[Flyweight vs whole struct](../core-concepts/flyweight-vs-struct.md).
+`with_conversion` versus `with_domain_type`:
+[with_conversion vs with_domain_type](../configuration/conversion-vs-domain.md).
+Which groups re-encode in bulk from the DTO, and the encode/decode recipe:
+[Domain DTOs](../recipes/domain-dtos.md).
 
-Enable domain objects during generation when an owned application value is
-more convenient than a zero-copy flyweight. This fixture uses `DomainVarData::Strings`:
+This fixture uses `DomainVarData::Strings`:
 
 ```rust,no_run
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:demo_car_domain_dto}}

@@ -1,0 +1,12 @@
+[package]
+name = "parity_group_null_init_be"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Group entry null images"
+edition = "2021"
+
+[lib]
+name = "parity_group_null_init_be"
+path = "src/lib.rs"
+
+[workspace]

@@ -38,7 +38,7 @@ for table in ("dependencies", "build-dependencies"):
     dep = (cluster.get(table) or {}).get("ergo-sbe")
     if dep is None or enables_fancy(dep):
         print(
-            f"check-cluster-ergo-sbe-features: FAIL — [{table}] ergo-sbe "
+            f"check-cluster-ergo-sbe-features: FAIL: [{table}] ergo-sbe "
             "keeps default features or enables fancy explicitly"
         )
         failed = True

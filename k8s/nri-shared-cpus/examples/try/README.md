@@ -1,7 +1,7 @@
 # Try the public chart
 
 One throwaway kind cluster. It installs
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1` with the
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3` with the
 hot-pod check's host mounts, applies the hot-pod admission policy, and
 prints what the plugin did.
 
@@ -60,17 +60,14 @@ Kubernetes HFT tuning is the node and pod settings in the book chapter
 
 There is no HFT image. Hugepages, an isolated cpuset partition, io_uring
 seccomp and the NIC PHC are grants in the same plugin. The chart writes
-`seccomp`, `ptp` and `schedFifo` as `"off"`, and this kind node is not a
+`seccomp` and `ptp` as `"off"`, and this kind node is not a
 place those grants can be shown: no hugepage pool, no `/dev/ptp`, no
 `cpuset.cpus.exclusive` partition. Latency is not measured. EKS is not
 involved.
-
-`helm install` prints NOTES that say the chart is not published. It is
-published; ignore that line.
 
 `test/e2e.sh` is the longer kind run. It builds `ergon-shared-cpus:dev`
 from this tree and does not pull the public chart.
 
 ## Status
 
-Not yet run on kind.
+Run end to end on kind v0.33.0 (Docker Desktop, 10 CPUs, arm64) against chart 0.1.3 on 2026-11-05: PASS.

@@ -1,7 +1,7 @@
 //! RFQ round-trip against the **real** Aeron Cookbook RFQ cluster
 //! (`AppClusteredService`). Sends AddInstrument → CreateRfq and polls
 //! for RFQ-specific confirm events (template 120/122), proving the
-//! Rust client talks to the actual RFQ state machine — not the Echo
+//! Rust client talks to the actual RFQ state machine, not the Echo
 //! service.
 //!
 //! Requires the cookbook RFQ cluster running as leader. Launch it on Java 25

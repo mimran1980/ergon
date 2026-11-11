@@ -1,10 +1,12 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:f1e8c546bb76005132acfaffe309fc022a38840c987c248dd1ede3d46a69ceb2 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:37feee345175e8d3116525cb170c7a90f3bca331adbcc63a97d47eeafca66814 -->
 # ergon-io
 
 Network I/O for an exchange client on one busy-spinning thread: WebSocket
-and HTTP/1.1 over TLS 1.3.
+and HTTP/1.1 over TLS 1.3 (TLS 1.2 opt-in, for a server without TLS 1.3).
 
-- The driver is Linux-only; the protocol code builds everywhere.
+- The driver runs on Linux, and on macOS for development: `epoll-spin` only
+  (on kqueue), with no NIC polling, receive timestamps, TCP timers, host
+  checks or CPU pinning. The protocol code builds everywhere.
 - Written with heavy AI assistance ([disclosure](../project/ai-assistance.md)).
   Not production-ready.
 
@@ -15,6 +17,8 @@ and HTTP/1.1 over TLS 1.3.
 - Every measured figure, with its max and its data file:
   the benchmark notes
   (their first table answers the common questions).
+- Request/response with one server and many clients (TCP, WebSocket, HTTP
+  and Aeron response channels, IPC and spies): [Request/response](request-response.md).
 
 ## Glossary
 
@@ -52,7 +56,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | [`rto_min`](#best-practice) | The shortest time TCP waits before resending lost data; a route attribute ([ip-route(8)](https://man7.org/linux/man-pages/man8/ip-route.8.html)). | The lab routes set 5 ms; effect not measured here. |
 | [TCP keepalive](#defaults) | The kernel probes an idle connection to find a dead peer. | Default: 10 s idle, then every 5 s, 3 probes. One kernel timer per socket; WebSocket Pings already do this. |
 | [`TCP_USER_TIMEOUT`](#defaults) | How long sent data may stay unacknowledged before the kernel drops the connection. | 25 s here; the kernel default is about 15 minutes. |
-| [TLS 1.3](#connecting) | The encryption on every connection. | TLS 1.2 is refused with a clear error. |
+| [TLS 1.3](#connecting) | The encryption on every connection. | TLS 1.2 only on a target that opts in (feature `tls12`); otherwise refused with a clear error. |
 | [TLS handshake](#connecting) | The key exchange when a connection opens. | Makes one poll of the connecting thread long (data). Keep it off the loop: `connect_background`. |
 | [TLS record](#when-to-use-it) | TLS's unit of encrypted data. | A native HTTP request is one record; a large WebSocket message goes out over several. |
 | [in place](#how-it-works) | Decrypted and parsed in the buffer the kernel wrote into: one copy per byte. | Pro: no extra copy. Con: the slice lives only during the call; copy what you keep. |
@@ -81,7 +85,7 @@ Terms this chapter uses. Each links to the section that explains it.
 |---|---|
 | one thread owns 1 to a few hundred exchange connections and spins on its own core | the thread may sleep: tokio |
 | you want one copy per byte: TLS records decrypted and messages parsed in place | you need HTTP/2 or 3, proxies, redirects, cookies or compression: libcurl or reqwest |
-| Linux on x86-64 or Graviton (both measured) | macOS or Windows in production |
+| Linux on x86-64 or Graviton (both measured); macOS to develop against a venue | macOS or Windows in production |
 
 ## How it works
 
@@ -98,7 +102,8 @@ Terms this chapter uses. Each links to the section that explains it.
   buffers.
 
 Pages: [WebSocket](websocket.md) (a complete client),
-[HTTP client](http-client.md), [Backends and configuration](backends.md),
+[HTTP client](http-client.md) ([HTTP/2](http2.md): which venues offer it,
+and why the native client stays HTTP/1.1), [Backends and configuration](backends.md),
 [Rate limits and errors](rate-limits.md), [Kubernetes](kubernetes.md)
 (where the helper threads run inside a pod).
 
@@ -112,25 +117,38 @@ socket the loop thread polls: WebSocket feeds, order connections and every
 `HttpClient` pool connection (each `Driver` and `HttpClient` on the thread
 adds its own). Then pick by what CPUs you have:
 
-| sockets on the loop thread | one CPU | a spare CPU for the SQPOLL thread (or the loop's sibling) | the NIC's interrupts on a core of their own (node-level) |
-|---|---|---|---|
-| 1–4 | `recv-busy` | `recv-busy` or `uring-sqpoll` | `recv-busy` |
-| 5–64 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` or `epoll-spin` |
-| 65–256 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` (interrupt backends not measured past 64) |
+| sockets on the loop thread | one CPU | a spare CPU for the SQPOLL thread (or the loop's sibling) | the NIC's interrupts on a core of their own (node-level) | a NIC of the process's own, DPDK allowed (lab only) |
+|---|---|---|---|---|
+| 1–4 | `recv-busy` | `recv-busy` or `uring-sqpoll` | `recv-busy` | `smoltcp-spin` (TCP, UDP) or `fstack-spin` (TCP) |
+| 5–64 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` or `epoll-spin` | the same to 8 sockets; not measured past 8 |
+| 65–256 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` (interrupt backends not measured past 64) | not measured |
 
 Evidence:
 fair run, Graviton
-(1–64 sockets, HTTP pool of 1 and 20) and
+(1–64 sockets, HTTP pool of 1 and 20),
 polling backends, x86
-(1–256 connections).
+(1–256 connections) and
+[ergon-io on DPDK](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)
+(1 and 8 connections).
 
-A NIC of the process's own, where kernel bypass is allowed:
-[`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) or
-[`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk)
-(both lab-tested only). The AWS Kubernetes layout for Aeron on DPDK,
-the measured 1-stream path when DPDK is allowed, is
-samples/README.md#aws-k8s.
-ergon-io on DPDK has no overlay: the remeasure is one rep, and its tails are loss, faults and unexplained maxima.
+**Does DPDK change the choice?** Only where the process may own a NIC; the
+kernel columns stand.
+
+| | kernel backends | `smoltcp-spin`, `fstack-spin` |
+|---|---|---|
+| p50 against kernel `epoll-spin`, no loss | the baseline | smoltcp TCP 3.0–8.9 µs lower, UDP 3.8–7.5 lower; F-Stack WebSocket 1.0–9.8 lower (`c7i.4xlarge`, `c8g.2xlarge`) |
+| no-loss p99 / max, µs | kernel TCP 43.0–56.5 / 107–9,243 | smoltcp TCP 39.5–48.4 / 108–8,827; F-Stack WebSocket 41.9–48.9 / 148–9,000 |
+| at 1 % loss | p99 0.9–11.4 ms (kernel TCP) | p99 2.5–9.1 ms (smoltcp TCP); one F-Stack WebSocket cell faulted to a 15.3 s max |
+| evidence | the socket-count table: two rounds a point, up to 256 sockets, no A/A arm; the kernel TCP figures here: the bypass arms' own one-rep session | one rep, no A/A arm, 1 and 8 connections |
+| needs | nothing past the node settings above | a second ENI bound to DPDK, hugepages, privileges, `loop_cpu`; no `connect_background` |
+
+So: on the kernel, choose from the table by socket count. With a NIC of
+its own, the bypass backends were lower at p50 in every measured cell,
+but on one rep, to 8 connections, with worse tails under loss: treat them
+as a lab option, not the default. The measured production path with DPDK
+is Aeron on DPDK
+(samples/README.md#aws-k8s).
+ergon-io on DPDK has no Kubernetes overlay.
 
 - **Plain `recv-busy` reads every socket on every poll.** Its poll grows
   with sockets, so a message waits longer for its socket's turn. It leads
@@ -166,7 +184,38 @@ ergon-io on DPDK has no overlay: the remeasure is one rep, and its tails are los
 The loop's worst poll per connect, both ways:
 connection set-up.
 
-- **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
+- **TLS 1.3 by default.** Without the opt-in below, TLS 1.2 is refused
+  with a clear error, `Error::TlsVersion`, which a reconnect does not
+  retry. A TLS 1.2-only server answers the TLS 1.3-only `ClientHello` in
+  one of three ways, and each gets that error: a TLS 1.2 `ServerHello` (it
+  picked a TLS 1.2 suite the hello did not ask for), a `protocol_version`
+  alert, or a warning `close_notify` then a TCP close (it found no suite in
+  common; some load-balancer-fronted hosts do this). A TCP close with no
+  alert stays `Error::Closed`. curl and browsers still connect to such a
+  host because they negotiate TLS 1.2. To check a host:
+  `openssl s_client -tls1_3 -connect HOST:443 -servername HOST` fails
+  (`Cipher is (NONE)`) where `-tls1_2` connects. The default config's
+  `ClientHello` lists TLS 1.3 suites only, even in a build with rustls's
+  `tls12` feature on (Cargo unifies features, so any dependency can turn
+  it on): `tls::client_config` keeps only the provider's TLS 1.3 suites.
+  Tests pin that hello with and without the feature.
+- **TLS 1.2, opted in.** For a server without TLS 1.3, build with feature
+  `tls12` and opt in per target:
+  `Target::new(host, 443, path).with_tls12()` with
+  `tls::client_config_tls12(roots)?`. The hello then offers TLS 1.3 first,
+  then TLS 1.2 with ECDHE and AES-128-GCM, AES-256-GCM or
+  ChaCha20-Poly1305 (RSA or ECDSA certificates); rustls has no CBC suites,
+  RSA key exchange or renegotiation. Certificates are verified as for TLS
+  1.3. Each half alone is refused: a target that opts in with a TLS
+  1.3-only config fails at once with `Error::Config`, and the TLS 1.2
+  config on a target that does not opt in fails once TLS 1.2 is
+  negotiated. The record layer runs TLS 1.2 records in place too (RFC
+  5246, 5288, 7905): AES-GCM records carry their sequence number as the
+  explicit nonce. TLS 1.2 has no key update, so a connection stops sending
+  after 2^24 AES-GCM records (rustls's limit) and must be reopened; a
+  handshake record after the handshake (renegotiation) fails the
+  connection. With the opt-in, a `close_notify` before the `ServerHello`
+  is `Error::Closed`, which a reconnect retries.
 - **Trust** is the rustls configuration you pass
   (`tls::client_config(roots)`); feature `webpki-roots` adds Mozilla's roots.
 - **Which TLS stack: the in-place `tls::RecordLayer`, on every native
@@ -177,7 +226,11 @@ connection set-up.
   unconditionally — there is no stock-rustls record path to choose. The
   layer owns the record cryptography that rustls would own after the
   handshake: post-handshake messages, key updates and the cipher's
-  confidentiality limit. Its effect on a whole request is **not measured**
+  confidentiality limit. On the malformed records in
+  `ergon-io/tests/tls_records.rs` it terminates as stock rustls does, with
+  the same alert wherever rustls sends one; unlike
+  rustls it does not cap consecutive `KeyUpdate`s or empty handshake
+  records. Its effect on a whole request is **not measured**
   (only a decrypt-only microbench exists).
 
 ## Defaults
@@ -199,6 +252,100 @@ connection set-up.
   `TCP_USER_TIMEOUT` and the TCP timers too.
 - Keepalive adds one kernel timer per socket. For a WebSocket-only loop,
   Pings already find a dead server: `keepalive_idle_s=0` is an option.
+
+### Memory per connection
+
+Every buffer is allocated and written at connect (on the connect helper
+for `connect_background`), so the first response, frame or record neither
+allocates nor takes a page fault. Resident bytes at default options:
+
+| Connection | receive | send queue | de-chunk (HTTP) / reassembly (WS) | TLS handshake reassembly | TLS session tickets | total | 4 KiB pages | 16 KiB pages |
+|---|---|---|---|---|---|---|---|---|
+| `HttpConn` | 1,048,576 | 65,536 | 1,015,286 | 262,144 | 8,192 | 2,399,734 | 586 | 147 |
+| `WsConn` | 1,048,576 | 65,536 | 1,015,286 | 262,144 | 8,192 | 2,399,734 | 586 | 147 |
+| `FrameConn` | `rx_buf` | `tx_buf` | none | none | none | `rx_buf + tx_buf` | | |
+| `UdpConn` | `max_datagram × rx_batch` | `max_datagram × tx_slots` | none | none | none | | | |
+
+- The de-chunk buffer is `buf_size` less two TLS records (2 × 16,645 B);
+  the WebSocket reassembly buffer is `max_message` (default: the same).
+  Both scale with those options; a `max_message` above `buf_size` makes it
+  larger.
+- The TLS handshake reassembly and session ticket buffers are TLS 1.3
+  only: 0 under TLS 1.2. The ticket buffer is [TLS session
+  tickets](#tls-session-tickets).
+- `HttpClient` pools `HttpConn`s: multiply by the pool size.
+- Pod spec: all of it is resident from connect and counts against the
+  container's memory limit, so size `resources.limits.memory` for every
+  connection (pooled and reconnecting ones included) at its total above,
+  plus the application.
+- One page more per buffer is possible where an allocation shares a page
+  with another.
+- `mincore` finds every page resident right after connect for each buffer,
+  on macOS and on Linux x86 (4 KiB pages; transparent hugepages `always`
+  there): `every_buffer_is_resident_from_connect` in `http_alloc` and
+  `ws_receive_alloc`.
+- `io_uring` adds a 64 KiB send buffer per slot. It and the backend's
+  other per-slot tables are sized when the driver reserves a slot (`add`,
+  `connect`, `connect_background`), so adopting a finished dial inside
+  `poll` allocates nothing (`ergon-io/tests/reconnect_burst_alloc.rs`, every
+  kernel backend mode).
+
+### TLS session tickets
+
+Session resumption stays on, but storing a ticket in rustls's session store
+allocates, so a `NewSessionTicket` is never stored on the record path:
+
+| Step | Where | Allocates |
+|---|---|---|
+| Ticket record opened | polling thread (`Driver::poll`) | no: the body is copied into the connection's 8 KiB ticket buffer, written at connect |
+| Ticket read during a WebSocket dial (servers send them before the 101) | the dial: connect helper for `connect_background` | yes, off the hot path; stored at once |
+| Connection closed | driver's helper thread, before it frees the connection | yes, off the hot path; held tickets stored |
+| `tls_housekeeping()` on `HttpConn` / `WsConn` (or through `Driver::get_mut`) | wherever the application calls it | yes: call it at idle |
+
+- **Bound:** each held ticket takes its body plus 2 bytes of the 8 KiB
+  buffer. A server's usual two tickets of a few hundred bytes fit many
+  times over. A ticket that does not fit (larger than the room left, or a
+  run of tickets past it) is dropped and counted in `tickets_dropped`
+  (`HttpStats`, `WsStats`); `tickets_held` counts those waiting. A dropped
+  ticket costs only that ticket's resumption: the next connection does a
+  full handshake on the connect helper.
+- **Malformed tickets:** the record path checks a ticket's encoding as
+  rustls's decoder does, without allocating, before holding it. A
+  malformed one closes the connection with the alert rustls sends.
+- **When a ticket reaches the store:** an HTTP connection's tickets arrive
+  after the handshake, so they reach the store when it closes, or when the
+  application stores them. Pooled connections dialled while the first is
+  open do full handshakes; a reconnect after the closed connection is
+  freed resumes (the helper's mailbox is first in, first out, so the free
+  runs before the re-dial). epoll frees in `Driver::close`; `io_uring`
+  frees on a later `poll`, once the kernel has released the buffers, so
+  there a re-dial sent straight after `close`, with no `poll` between,
+  does a full handshake. `HttpClient`'s reopen delay (up to 100 ms) covers
+  this in practice.
+- **Without a helper thread** (`Driver::connect` only, or a pod with one
+  CPU, where `connect_background` refuses): a closed connection is freed on
+  the polling thread and its held tickets are dropped with it, since
+  storing there would allocate in `poll`. Call `tls_housekeeping()` at
+  idle to keep resumption.
+- rustls dates a ticket from when it is stored, not received, so a ticket
+  held for a while looks younger to the client than it is. One held past
+  its lifetime is refused by the server: a full handshake, nothing worse
+  (ergon-io sends no early data, the only use of the age). A ticket
+  rustls refuses when stored (malformed) is counted in
+  `tickets_dropped`; before, it closed the connection.
+- Pod spec: nothing to set; the 8 KiB is in the memory table above.
+
+### TLS key updates
+
+Deriving a TLS 1.3 key allocates inside rustls, so each connection
+derives its next receive and send keys at connect. A key update (the
+server's, or the proactive one at half the cipher's record limit) switches
+to the prepared key with no allocation. `tls_housekeeping()` derives the
+next pair again; a second update in one direction before it runs derives
+inline on the record path and is counted in `inline_key_updates`
+(`HttpStats`, `WsStats`). With AES-GCM the proactive update comes every
+2^23 records each way, so a busy feed should call `tls_housekeeping()` at
+idle.
 
 ## What it checks for you
 

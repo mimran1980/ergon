@@ -13,8 +13,8 @@ This project was a particularly favourable case for AI-assisted development:
 
 Even in that favourable case, it consumed about a month of intense work,
 roughly 18 billion tokens (measured by ccusage), repeated cleanup, extensive
-tests, and continuous human judgment. The fashionable version—write a specification,
-dispatch many agents, and return to a finished library—did not survive beyond
+tests, and continuous human judgment. The fashionable version (write a specification,
+dispatch many agents, and return to a finished library) did not survive beyond
 the early greenfield stage.
 
 I would use this development method again for a personal project with similar
@@ -30,5 +30,5 @@ to be earned.
 
 If you use `ergo-sbe` seriously, please report the schema shapes and features
 you exercise, including failures. Real-world evidence is what will make this
-project trustworthy—not another paragraph claiming that AI-generated code is
+project trustworthy, not another paragraph claiming that AI-generated code is
 either magically perfect or automatically worthless.

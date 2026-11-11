@@ -41,8 +41,8 @@ pub(crate) fn structural(
 pub(crate) fn element_children<'a, 'input>(
     node: Node<'a, 'input>,
 ) -> impl Iterator<Item = Node<'a, 'input>> {
-    // Skip <description> and <comment> children — their text is already
-    // collected by collect_description() which scans node.children() directly.
+    // Skip <description> and <comment> children: collect_description() reads
+    // their text from node.children() directly.
     node.children().filter(|c| {
         c.is_element() && c.tag_name().name() != "description" && c.tag_name().name() != "comment"
     })
@@ -58,8 +58,8 @@ pub(crate) fn element_children<'a, 'input>(
 ///
 /// Sources are combined in this deterministic order, space-separated.
 /// Multi-line text and whitespace are preserved. Preceding-sibling XML
-/// comments are associated with the nearest following element — they are
-/// never duplicated to both container and child.
+/// comments belong to the nearest following element and are never copied to
+/// both container and child.
 pub(crate) fn collect_description(node: Node<'_, '_>) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
@@ -143,7 +143,7 @@ pub(crate) fn reject_unknown_attrs(
     allowed: &[&str],
 ) -> Result<(), Fault> {
     for attr in node.attributes() {
-        // `name()` is the LOCAL name — a prefixed `xsi:schemaLocation` reads
+        // `name()` is the local name: a prefixed `xsi:schemaLocation` reads
         // back as `schemaLocation`, so the namespace is what identifies it.
         if attr.namespace().is_some() {
             continue;

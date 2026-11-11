@@ -1,6 +1,6 @@
 # ergon-shared-cpus
 
-A Guaranteed Kubernetes pod gets its exclusive CPUs **and** the node's
+A Guaranteed Kubernetes pod gets its exclusive CPUs and the node's
 shared housekeeping CPUs, and every new thread starts on the shared ones.
 The busy-spin loop keeps its exclusive core; only sleepy helpers (dial, TLS,
 warnings, Aeron conductors) run on the shared CPUs.
@@ -17,7 +17,7 @@ is one containerd NRI approach; choose whichever fits your cluster.
 
 | item | state |
 |---|---|
-| tag | **0.1.3** (and `latest`) |
+| tag | 0.1.3 (and `latest`) |
 | image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`. Anyone can pull it; no image pull secret |
 | image digest | `sha256:440fb141f12876ed12dfb15f9ea512d60dfd212d704e4caf598396990c532d3f` (`docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`) |
 | chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3` |
@@ -186,34 +186,15 @@ k8s/nri-shared-cpus/examples/try/run.sh
 | does not | measure latency, or ask for hugepages, PTP or an isolated cpuset partition. A kind node shares the host kernel and has no `isolcpus`, so no hot pod can start there |
 | status | not yet run on kind |
 
-### Latency lab (one Azure VM)
+### Measured latency
 
-[`lab/azure-vm.sh`](lab/azure-vm.sh) measures the claim on one Cobalt VM
-(default `Standard_D8ps_v6`, Debian 13 arm64) with a real `isolcpus` boot
-line, so a hot pod can start: kind on the VM, the chart and both images
-built there from this checkout.
-
-```sh
-DRY_RUN=1 k8s/nri-shared-cpus/lab/azure-vm.sh   # plan, size, price; no cloud call
-k8s/nri-shared-cpus/lab/azure-vm.sh             # the run; deletes its resource group on every exit
-```
-
-| item | value |
-|---|---|
-| layout | CPU 0: every NIC IRQ and VMBus channel. CPUs 1-2: housekeeping; `sharedCpus` 1 (e2e, bench) or 1-2 (scale). CPUs 3 to the last: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, handed out as exclusive (`reservedSystemCPUs: 0-2`) |
-| node | with `LAB_QUIET=1` (default) the settings of `lib.sh` `lab_quiet_settings` (among them THP `never` and the fair server off on the exclusive CPUs), recorded in `results/quiet.txt` |
-| e2e | a hot pod is admitted and starts; `ps -L` and `Cpus_allowed_list` show its spin thread on its isolated CPU alone and every helper on the shared CPU alone; an exec-probe hot pod is denied |
-| probe | [`lab/gapprobe`](lab/gapprobe): spins reading the CPU counter, a histogram of every iteration (p50 to p99.99, exact max), every gap of 1 µs or more with its `CLOCK_REALTIME` end, the loop's context switches and page faults |
-| load | `stress-ng --cpu 1 --vm 1` and a loopback UDP reader (20,000 datagrams/s) in a child process of the probe, started from the pod's main thread |
-| bench | plugin-on (hot pod, helpers on the shared CPU), 5 reps. `LAB_ARMS="plugin-on plugin-off"` adds the plain static CPU manager arm (chart uninstalled: helpers on the pod's exclusive CPUs) |
-| each max | with the `/proc/interrupts` and `/proc/softirqs` growth on its CPU in the 10 ms windows that overlap it, and the spin thread's involuntary context switches |
-| trace | `LAB_TRACE=1` (default): one more plugin-on rep under kernel ftrace filtered to its spin CPU; `results/trace-cpu<N>.md` names every switch, IPI, timer and work item there and ties each to a gap |
-| scale | `LAB_SCALE=1` (default): how much of two shared CPUs a pod's helpers get at 100 and 1,001 millicpus, idle, and when pods share one; `results/scale.md` ([result](BENCHMARKS.md#shared-cpu-scaling-run-20261024230400)) |
-| results | `target/nri-lab/<stamp>/results/report.md`; committed runs in [`lab/results`](lab/results), summarised in [BENCHMARKS.md](BENCHMARKS.md) |
-| cost guard | every resource tagged `owner=ergon-lab run=<stamp>`; the group is deleted on every exit and checked gone; at `LAB_MAX_HOURS` (4) a timer on the VM deletes it through the VM's identity, a watchdog here deletes it, and auto-shutdown deallocates it 30 minutes later (a deallocated VM cannot run its timer); runs over 2 hours detach |
-| ssh | one multiplexed connection (`ControlMaster`): each new login's seccomp filter interrupts every CPU |
-| tests | `just test-nri-lab` (fake `az`/`ssh`, fixtures, the probe's unit tests) |
-| status | runs 20261024230400 (scale), 20261024233129 and 20261024234841 (bench, trace, after the fixes): [BENCHMARKS.md](BENCHMARKS.md) |
+The latency runs on one Azure Cobalt VM (a real `isolcpus` boot line, kind
+on the VM, the chart and both images built from the checkout) are kept in
+[`lab/results`](lab/results) and summarised in [BENCHMARKS.md](BENCHMARKS.md):
+runs 20261024230400 (scale), 20261024233129 and 20261024234841 (bench,
+trace, after the fixes). The probe is [`lab/gapprobe`](lab/gapprobe); build
+its image with `docker build -t ergon-gapprobe:lab k8s/nri-shared-cpus/lab/gapprobe`
+and run its unit tests with `just test-nri-lab`.
 
 ## What the app sees
 
@@ -230,7 +211,7 @@ For the pod in step 4, inside the container:
 | `OPENSHIFT_ISOLATED_CPUS` / `OPENSHIFT_SHARED_CPUS` | `1,5` / `4` (CRI-O style) |
 | affinity of PID 1 and of every new thread | the shared CPUs only |
 
-`250` is a quarter core of **scheduler accounting only**. The plugin adds
+`250` is a quarter core of scheduler accounting only. The plugin adds
 `ceil(M/1000)` shared CPUs (here 1). There is no hard cap: helpers may use
 the whole shared CPU, shared with the kubelet, system daemons and other
 pods.
@@ -304,13 +285,14 @@ How the pool is granted:
 
 ## ergon-cpus
 
-One tool, three jobs.
+One tool, four jobs.
 
 | command | what |
 |---|---|
 | `ergon-cpus hook --shared S` | OCI `createRuntime` hook. The plugin injects it; it sets every thread of the new container to `S` |
 | `ergon-cpus [--env NAME=SPEC]... [--affinity shared\|keep] -- cmd` | exec wrapper. Turns `isolated:<i>` into a real CPU number, then execs |
 | `ergon-cpus show` | prints the lists, cores, affinity and `cpuset.cpus.effective` as JSON |
+| `ergon-cpus --ready-addr HOST:PORT [...] -- cmd` | the wrapper, plus a placement readiness endpoint beside the command ([plugin outages](#plugin-outages)) |
 
 SPEC forms for `--env`:
 
@@ -359,7 +341,6 @@ rejects unknown keys. `config.*` keys become
 | `config.rlimits.{memlock,nofile,rtPrio,nice}` | empty (block omitted) | ceilings a pod may ask for: `"inf"` or a positive count |
 | `config.seccomp.ioUring` | `"off"` | opt-in grant: `off` or `allow` (`io_uring` seccomp) |
 | `config.seccompProfilePath` | `/etc/ergon-shared-cpus/ergon-io-uring.json` | the profile for that grant |
-| `config.schedFifo` | `"off"` | opt-in grant: `off` or `thread` |
 | `config.ptp` | `"off"` | opt-in grant of the NIC PHC: `off`, `auto` or a `/dev/ptp*` path |
 | `config.hugepagesAeronDir` | empty | opt-in hugepages: an absolute `AERON_DIR`; empty omits it |
 | `config.nodeProfileLabel`, `config.profiles` | unset | named layouts, below |
@@ -383,7 +364,7 @@ rejects unknown keys. `config.*` keys become
 - Opt-in grants in this image: hugepages, an isolated cpuset partition
   (`cpu-partition`), `io_uring` seccomp and the NIC PHC. All are off by
   default.
-- `config.seccomp.ioUring`, `schedFifo` and `ptp` stay quoted `"off"`:
+- `config.seccomp.ioUring` and `ptp` stay quoted `"off"`:
   unquoted `off` is a YAML 1.1 boolean.
 - `cgroupRoot` is not a config field: the parser rejects it. The binary uses
   `/sys/fs/cgroup`; the DaemonSet mounts the host tree read-only there.
@@ -422,7 +403,7 @@ metricsAddress: ":9466"
 |---|---|
 | plugin down at create | `required-plugins` makes the create fail (containerd >= 2.2); the wrapper refuses without `ERGON_SHARED_CPUS`; the device plugin is down too, so the resource does not allocate. This does not protect a pod that is already running |
 | kubelet restart, plugin up | the re-write goes through `UpdateContainer` and keeps the union. The plugin does not clear a CPU quota |
-| kubelet restart, plugin down | cpuset shrinks to the exclusive CPUs; helpers fall onto them. `test/e2e.sh` step 9 demonstrates that outage. It is not a passing isolation claim. `Synchronize` re-widens on return and does not prove the contract held while the plugin was down |
+| kubelet restart, plugin down | cpuset shrinks to the exclusive CPUs; helpers fall onto them for the whole outage. Nothing prevents it. A pod started through `ergon-cpus --ready-addr` with an `httpGet` readiness probe on it detects it and leaves Ready; `Synchronize` re-widens on return, and the pod is Ready again only once its cpuset is whole ([plugin outages](#plugin-outages)) |
 | host drift (reserved set, quota, NIC affinity, isolation) | a new hot create is refused. The plugin stays connected: `/healthz` stays up, and this is not a liveness restart |
 | kernel < 6.2 or cgroup v1 | the plugin exits with one clear line |
 | kernel has no `cpuset.cpus.exclusive` | shared-only pods work; every `cpu-partition` opt-in is refused and the pod stays out of the partition (6.7 or a vendor backport of that file) |
@@ -430,6 +411,66 @@ metricsAddress: ":9466"
 | a CPU has no `thread_siblings_list` | the container is refused: without it the plugin cannot tell which CPUs share a core and will not guess |
 | `numa.ergon.io` and the node's NUMA topology was never read | the container is refused, naming the cause: a binding is never chosen from a list nothing read |
 | `numa.ergon.io: ""` on a machine with several NUMA nodes and no data NIC node recorded | the container is refused and told to name the node itself; node 0 would be a guess |
+
+## Plugin outages
+
+The plugin cannot protect a pod that is already running while the plugin
+is down. If the kubelet restarts then, its CPU manager rewrites every
+exclusive container's cpuset to the exclusive CPUs only. The kernel moves
+each helper thread, whose mask is the shared CPUs, onto the exclusive
+CPUs: they compete with the busy-spin loop until the plugin is back.
+`required-plugins` only refuses creates.
+
+**Detection.** Placement holds while the container's
+`cpuset.cpus.effective` contains `ERGON_ISOLATED_CPUS` and
+`ERGON_SHARED_CPUS`, the lists the plugin recorded at create. A shrunk
+cpuset is missing the shared CPUs. In a cpu-partition pod a valid partition
+holds the exclusive CPUs instead, so the probe also requires the
+`ergon-isolated` child's `cpuset.cpus.partition` to read `isolated`: an
+`isolated invalid` partition after an outage is not verified. Detection happens in the pod, because
+during an outage nothing on the node is running to report it.
+
+**Response.** The pod leaves Ready while placement is broken. Readiness
+comes back only once the cpuset holds both lists again. In the e2e the
+helper was back on its shared CPU by then (kernel 7.0; the plugin
+requires 6.2 or later).
+
+`--ready-addr` is not in the published 0.1.3 image. It ships in the next
+release; until then build `ergon-cpus` from this tree.
+
+| where | what |
+|---|---|
+| pod spec | start the app through the wrapper with `--ready-addr`, and point an `httpGet` readiness probe at it. Exec probes are denied on hot pods (they start on any CPU of the cpuset); an `httpGet` probe runs from the kubelet, outside the container. The endpoint listens on every interface (the kubelet probes the pod IP) and returns the CPU lists; on a `hostNetwork` pod choose a port that is free on the node |
+| app | stop the work that needs the exclusive CPUs (quoting, for instance) while the endpoint answers 503; poll it on localhost from a helper thread, or read `cpuset.cpus.effective` and compare it with the two lists the same way. Never from the hot thread |
+| node | the plugin re-widens every managed container on reconnect (`Synchronize`, then once more after 2 s) and counts it in `ergon_shared_cpus_rewidened_total{event="sync"}`. The counter belongs to the plugin process, starts at 0 and goes up only when a container had lost its shared CPUs. Alert on `ergon_shared_cpus_rewidened_total{event="sync"} > 0`, or on the plugin's `sync: re-widen` log line. Do not use `increase()`: the re-widen comes right after a new plugin pod connects, usually before its first scrape, and `increase()` ignores a new series' first sample. The alert keeps firing until that plugin pod restarts |
+
+```yaml
+containers:
+- name: app
+  image: my-app                    # carries /usr/local/bin/ergon-cpus
+  command: ["ergon-cpus", "--ready-addr", ":8086", "--", "my-app"]
+  readinessProbe:
+    httpGet: { path: /placement, port: 8086 }
+    periodSeconds: 1
+    failureThreshold: 1
+```
+
+`--ready-addr` starts `ergon-cpus ready` as a child process on the shared
+CPUs before the wrapper execs the command, whatever `--affinity` says. It
+answers every request with `200 placement verified: ...` or
+`503 placement broken: <reason>`. It runs the check on each request and
+does nothing between requests, so detection takes up to one probe period
+after the kubelet's prober is running again. It logs one line to the
+container's stderr on each change (`ergon-cpus ready: placement broken`,
+`... verified`), with the timestamp from the container log. If it dies,
+the probe gets no answer and the pod stays not Ready.
+
+`test/e2e.sh` checks this. Step 4 reads the `ergon-cpus ready` child's
+`Cpus_allowed_list` and requires it to equal the shared CPUs. In step 9 the endpoint answers 503 naming the
+missing shared CPU and the pod goes NotReady. In step 10 it is Ready
+again, and only after the plugin's re-widen. Step 18 repeats the outage
+`E2E_OUTAGE_CYCLES` times (default 2) and times it; the run is in
+[BENCHMARKS.md](BENCHMARKS.md#plugin-outage-timings-kind).
 
 ## Limits
 
@@ -500,7 +541,7 @@ a hot core. Method from [Tal-or/rps-debug](https://github.com/Tal-or/rps-debug):
 
 1. On one exclusive CPU run a latency probe that records the worst gap
    (`oslat`, or a loop that prints its max).
-2. On the **same** CPU run something that takes network interrupts — a socket
+2. On the same CPU run something that takes network interrupts, such as a socket
    reading traffic sent from another host.
 3. Send the traffic and watch the probe.
 
@@ -545,7 +586,7 @@ scripts/check.sh          # gofmt, go vet, go test -race, static builds, then th
 scripts/check.sh --local  # the unit lane on the host (CI)
 scripts/check-cgroup.sh   # the cgroup kernel lane on its own
 docker build -t ergon-shared-cpus:dev .
-test/e2e.sh               # the 18-step kind e2e (Docker only, needs >= 6 CPUs)
+test/e2e.sh               # the 19-step kind e2e (Docker only, needs >= 6 CPUs)
 ```
 
 - **cgroup kernel lane:** runs `test/cgroup` against a real cgroup v2

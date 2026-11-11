@@ -107,10 +107,19 @@ fn count_one_dimension_only_group_is_rejected() -> Result<(), Box<dyn std::error
         let mut empty = [0u8; 4];
         empty[0..2].copy_from_slice(&0u16.to_le_bytes());
         empty[2..4].copy_from_slice(&0u16.to_le_bytes());
-        let Ok(group) = FuelFiguresDecoder::wrap(&empty, 0, 0) else {
+        let Ok(mut group) = FuelFiguresDecoder::wrap(&empty, 0, 0) else {
             panic!("an empty group exposes no entry, so it needs no extent");
         };
         assert!(group.is_empty());
+        assert!(group.next().is_none(), "an empty group yields nothing");
+
+        // Same for a fixed-stride group: zero entries of a too-short stride
+        // are valid, because no getter ever reads one.
+        let Ok(mut flat) = PerformanceFiguresAccelerationDecoder::wrap(&empty, 0, 0) else {
+            panic!("an empty fixed-stride group needs no extent either");
+        };
+        assert!(flat.is_empty());
+        assert!(flat.next().is_none(), "an empty group yields nothing");
         "#,
     );
     Ok(())
@@ -369,7 +378,7 @@ fn ineligible_bulk_group_still_iterates_with_version_awareness()
     Ok(())
 }
 
-// ── T-1: dynamic groups must not expose fixed-stride proof APIs ─────────
+// ── Dynamic groups must not expose fixed-stride proof APIs ─────────
 
 #[test]
 fn dynamic_group_has_no_start_entry() -> Result<(), Box<dyn std::error::Error>> {
@@ -390,7 +399,7 @@ fn dynamic_group_has_no_start_entry() -> Result<(), Box<dyn std::error::Error>> 
 
 #[test]
 fn dynamic_group_incomplete_entry_fails_to_compile() -> Result<(), Box<dyn std::error::Error>> {
-    // T-19: dynamic add requires EntryComplete; skipping required var-data tails
+    // Dynamic add requires EntryComplete; skipping required var-data tails
     // cannot produce that type.
     let (_, src) = generate(&Paths::example_schema(), "gp_dyn_incomplete");
     compile_fails_with_diagnostics(

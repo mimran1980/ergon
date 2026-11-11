@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-book-fences.sh — enforce that every `rust,ignore` fence in book/
+# check-book-fences.sh: enforce that every `rust,ignore` fence in book/
 # is accounted for in the allowlist, and that every allowlist entry still
 # exists at the declared line. Additions, removals, or line moves fail.
 #

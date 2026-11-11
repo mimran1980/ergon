@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:b53fbe5ddc645ff08228bbaa0f637bb618e588ce646805774e87dc40ab57d980 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:0d8a18b0046169f8006a6c9524e442f51c16fd2534ecf72ba08e32dd561fab37 -->
 # Aeron Client
 
 How an application talks to an Aeron media driver with
@@ -9,21 +9,31 @@ directory, `AERON_DIR`.
 
 ```toml
 [dependencies]
-rusteron-client = { version = "0.2.16", features = ["static"] }   # Aeron 1.54.0
+rusteron-client = { version = "0.2.18", features = ["static"] }   # Aeron 1.54.0
 ```
 
 | step | calls | where |
 |---|---|---|
 | [connect](#connect) | `AeronContext::new`, `set_dir`, `set_error_handler`, `Aeron::new`, `start` | before the loop: blocks until the driver answers |
-| [add](#add-a-publication-and-a-subscription) | `async_add_publication`, `async_add_subscription`, then `poll_blocking` | before the loop (in a running loop, the poller's `poll()` once a turn) |
+| [add](#add-a-publication-and-a-subscription) | `async_add_publication`, `async_add_subscription`, then `poll_blocking` | before the loop only; in a running loop, the poller's non-blocking `poll()` once a turn ([adding from the loop](#adding-from-a-running-loop)) |
 | [wait for a peer](#wait-for-a-peer) | `is_connected()` on both | before the first send |
 | [send](#send-offer-or-try_claim) | `offer` (copies) or `try_claim_owned` (writes in place) | the loop |
 | [receive](#receive-poll-with-a-handler) | `poll_fn(handler, limit)` | the loop |
-| [close](#close) | claims and images, publication, subscription, client; the driver last | after the loop |
+| [close](#close) | nothing: every handle closes when dropped | after the loop |
 
 Every snippet below is from
 the low-latency-k8s sample's `tests/aeron_client_book.rs`,
 which runs them against an embedded media driver over IPC and UDP.
+
+**Strings.** The C API takes `&CStr`. Write a fixed channel as a `c"…"`
+literal (no allocation) and build a dynamic one once with rusteron's
+`cformat!` (one allocation), outside the loop:
+
+```rust,ignore
+aeron.async_add_publication(c"aeron:ipc", 1001)?;
+let channel = cformat!("aeron:udp?endpoint={host}:{port}"); // once, at start-up
+aeron.async_add_publication(&channel, 1002)?;
+```
 
 ## Channels
 
@@ -43,9 +53,9 @@ streams small and put many logical streams on them
 /// Connects to the media driver whose directory is `aeron_dir` (the value
 /// of `AERON_DIR`; with no `set_dir` the client reads that variable itself).
 /// Blocks until the driver answers: call it before the loop, never in it.
-fn connect(aeron_dir: &str) -> R<Aeron> {
+fn connect(aeron_dir: &CStr) -> R<Aeron> {
     let context = AeronContext::new()?;
-    context.set_dir(&CString::new(aeron_dir)?)?;
+    context.set_dir(aeron_dir)?;
     // Errors raised on the client conductor thread, not returned by a call.
     context.set_error_handler(Some(|code: i32, msg: &str| {
         eprintln!("aeron error {code}: {msg}");
@@ -71,23 +81,67 @@ fn connect(aeron_dir: &str) -> R<Aeron> {
 
 ```rust,ignore
 /// Adds a publication and a subscription. Each `async_add_*` asks the
-/// driver; `poll_blocking` waits for its answer. Set-up only: in a running
-/// loop, call the poller's non-blocking `poll()` each turn instead.
-fn add(aeron: &Aeron, channel: &str, stream: i32) -> R<(AeronPublication, AeronSubscription)> {
-    let channel = CString::new(channel)?;
+/// driver; `poll_blocking` waits for its answer.
+///
+/// Start-up and tests only, never on a production loop: `poll_blocking`
+/// spins the calling thread until the driver answers (up to the timeout),
+/// so every other feed and timer on that thread waits too. A running loop
+/// keeps the add as a state and polls it once a turn ([`Adding`]).
+fn add(aeron: &Aeron, channel: &CStr, stream: i32) -> R<(AeronPublication, AeronSubscription)> {
     let publication = aeron
-        .async_add_publication(&channel, stream)?
+        .async_add_publication(channel, stream)?
         .poll_blocking(Duration::from_secs(5))?;
     let subscription = aeron
-        .async_add_subscription(&channel, stream, Handlers::NONE, Handlers::NONE)?
+        .async_add_subscription(channel, stream, Handlers::NONE, Handlers::NONE)?
         .poll_blocking(Duration::from_secs(5))?;
     Ok((publication, subscription))
 }
 ```
 
+- **`poll_blocking` is for start-up and tests only.** It spins the calling
+  thread until the driver answers, so on a production loop every other
+  feed and timer waits with it. Add from a running loop with the state
+  machine below.
 - `async_add_exclusive_publication` is the single-writer form: one thread
   offers to it. The sample's ping and pong use it.
 - Handles are `!Send`: create them on the thread that uses them.
+
+### Adding from a running loop
+
+Keep the add as a state and move it on with one non-blocking `poll()` a
+turn. Nothing waits; offers start on the turn the publication is ready.
+
+```rust,ignore
+/// A publication being added from a running loop: a state the loop moves
+/// on with one non-blocking `poll()` a turn. Nothing here waits.
+enum Adding {
+    /// Asked; the driver has not answered yet.
+    Pending(AeronAsyncAddPublication),
+    /// Ready to offer to.
+    Ready(AeronPublication),
+}
+
+impl Adding {
+    /// Sends the request to the driver and returns at once.
+    fn start(aeron: &Aeron, channel: &CStr, stream: i32) -> R<Self> {
+        Ok(Self::Pending(aeron.async_add_publication(channel, stream)?))
+    }
+
+    /// One turn of the loop: the publication once the driver has answered,
+    /// `None` until then. An error (bad channel, driver gone) ends the add.
+    fn turn(&mut self) -> R<Option<&AeronPublication>> {
+        if let Self::Pending(add) = self
+            && let Some(publication) = add.poll()?
+        {
+            *self = Self::Ready(publication);
+        }
+        Ok(match self {
+            Self::Ready(publication) => Some(publication),
+            Self::Pending(_) => None,
+        })
+    }
+}
+```
 
 ## Wait for a peer
 
@@ -187,22 +241,83 @@ fn poll(subscription: &AeronSubscription, got: &mut Vec<u64>) -> R<i32> {
 
 ## Close
 
+You do not have to call `close()`. rusteron closes each handle when it
+drops, in any order: the client's own close waits until the last
+publication or subscription from it is gone.
+
 ```rust,ignore
-/// Closes in order: claims and image handles first (here none are held),
-/// then the publication and the subscription, then the client. The media
-/// driver outlives its clients.
+/// Closing is dropping: each handle closes itself on drop, in any order,
+/// and the client's own close waits until the last handle from it is gone.
+/// `close()` does the same as a drop and returns the failure, which a drop
+/// only logs. One rule: commit or drop every claim, and drop every
+/// `AeronImage`, before its publication or subscription goes.
 fn close(aeron: Aeron, publication: AeronPublication, subscription: AeronSubscription) -> R {
-    publication.close()?;
-    subscription.close()?;
-    // Deferred until every handle from this client is gone.
-    aeron.close()?;
+    publication.close()?; // a drop, with the error returned
+    drop(subscription);
+    drop(aeron);
     Ok(())
 }
 ```
 
-The wrappers are thin over C: a handle used after its owner closed can
-crash the process. Commit or drop every claim, and drop every `AeronImage`
-from `image_at_index`, before closing its publication or subscription.
+| handle | on drop | `close()` |
+|---|---|---|
+| `AeronPublication`, `AeronExclusivePublication`, `AeronSubscription`, `AeronCounter` | closes at once; clones become inert | the same, and returns the failure a drop only logs |
+| `Aeron` | closes once every handle from it is gone | the same |
+| `AeronContext` | freed with the last reference | none |
+| `AeronAsyncAdd*` | freed by the C client when its `poll` finishes | none |
+
+One rule remains, because a claim and an image point into the log buffer:
+commit or drop every claim, and drop every `AeronImage` from
+`image_at_index`, before its publication or subscription goes. Avoid
+`unsafe close_now()`: it frees the client at once and leaves every
+surviving handle dangling.
+
+## Hugepages in Kubernetes
+
+The media driver's directory (`AERON_DIR`: the CnC file and every log
+buffer) sits on a sized 2 MiB hugetlbfs. The sample's driver
+DaemonSet does this; clients only mount the same directory.
+
+| where | what | why |
+|---|---|---|
+| node, once | `hugepagesz=2M hugepages=<n>` on the boot line, `transparent_hugepage=never`, and a sized mount: `mount -t hugetlbfs -o pagesize=2M,size=1G nodev /mnt/huge-aeron` | kubelet advertises `hugepages-2Mi`; an unsized hugetlbfs reports no free space and Aeron refuses every log buffer |
+| driver pod | `hugepages-2Mi` request equal to its limit, the mount as a `hostPath`, `AERON_DIR=/mnt/huge-aeron/aeron`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | the driver fills each log buffer when it creates it, so no page faults later |
+| client pod | the same `hostPath` and `AERON_DIR`; no `hugepages-2Mi` request | the client maps pages the driver already allocated |
+
+```yaml
+# driver container (the driver DaemonSet)
+resources:
+  requests: { cpu: "2", memory: 2Gi, hugepages-2Mi: 2Gi }
+  limits:   { cpu: "2", memory: 2Gi, hugepages-2Mi: 2Gi }
+volumeMounts:
+  - { name: aeron, mountPath: /mnt/huge-aeron }
+volumes:
+  - { name: aeron, hostPath: { path: /mnt/huge-aeron, type: Directory } }
+```
+
+With the [nri-latency-pods](../deploy/latency-pods.md)
+plugin, the pod annotation `hugepages.ergon.io/<container>: "2M"` gives a
+sized mount instead of the `hostPath`.
+
+**What it changes in latency.** Nothing measurable at the median. Measured
+on Azure F8 v6 VMs (AMD EPYC 9V74, 8 cores, no SMT), Aeron IPC round trip, µs, median of 3
+reps ([hugepages](comparison.md#hugepages)):
+
+| msg/s | `/dev/shm` (tmpfs, 4 KiB pages) p50 / p99 | hugetlbfs (2 MiB) p50 / p99 |
+|---|---|---|
+| 10,000 | 0.22 / 0.39 | 0.20 / 0.39 |
+| 1,000,000 | 0.22 / 0.30 | 0.21 / 0.29 |
+| 5,000,000 | 0.25 / 0.38 | 0.25 / 0.38 |
+
+- **Not separated** at any load. Max at 10,000 msg/s: median of the reps'
+  maxima 146 (tmpfs) against 125 (hugetlbfs), one hugetlbfs rep 743; the
+  causes are a host pause or unexplained, the same in both arms.
+- **Transparent hugepages off is the tail result:** Azure idle p99.99 67 to
+  53 µs and idle max 546 to 106 µs; one AWS run overlapped. A traced
+  `khugepaged` drain put a kworker on an isolated CPU for a 16.25 µs max.
+- **Between hosts: not measured.**
+- Use the hugetlbfs because a pod needs a sized, memory-backed directory
+  that the driver can fill up front, not for a p50 gain.
 
 ## Where next
 

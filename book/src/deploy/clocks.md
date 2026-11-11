@@ -11,6 +11,14 @@ node.
 | a duration or timer in one process | [`quanta`](https://docs.rs/quanta/0.13.0/quanta/): `Clock::now()`, or `Clock::raw()` then `Clock::delta_as_nanos()` | reads the CPU counter, scaled by one calibration per process against `CLOCK_MONOTONIC`; without a usable counter it reads `CLOCK_MONOTONIC` (quanta-0.13.0 `src/lib.rs:333-344`). Do not compare quanta values between processes: each calibrates on its own |
 | a duration off the hot path | `std::time::Instant` | `CLOCK_MONOTONIC`: never goes back |
 
+```mermaid
+flowchart TD
+    Q["What are you measuring?"]
+    Q -->|"a stamp on the wire, a log or a row"| R["CLOCK_REALTIME"]
+    Q -->|"a duration or a timer in this process"| C["quanta, the CPU counter"]
+    Q -->|"a duration off the hot path"| I["Instant, CLOCK_MONOTONIC"]
+```
+
 **Not `minstant`** for portable code: it reads the counter only on Linux
 x86 and x86_64. On every other target, Graviton and macOS included, it
 reads `SystemTime`, a wall clock that can go back (minstant-0.1.7
@@ -42,8 +50,9 @@ others 200. Source: run `clockbench-aws-20261016`.
 
 ## Aeron's clocks
 
-Aeron keeps its own clocks (`aeron_clock.c:87-130` in rusteron-client
-0.2.11). The driver's agents read a cached copy (`aeron_clock_cache_t`).
+Aeron keeps its own clocks (`aeron_clock.c:91-136` in the Aeron tree
+shipped with rusteron-client 0.2.18). The driver's agents read a cached
+copy (`aeron_clock_cache_t`).
 
 | Aeron API | Linux source | returns |
 |---|---|---|

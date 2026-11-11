@@ -167,8 +167,8 @@ proof must stand independently of its author.
 
 Long context helped because it contained rejected designs, benchmark history,
 style corrections, and domain explanations. Throwing that away mid-task made
-the agent repeat old mistakes. Compacting at a **real task boundary**—when the
-next work was sufficiently different—was usually the right trade.
+the agent repeat old mistakes. Compacting at a real task boundary (when the
+next work was sufficiently different) was usually the right trade.
 
 At the same time, unlimited history increases cost and can bury the current
 task. A good compaction or handoff should preserve:

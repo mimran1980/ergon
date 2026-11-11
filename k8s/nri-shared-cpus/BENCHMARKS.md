@@ -1,7 +1,7 @@
 # ergon-shared-cpus benchmarks
 
-What the [Azure lab](README.md#latency-lab-one-azure-vm) measured. Raw
-files: [`lab/results/`](lab/results/), one directory per run.
+What one Azure Cobalt VM (8 vCPUs, `isolcpus` boot line, kind on the VM) and
+the EKS lane measured. Raw files: [`lab/results/`](lab/results/), one directory per run.
 
 | run | what | files |
 |---|---|---|
@@ -180,7 +180,79 @@ within 0.1 µs). Both are start-up costs, paid once a thread.
 The SQPOLL placement measured on the same nodes is in the book
 ([shared CPUs](https://mimran1980.github.io/ergon/deploy/shared-cpus.html)).
 
+## Plugin outage timings (kind)
+
+`test/e2e.sh` step 18, run with `E2E_OUTAGE_CYCLES=20` on 2026-11-05.
+These are functional timings: kind on Docker Desktop on an Apple-silicon
+Mac (linuxkit 7.0.14 arm64, 10 vCPUs), Kubernetes 1.37.0, containerd
+2.3.4. The host was not quiet: its load average was 65 at the start of
+step 18 and 140 at the end, from other jobs. They show how the contract
+behaves, not latency.
+
+Each cycle runs with pod A up: `cpu: 2`, 250 shared millicpus, a helper
+that burns 5 ms of every 10 ms round, and `ergon-cpus --ready-addr` with
+an `httpGet` readiness probe (`periodSeconds: 1`, `failureThreshold: 1`).
+The cycle parks the plugin and restarts the kubelet, which shrinks the
+cpuset to the exclusive CPUs. It waits for the probe to fail, holds the
+outage 5 s, then brings the plugin back. The marks come from three places:
+- the node reads the container's `cpuset.cpus.effective` every 20 ms
+  (shrink and whole);
+- the probe logs a line on each change (503 and 200);
+- the helper logs each round that ends off the shared CPU, with its CPU
+  time.
+
+ms, 20 cycles, one run. At n = 20, p99 and p99.99 are the max. Raw files:
+[`lab/results/kind-outage-20261105/`](lab/results/kind-outage-20261105/)
+(`outage.tsv`, its `columns.tsv`, the node's cpuset traces, step 18's log).
+
+| metric | n | min | p50 | p99 | p99.99 | max | cause of the max |
+|---|---|---|---|---|---|---|---|
+| detect: shrink to probe 503 | 20 | -17.6 | 186.6 | 989.8 | 989.8 | 989.8 | probe phase: the shrink came just after a probe, so it waited about one 1 s period. The negative min is the node poll's 20 ms resolution |
+| harm: shrink to cpuset whole | 20 | 5893.6 | 6796.2 | 7951.9 | 7951.9 | 7951.9 | the 5 s hold the test sets, plus that cycle's slow detection (948 ms) and recovery (1149 ms) |
+| recover: plugin back to cpuset whole | 20 | 560.4 | 855.3 | 1150.3 | 1150.3 | 1150.3 | plugin pod start and `Synchronize` on the loaded host; the two were not timed apart (unexplained) |
+| verify: cpuset whole to probe 200 | 20 | 1.4 | 553.1 | 981.1 | 981.1 | 981.1 | probe phase, as for detect |
+| helper back: cpuset whole to last helper round off S | 20 | -35.2 | -22.1 | -2.9 | -2.9 | -2.9 | always negative: the helper was back on the shared CPU before the node poll saw the whole cpuset, so no lag shows at this resolution |
+| helper CPU time on exclusive CPUs | 20 | 1817.5 | 2102.4 | 2453.7 | 2453.7 | 2453.7 | the longest outage (7777 ms); the helper's CPU time is 31 % of each outage in every cycle (30.6 to 31.7 %) |
+| helper rounds off S (count) | 20 | 362 | 420 | 486 | 486 | 486 | the longest outage |
+
+In all 20 cycles, the probe reported verified only after the node saw the
+whole cpuset, and the helper ran on an exclusive CPU (the harm is real and
+lasts as long as the outage). Detection and verification are bounded by
+the probe period. Interference grows with the outage, and only the plugin's
+return ends it: readiness reports the problem, it does not fix it.
+
+### Second run, quieter host
+
+The same step 18 and 20 cycles, run again later the same day on the same
+cluster setup (kind on Docker Desktop, 10 vCPUs, kernel 7.0.14, a fresh
+cluster) after the merge of the outage work. The host load average was 9.9
+at the start of step 18 and 4.6 at the end (65 and 140 in the first run);
+the Mac was still running other jobs, so this is quieter, not quiet. The
+first run's table above is unchanged. Raw files:
+[`lab/results/kind-outage-20261105-run2/`](lab/results/kind-outage-20261105-run2/).
+
+ms, 20 cycles, one run. At n = 20, p99 and p99.99 are the max.
+
+| metric | n | min | p50 | p99 | p99.99 | max | cause of the max |
+|---|---|---|---|---|---|---|---|
+| detect: shrink to probe 503 | 20 | 107.4 | 186.3 | 983.7 | 983.7 | 983.7 | cycle 2: the shrink came just after a probe, so it waited about one 1 s period |
+| harm: shrink to cpuset whole | 20 | 5761.4 | 5876.8 | 7094.3 | 7094.3 | 7094.3 | cycle 2: the 5 s hold, plus its slow detection (984 ms) and recovery (627 ms); the remaining 483 ms (the wait for the NotReady status before the hold starts) is unexplained |
+| recover: plugin back to cpuset whole | 20 | 508.1 | 532.7 | 678.7 | 678.7 | 678.7 | cycle 6: plugin pod start and `Synchronize`, not timed apart (unexplained) |
+| verify: cpuset whole to probe 200 | 20 | 10.4 | 72.2 | 898.4 | 898.4 | 898.4 | cycle 2: probe phase, as for detect |
+| helper back: cpuset whole to last helper round off S | 20 | -36.5 | -18.1 | -8.2 | -8.2 | -8.2 | always negative: the helper was back on the shared CPU before the node poll saw the whole cpuset; no lag shows at the poll's 20 ms resolution |
+| helper CPU time on exclusive CPUs | 20 | 1771.3 | 1815.7 | 2227.2 | 2227.2 | 2227.2 | cycle 2, the longest outage (7094 ms); the helper's CPU time is 30.6 to 31.6 % of each outage |
+| helper rounds off S (count) | 20 | 354 | 363 | 445 | 445 | 445 | cycle 2, the longest outage |
+
+As in the first run, the probe reported verified only after the node saw the
+whole cpuset in all 20 cycles, and the helper ran on an exclusive CPU in all
+20. The quieter host shortened recovery (p50 533 ms against 855 ms) and the
+tail of verification; detection is bounded by the probe period in both.
+
 ## Not measured
+
+- After a plugin outage, the API `Ready` condition and the Endpoints
+  removal. The kubelet's status sync comes after the probe result timed
+  above. Plugin pod start and `Synchronize` were also not timed apart.
 
 - A helper's wake-up wait under more than one spinner, and the cause of
   the idle 2.4 to 3.4 ms maxima (EKS, above).
@@ -188,13 +260,3 @@ The SQPOLL placement measured on the same nodes is in the book
   are from before them).
 - Another VM size, x86, bare metal. The hot-thread spin probe on EKS.
 - How often node events (above) occur on a production node.
-
-## Reproduce
-
-```sh
-DRY_RUN=1 k8s/nri-shared-cpus/lab/azure-vm.sh   # plan, time, price; no cloud call
-k8s/nri-shared-cpus/lab/azure-vm.sh             # about 75 minutes, about $0.44
-```
-
-`LAB_SCALE=0 LAB_REPS=3` is run 20261024234841's shape.
-`LAB_ARMS="plugin-on plugin-off"` adds the plain static CPU manager arm.

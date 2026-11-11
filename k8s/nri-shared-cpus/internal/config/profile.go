@@ -38,7 +38,7 @@ func legacyFieldsSet(f File) bool {
 	return f.SharedCPUs != nil || f.Oversubscription != nil || len(f.Namespaces) > 0 ||
 		f.DefaultAffinity != "" || f.HookPath != "" || f.AnnotationOptIn ||
 		f.MetricsAddress != "" || f.Rlimits != nil || f.Seccomp != nil ||
-		f.SeccompProfilePath != "" || f.DevRoot != "" || f.SchedFifo != "" ||
+		f.SeccompProfilePath != "" || f.DevRoot != "" ||
 		f.Ptp != "" || f.HugepagesAeronDir != ""
 }
 

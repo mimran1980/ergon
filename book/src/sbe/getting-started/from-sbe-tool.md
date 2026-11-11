@@ -1,10 +1,10 @@
 # Coming from sbe-tool
 
 Side-by-side mapping for teams migrating from the official Simple Binary
-Encoding Rust generator (`sbe-tool`). Within the [published SBE profile]
-(../design-notes/feature-matrix.md) and
+Encoding Rust generator (`sbe-tool`). Within the
+[published SBE profile](../design-notes/feature-matrix.md) and
 [`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md),
-ergo-sbe aims for official-SBE wire fidelity with sbe-tool; the **API shape**
+ergo-sbe aims for official-SBE wire fidelity with sbe-tool; the API shape
 is intentionally different. Do not read this as unqualified “binary
 compatible with every SBE feature.”
 
@@ -12,7 +12,7 @@ compatible with every SBE feature.”
 
 | | sbe-tool Rust | ergo-sbe |
 |---|---------------|----------|
-| `wrap` argument | **Body** offset (often `8` for a frame at 0) | **Message start** (often `0`) |
+| `wrap` argument | Body offset (often `8` for a frame at 0) | Message start (often `0`) |
 | Where fields live | `body_offset + field_offset` | `message_offset + HEADER_LENGTH + field_offset` |
 
 ```rust,ignore
@@ -22,23 +22,47 @@ compatible with every SBE feature.”
 //            Enc::wrap_and_apply_header(buf, 0)
 ```
 
-Passing sbe-tool’s `8` into ergo-sbe for a frame at zero **mis-aligns every
-field**. Generated rustdoc on `wrap` / `wrap_and_apply_header` / `decode`
+Passing sbe-tool’s `8` into ergo-sbe for a frame at zero mis-aligns every
+field. Generated rustdoc on `wrap` / `wrap_and_apply_header` / `decode`
 repeats this callout.
+
+<div class="ergon-anim" data-anim="single-cursor-vs-lanes" data-title="One limit cursor (sbe-tool) and ergo-sbe's split lanes"></div>
+
+*Animation, in words:* one `TestMessage1` frame from the wire-parity test
+(tag1 7, three entries), 111 bytes that both generators write identically:
+header 0–8, fixed block 8–24 with tag1 at 8, group header 24–27, entries at
+27, 55 and 83. **Part 1, the wrap offset.** sbe-tool's `wrap(buf, 8, ..)`
+takes the body offset and reads tag1 at 8 + 0; ergo-sbe's `wrap(buf, 0, ..)`
+takes the message start and reads at 0 + `HEADER_LENGTH` + 0. Both land on
+byte 8. Passing 8 to ergo-sbe reads tag1 from padding at byte 16 and the group
+header at byte 32, inside the first entry, and the extent check still passes.
+Passing 0 to sbe-tool's bare `wrap` reads the header as tag1 (65552);
+sbe-tool's `header(h, 0)` path takes the message start like ergo-sbe.
+**Part 2, the cursor.** sbe-tool's decoder carries a `limit`:
+`entries_decoder()` consumes the decoder and moves `limit` 24 → 27, each
+`advance()` moves it one entry (55, 83, 111), each read checks the slice, and
+`parent()` hands back a decoder whose cursor is past the group. ergo-sbe's base
+decoder has no cursor: `entries()` takes `&self`, starts at 8 + 16 = 24 every
+time and is `Sync`; the iterator owns its offset, with the group's extent
+checked once. Staged `into_entries()` … `finish()` is the same single pass
+with the order checked at compile time. `memoized()` has nothing to cache on a
+one-group message; [Decoder lanes](../feature-tour/decode-stages.md) animates
+a message where it pays. Counts come from the generated source, not timings;
+this book records no benchmark result.
 
 ## Header modes (fair comparison table)
 
-Use the **same** logical work on both sides when comparing or porting:
+Use the same logical work on both sides when comparing or porting:
 
 | Mode | ergo-sbe | sbe-tool |
 |------|----------|----------|
-| **Body only** | `wrap(buf, 0)` + setters — no apply-header | `wrap(buf, 8)` + setters — no `.header(0)` |
-| **Header + body** | `wrap_and_apply_header(buf, 0)` + setters | `wrap(buf, 8)` then `header(0).parent()` **then** setters |
+| Body only | `wrap(buf, 0)` + setters, no apply-header | `wrap(buf, 8)` + setters, no `.header(0)` |
+| Header + body | `wrap_and_apply_header(buf, 0)` + setters | `wrap(buf, 8)` then `header(0).parent()`, then setters |
 | **Header only** | `wrap_and_apply_header` alone | `wrap(buf, 8).header(0)` alone |
 
 - ergon `wrap` = message start; sbe-tool `wrap` = body offset.
-- sbe-tool `encoded_length()` is **body only**. ergon
-  `encoded_length_with_header()` **includes** the header. Never invent
+- sbe-tool `encoded_length()` is body only. ergon
+  `encoded_length_with_header()` includes the header. Never invent
   `8 + encoded_length()` to “prove” a header was written if `.header(0)` was
   not called on the sbe-tool arm.
 
@@ -55,7 +79,7 @@ Full fairness rules for benchmarks: [Benchmarks methodology](../benchmarks/metho
 {{#include ../../../../samples/sbe-feature-tour/src/lib.rs:encode_sample_car}}
 ```
 
-Compile-time order: you cannot call `asks` before `bids` — the stage type
+Compile-time order: you cannot call `asks` before `bids`, because the stage type
 has no `asks` method. See
 [Wire order via named stages](../core-concepts/wire-order-stages.md).
 
@@ -65,27 +89,27 @@ has no `asks` method. See
 |---------|----------|----------|
 | Body length after encode | `encoded_length()` | body region only via stage `encoded_length` where exposed |
 | Header + body | compute yourself (`8 + …`) | `encoded_length_with_header()` / `as_bytes_with_header()` |
-| Pre-size buffer | often oversize scratch | **Exact:** const `Encoder::compute_length_with_header()` (stack `[0u8; N]`), or `Encoder::compute_length()` / staged `*EncodedLength` when the length depends on groups or var-data |
+| Pre-size buffer | often oversize scratch | Exact: const `Encoder::compute_length_with_header()` (stack `[0u8; N]`), or `Encoder::compute_length()` / staged `*EncodedLength` when the length depends on groups or var-data |
 
-Do **not** default to `vec![0u8; 4096]` or `Vec::with_capacity(MAX)` then
+Do not default to `vec![0u8; 4096]` or `Vec::with_capacity(MAX)` then
 truncate. See [Buffer sizing](../core-concepts/buffer-sizing.md) and
 [Exact sizing](../feature-tour/exact-sizing.md).
 
-## Optional fields: `nullify_optional_fields()` → `apply_nulls()`
+## Optional fields: `nullify_optional_fields()` and `apply_nulls()`
 
 Neither generator nullifies on wrap, so in sbe-tool an optional field you
 never set keeps whatever was already in the buffer unless you remember to
 call `nullify_optional_fields()`. The ergon equivalent is `apply_nulls()`,
-but the port is usually to **delete the call rather than rename it**:
+but the port is usually to delete the call rather than rename it:
 
 | sbe-tool | ergo-sbe |
 |----------|----------|
-| `enc.nullify_optional_fields()` on the message, then set fields | `.fixed(&MsgFixedFields { price: None, … })` — `None` writes the schema null image |
-| `nullify_optional_fields()` on a group entry encoder | nothing to call — every `add()` nulls the entry's optional scalars |
+| `enc.nullify_optional_fields()` on the message, then set fields | `.fixed(&MsgFixedFields { price: None, … })`; `None` writes the schema null image |
+| `nullify_optional_fields()` on a group entry encoder | nothing to call: every new entry starts as the schema null image for its optional fields |
 | Forgetting the call leaks stale bytes | `fixed()` is the only route to tails and to complete byte views, so the ordinary path cannot leak |
 
 Optional fields are `Option<T>` in the generated `*FixedFields` struct, and
-`fixed()` writes the schema null wire image for every `None` — including
+`fixed()` writes the schema null wire image for every `None`, including
 fixed arrays and nested optional composite members.
 
 `apply_nulls()` is still generated (message encoders with at least one
@@ -93,25 +117,30 @@ optional field, on the unfixed stage after `wrap*`) for the case where you
 write individual optionals through `raw_fixed()` and have no `FixedFields`
 value describing which ones are unset.
 
-**One asymmetry to carry across:** group-entry auto-nulling covers optional
-fields that have a declared `nullValue` and a width of 1-8 bytes. An optional
-**array or composite** inside a group entry is not nulled, where the
-message-level path does handle those shapes. If your schema has one, set it
-explicitly.
+Group entries get the same null image without a call. `add()`,
+`add_checked()` and `start_entry()` write it for every optional field before
+your setters run, at any nesting depth, with the bytes `fixed()` writes for a
+`None`. Two differences from sbe-tool's `nullify_optional_fields()` to carry
+across:
+
+- An optional fixed array gets the element null in every slot. sbe-tool's
+  nullify leaves optional arrays untouched.
+- Only optional fields are nulled. sbe-tool also nulls the optional members of
+  a required composite; ergon leaves a required composite to your setter.
 
 See [Optional fields and `apply_nulls`](encode-decode.md#optional-fields-and-apply_nulls)
 and [Why NullVal instead of Option](../design-notes/nullval.md).
 
 ## Decode entry
 
-ergo-sbe decoder `wrap` and `try_wrap` take the **message start**, including
+ergo-sbe decoder `wrap` and `try_wrap` take the message start, including
 the header, while sbe-tool's `wrap` takes the body offset. Use `try_decode`
 when the header metadata is not already available:
 
 | Need | ergo-sbe |
 |------|----------|
-| Untrusted / network | `try_decode` / `try_wrap` / `try_from` → `Result` (all failures) |
-| Known-good buffer | bare `wrap` → panic if short; bare `decode` → **hybrid** (panic if short, `Err` on wrong template/schema) |
+| Untrusted / network | `try_decode` / `try_wrap` / `try_from` return `Result` (all failures) |
+| Known-good buffer | bare `wrap` panics if short; bare `decode` is a hybrid (panics if short, `Err` on wrong template/schema) |
 | Proven-tight hot path | `unsafe wrap_unchecked`; `decode_unchecked` = unchecked extent + checked identity |
 
 See [Trust Boundary](../core-concepts/trust-boundary.md).
@@ -123,7 +152,7 @@ group and var-data accessor reads at `limit` and advances it, so the order you
 call methods in *is* the wire walk. ergon splits that:
 
 - Sequential: `into_*` / `skip_*` (or `decoder.ordered()` for one callback per tail)
-- Random-access: `try_decode` — any order, `Sync`
+- Random-access: `try_decode`, any order, `Sync`
 
 A group whose entries carry their own tails takes a visit closure; a
 fixed-stride group hands back an iterator.
@@ -132,9 +161,9 @@ fixed-stride group hands back an iterator.
 
 | Your sbe-tool code | Port to |
 |--------------------|---------|
-| Straight-line walk: group, group, var-data, done | staged `into_*` / `skip_*` — one traversal, compile-time tail order |
+| Straight-line walk: group, group, var-data, done | staged `into_*` / `skip_*` (one traversal, compile-time tail order) |
 | Re-wrapping the message a second time to read a field you passed | the base decoder, or `decoder.memoized()` if you re-read deep tails |
-| Reading two fixed fields and dropping the rest | the base decoder from `try_decode` — no cursor, `Sync`, nothing to consume |
+| Reading two fixed fields and dropping the rest | the base decoder from `try_decode`: no cursor, `Sync`, nothing to consume |
 
 ```rust,ignore
 // sbe-tool: one cursor, order is a convention
@@ -148,7 +177,7 @@ let manufacturer = car.manufacturer_slice(coords);
 
 // ergo-sbe: consuming stages carry the next tail offset.
 // fuelFigures entries carry var-data, so the step is a visit closure and the
-// completion it returns is where the next entry starts — one pass, no rescan.
+// completion it returns is where the next entry starts: one pass, no rescan.
 let (manufacturer, car) = CarDecoder::try_decode(buf, 0)?
     .into_fuel_figures(|e| e.into_usage_description().map(|(_usage, done)| done))?
     .skip_performance_figures()?
@@ -159,7 +188,7 @@ Note what disappears in the port: no `.parent()` hop, no `(offset, length)`
 coordinate pair threaded to a second `_slice()` call, and no `&mut` on a
 decoder you only wanted to read.
 
-**Fixed-block messages** — no groups, no var-data — get **no** `memoized()`
+Fixed-block messages (no groups, no var-data) get no `memoized()`
 or `ordered()`, and `AnyMessage` offers only `into_<name>()` for them. Every
 field is already random-access off the block.
 
@@ -168,7 +197,7 @@ Full per-lane pros, cons, and cost table:
 
 ## Version handling
 
-Decoders are version-aware: tail offsets use the **wire** acting block
+Decoders are version-aware: tail offsets use the wire acting block
 length, not only the compiled block length. Optional / `sinceVersion` fields
 follow schema presence rules. Prefer explicit `try_*` entry points when
 reading mixed-version streams.
@@ -177,18 +206,18 @@ reading mixed-version streams.
 
 | sbe-tool habit | ergo-sbe |
 |----------------|----------|
-| `.parent()` ownership hop | Encode: nested closures. Decode: consuming stages — a visit closure for dynamic groups, an iterator for fixed-stride ones |
+| `.parent()` ownership hop | Encode: nested closures. Decode: consuming stages (a visit closure for dynamic groups, an iterator for fixed-stride ones) |
 | One `&mut` decoder with a `limit` cursor | Lanes: random-access `&Decoder`, staged `into_*`, optional `ordered()` / `.memoized()` ([decoder lanes](../feature-tour/decode-stages.md)) |
 | `_decoder()` returning `(offset, len)` for a second `_slice()` call | Var-data accessors return `&'a [u8]` / `&'a str` directly |
 | Generic `Encoder<State>` spelling | Named stage structs + `H: HeaderState` only for header mode ([type-state note](../design-notes/type-state.md)) |
 | `encoded_length()` as full-frame size | Use `*_with_header` when you need the frame |
-| `nullify_optional_fields()` on group and composite encoders | Group entries null their optional scalars on `add()`; only the message encoder gets `apply_nulls()` ([above](#optional-fields-nullify_optional_fields--apply_nulls)) |
+| `nullify_optional_fields()` on group and composite encoders | Every new group entry is written with its optional fields' null image; only the message encoder gets `apply_nulls()` ([above](#optional-fields-nullify_optional_fields-and-apply_nulls)) |
 | Always-on meta / Display noise | Opt-out size knobs: `with_display_debug(false)`, `with_meta_attributes(false)`, `with_dispatch(false)` |
 
 ## Trust boundary
 
 `try_*` returns `Result` on short buffers (and identity mismatches). Bare
-`wrap` panics if short. Bare `decode` is a **hybrid**: panics if short, but
+`wrap` panics if short. Bare `decode` is a hybrid: panics if short, but
 still returns `Err` on wrong template/schema. `decode_unchecked` is unchecked
 extent + checked identity. After a safe constructor succeeds, fixed-field
 accessors are branch-free. Full detail:

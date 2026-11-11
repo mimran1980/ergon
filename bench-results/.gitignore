@@ -1,0 +1,6 @@
+# Criterion's base/ and change/ trees (the previous run and its comparison) and
+# the invocation marker are never read by scripts/generate-performance-page.py,
+# which reads only repeats*/<k>/ and <group>/<arm>/new/. Leave them out of commits.
+base/
+change/
+.bench-since

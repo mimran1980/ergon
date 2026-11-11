@@ -1,4 +1,4 @@
-//! `perf-probe` — stable-symbol wrappers for mechanism-level measurement.
+//! `perf-probe`: stable-symbol wrappers for mechanism-level measurement.
 //!
 //! Criterion answers "how long did it take on this machine, today". It cannot
 //! answer "did the call disappear" or "how many instructions did each arm
@@ -7,8 +7,8 @@
 //! [`OPERATIONS`] logical operations and returns an observed checksum.
 //!
 //! `scripts/run-sbe-instruction-probes.sh` drives it under raw Callgrind with
-//! `--toggle-collect=<symbol>`, so setup and validation — which happen in
-//! `main`, before any probe is entered — are never counted.
+//! `--toggle-collect=<symbol>`, so setup and validation, which happen in
+//! `main` before any probe is entered, are never counted.
 //!
 //! Every probe is registered in [`PROBES`]. The registry is the manifest:
 //! `--list` prints it, the driver script compares that against the checked-in
@@ -33,7 +33,7 @@ use std::hint::black_box;
 
 use ergo_sbe_benchmarks::{ergo_car::*, sbe_tool_car_body_decoder};
 
-/// Java-produced Car message (schema v0, template 1) — the same fixture the
+/// Java-produced Car message (schema v0, template 1), the same fixture the
 /// Criterion parity benchmarks decode.
 const BASELINE: &[u8] = include_bytes!("../../benches/fixtures/car_example_baseline_data.sbe");
 
@@ -126,6 +126,13 @@ const PROBES: &[Probe] = &[
         pair: "decode_full_message_ordered",
         topic: "decode",
         run: run_tool_decode_full_message_ordered,
+    },
+    Probe {
+        symbol: "ergo_probe_decode_full_message_random",
+        arm: Arm::Ergon,
+        pair: "decode_full_message_random",
+        topic: "lane",
+        run: run_ergo_decode_full_message_random,
     },
     Probe {
         symbol: "ergo_probe_optional_enum_nullify",
@@ -441,32 +448,83 @@ pub fn ergo_probe_decode_full_message_ordered(
             .wrapping_add(u64::from(car.model_year()));
         let engine = car.engine();
         checksum = checksum.wrapping_add(u64::from(engine.capacity()));
-        let after_perf = car
-            .into_fuel_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+        // The ordered lane (Criterion `ergo-sbe_ordered`), not a copy of the
+        // staged one: same fields, one callback per tail.
+        car.ordered()
+            .fuel_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
                 checksum = checksum.wrapping_add(u64::from(entry.speed()));
-                let (usage, complete) = entry.into_usage_description()?;
-                checksum = checksum.wrapping_add(usage.len() as u64);
-                Ok(complete)
+                entry.ordered().usage_description(|usage| {
+                    checksum = checksum.wrapping_add(usage.len() as u64);
+                    Ok(())
+                })
             })
             .expect("fuel visit")
-            .into_performance_figures(|entry| -> Result<_, sbe_rt::DecodeError> {
+            .performance_figures(|entry, _info| -> Result<_, sbe_rt::DecodeError> {
                 checksum = checksum.wrapping_add(u64::from(entry.octane_rating()));
-                let mut acc = entry.into_acceleration()?;
-                for acceleration in &mut acc {
+                entry.ordered().acceleration(|acceleration, _info| {
                     checksum = checksum.wrapping_add(u64::from(acceleration.mph()));
-                }
-                acc.finish()
+                    Ok(())
+                })
             })
-            .expect("perf visit");
-        let (manufacturer, next) = after_perf.into_manufacturer().expect("manufacturer");
-        let (model, next) = next.into_model().expect("model");
-        let (code, _) = next.into_activation_code().expect("activation code");
-        checksum = checksum
-            .wrapping_add(manufacturer.len() as u64)
-            .wrapping_add(model.len() as u64)
-            .wrapping_add(code.len() as u64);
+            .expect("perf visit")
+            .manufacturer(|manufacturer| -> Result<(), sbe_rt::DecodeError> {
+                checksum = checksum.wrapping_add(manufacturer.len() as u64);
+                Ok(())
+            })
+            .expect("manufacturer")
+            .model(|model| -> Result<(), sbe_rt::DecodeError> {
+                checksum = checksum.wrapping_add(model.len() as u64);
+                Ok(())
+            })
+            .expect("model")
+            .activation_code(|code| -> Result<(), sbe_rt::DecodeError> {
+                checksum = checksum.wrapping_add(code.len() as u64);
+                Ok(())
+            })
+            .expect("activation code");
     }
     black_box(checksum)
+}
+
+/// Random access (Criterion `ergo-sbe_random`): each group and var-data
+/// field is found from the message start, so it re-walks what precedes it.
+/// The ordered lane must retire strictly fewer instructions than this.
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub fn ergo_probe_decode_full_message_random(buf: &[u8], block_length: usize, version: u16) -> u64 {
+    let mut checksum = 0_u64;
+    for _ in 0..OPERATIONS {
+        // SAFETY: extent proven once by `assert_baseline_extent`.
+        let car = unsafe { CarDecoder::wrap_unchecked(black_box(buf), 0, block_length, version) };
+        checksum = checksum
+            .wrapping_add(car.serial_number())
+            .wrapping_add(u64::from(car.model_year()));
+        let engine = car.engine();
+        checksum = checksum.wrapping_add(u64::from(engine.capacity()));
+        for entry in car.fuel_figures().expect("fuel figures") {
+            let entry = entry.expect("fuel entry");
+            checksum = checksum.wrapping_add(u64::from(entry.speed()));
+            checksum =
+                checksum.wrapping_add(entry.usage_description().expect("usage").len() as u64);
+        }
+        for entry in car.performance_figures().expect("performance figures") {
+            let entry = entry.expect("performance entry");
+            checksum = checksum.wrapping_add(u64::from(entry.octane_rating()));
+            for acceleration in entry.acceleration().expect("acceleration") {
+                checksum = checksum.wrapping_add(u64::from(acceleration.mph()));
+            }
+        }
+        checksum = checksum
+            .wrapping_add(car.manufacturer().expect("manufacturer").len() as u64)
+            .wrapping_add(car.model().expect("model").len() as u64)
+            .wrapping_add(car.activation_code().expect("activation code").len() as u64);
+    }
+    black_box(checksum)
+}
+
+fn run_ergo_decode_full_message_random() -> u64 {
+    let (bl, ver) = ergo_header_fields();
+    ergo_probe_decode_full_message_random(BASELINE, bl, ver)
 }
 
 #[inline(never)]
@@ -922,11 +980,17 @@ pub fn tool_probe_group_with_data(buf: &[u8], block_length: u16, version: u16) -
     for _ in 0..OPERATIONS {
         let dec = StDecoder::default().wrap(ReadBuf::new(black_box(buf)), 8, block_length, version);
         checksum = checksum.wrapping_add(u64::from(dec.tag_1()));
+        // The same walk as ergon's `into_entries`: every entry until the count
+        // is exhausted, then back to the message with the limit after the group.
         let mut entries = dec.entries_decoder();
-        assert!(entries.advance().expect("advance").is_some());
-        checksum = checksum.wrapping_add(entries.tag_group_2() as u64);
-        let coords = entries.var_data_field_decoder();
-        checksum = checksum.wrapping_add(entries.var_data_field_slice(coords).len() as u64);
+        while entries.advance().expect("advance").is_some() {
+            checksum = checksum.wrapping_add(entries.tag_group_2() as u64);
+            let coords = entries.var_data_field_decoder();
+            checksum = checksum.wrapping_add(entries.var_data_field_slice(coords).len() as u64);
+        }
+        // Discarded like ergon's next stage above: `black_box`ing only this
+        // arm's parent stored a whole decoder per op that ergon never pays.
+        entries.parent().expect("entries parent");
     }
     black_box(checksum)
 }
@@ -971,9 +1035,10 @@ fn validate_registry() {
         seen.push(probe.symbol);
     }
     for probe in PROBES {
-        // Symmetry probes measure encode vs decode within the same codec,
-        // not ergon vs sbe-tool — they have no opposing arm.
-        if probe.topic == "symmetry" {
+        // Symmetry probes measure encode vs decode within the same codec, and
+        // lane probes one ergon access lane against another (ordered vs
+        // random), not ergon vs sbe-tool: they have no opposing arm.
+        if probe.topic == "symmetry" || probe.topic == "lane" {
             continue;
         }
         let counterpart = PROBES

@@ -1,8 +1,8 @@
-# What I reviewed—and what I did not
+# What I reviewed, and what I did not
 
 This distinction is essential.
 
-I did **not** perform a comprehensive, line-by-line human review of the
+I did not perform a comprehensive, line-by-line human review of the
 generator implementation. In particular, I did not deeply audit every
 `syn`/`quote` path that constructs the emitted source.
 
@@ -30,7 +30,7 @@ an awkward repeating-group API, an invalid stage transition, or unnecessary
 complexity. That feedback was much faster and more useful than mentally
 simulating a large code generator.
 
-This means the project should **not** be described simply as “human-reviewed
+This means the project should not be described simply as “human-reviewed
 code.” A more accurate description is:
 
 > Human-directed, generated-output reviewed, and behaviourally verified, with

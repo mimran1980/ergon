@@ -11,7 +11,7 @@ plugin and the pod can read them (the NIC's node and PHC name among them). The t
 |---|---|---|---|
 | CPU manager | `static` | exclusive CPUs for the loop | `cat /var/lib/kubelet/config.yaml \| grep -i cpumanager` or the nodeadm `NodeConfig` |
 | reserved CPUs | `0,1` on c8g (0 = system/shared, 1 = NIC IRQs) | kubelet, daemons and NIC IRQs stay off the hot cores | `cat /var/lib/kubelet/config.yaml \| grep reservedSystemCPUs` |
-| `strict-cpu-reservation` | **off** | on, it empties the shared pool of the reserved CPUs and starves the ingester's host-stats thread and fractional sidecars | `grep -r strict-cpu-reservation /etc/kubernetes/ /var/lib/kubelet/` |
+| `strict-cpu-reservation` | **off** | on, it empties the shared pool of the reserved CPUs and starves a pod's helper threads and fractional sidecars | `grep -r strict-cpu-reservation /etc/kubernetes/ /var/lib/kubelet/` |
 | topology manager | `single-numa-node`, scope `pod` | memory lands on the NIC's NUMA node | `grep -i topology /var/lib/kubelet/config.yaml` |
 | `full-pcpus-only` | x86 with SMT only | c8g has no SMT; the option is a no-op there | `grep full-pcpus /var/lib/kubelet/config.yaml` |
 | kernel | `>= 6.2` (cgroup v2) | keeps a thread's requested affinity across cpuset changes | `uname -r`; `stat -fc %T /sys/fs/cgroup` |

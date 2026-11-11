@@ -5,8 +5,8 @@ favoured one long-lived conversation over many short ones, so the window could
 hold design decisions, failed benchmarks, and corrections across related work.
 
 That is not the same as “never compact and keep one pure million-token
-session.” Whenever I started a **genuinely new task**—something sufficiently
-different from what the session had been doing—I compacted at that boundary if
+session.” Whenever I started a genuinely new task (something sufficiently
+different from what the session had been doing) I compacted at that boundary if
 it was a natural handoff point. Continuity within a task was the goal; a single
 unbroken transcript across the whole project is not an accurate picture.
 
@@ -23,7 +23,7 @@ however, explain the usage shape.
 ## What I mean by “O(n²)”
 
 My informal developer's mental model became “roughly O(n²) in requests.” Here,
-`n` means the number of turns or requests in a growing conversation—not the
+`n` means the number of turns or requests in a growing conversation, not the
 number of tokens in one request.
 
 Suppose, only to make the intuition concrete, that each turn adds `d` tokens of
@@ -98,7 +98,7 @@ model would actually consume.
 I originally compared models mainly through benchmark rank and ordinary
 input/output price. That missed the largest category in this workload:
 repeated context. The selected dashboard samples later in this page show that
-approximately **98.66% of token volume** was served as input cache hits.
+approximately 98.66% of token volume was served as input cache hits.
 
 DeepSeek's cache-hit rate was so low that keeping a large and useful context
 alive became affordable. This mattered more to my workflow than a modest
@@ -107,8 +107,8 @@ keep giving feedback, retain design history, run another test, inspect another
 generated file, and try again.
 
 That does not mean cheap cache hits make the entire bill negligible. One
-correction is essential: roughly 99% of **token volume** being cache hits does
-not mean 99% of **dollar cost** came from cache hits. Hits are heavily
+correction is essential: roughly 99% of token volume being cache hits does
+not mean 99% of dollar cost came from cache hits. Hits are heavily
 discounted. The much smaller quantities of misses and output can contribute a
 large portion of the final dollars. The correct calculation prices all three
 categories independently.
@@ -121,9 +121,9 @@ had presented, which benchmark had regressed, which generated style I wanted,
 and how official output behaved. Retaining that history made the workhorse
 model feel more capable.
 
-Caveat on “one long session”: I did **not** leave one transcript untouched for
+Caveat on “one long session”: I did not leave one transcript untouched for
 the entire project. I compacted whenever I started a task that was sufficiently
-different that the old tail was no longer a good default context—i.e. at
+different that the old tail was no longer a good default context, i.e. at
 genuine task boundaries, not once-or-twice total and not never. Within a task I
 kept context long; between dissimilar tasks I compacted and moved on. I did not
 notice a material loss immediately after those handoff-style compactions. In my

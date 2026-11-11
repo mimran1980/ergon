@@ -1,46 +1,37 @@
-//! Benchmark smoke tests (Item 3 of).
+//! Benchmark smoke tests.
 //!
 //! Port of upstream `simple-binary-encoding/rust/benches/car_benchmark.rs`.
-//! The upstream benchmarks use `criterion` on the upstream Rust codegen's
-//! generated API (pre-compiled modules).  Since `ergon` generates code on
-//! the fly with a fundamentally different API (closure-based group setters,
-//! `wrap_and_apply_header`), we:
+//! Upstream runs `criterion` on pre-compiled modules from its own Rust
+//! codegen. ergon generates code on the fly with a different API
+//! (closure-based group setters, `wrap_and_apply_header`), so these tests:
 //!
-//! 1. Generate and compile the Car codec via `compile_and_run`
-//! 2. Run a best-case encode/decode warmup loop + timed loop
-//! 3. Assert that even in debug mode the round-trip completes promptly
+//! 1. generate and compile the Car codec via `compile_and_run`;
+//! 2. run an encode/decode warm-up loop and a timed loop;
+//! 3. assert that even in debug mode the round trip completes promptly.
 //!
-//! **Known trap — the nested build's scratch directory can vanish mid-run.**
-//! `compile_and_run` used to spawn a *nested* cargo build into a per-call
-//! target under the system temp dir (`/var/folders/.../T/ergo_test_<name>/target_ci`
-//! on macOS), which could be reclaimed or truncated while a build was in
-//! flight. Nested builds now share `<target>/ergon-scratch` under cargo's
-//! build-directory lock (`common/scratch.rs`); only the crate sources stay in
-//! the temp dir. Observed 2026-09-14 across a whole `just test` run:
+//! **Known trap: the nested build's scratch directory can vanish mid-run.**
+//! The nested builds share `<target>/ergon-scratch` under cargo's
+//! build-directory lock (`common/scratch.rs`); only the crate sources live in
+//! the system temp dir. If that scratch tree disappears mid-run, every test
+//! here fails inside `compile_and_run`, never on an assertion, with errors
+//! such as:
 //!
 //! ```text
-//! error: extern location for miette does not exist: .../target_ci/.../libmiette-*.rmeta
+//! error: extern location for miette does not exist: .../libmiette-*.rmeta
 //! error: Unable to proceed. Could not locate working directory.
-//! error: failed to write .../target_ci/debug/.fingerprint/...
 //! error: linking with `cc` failed: exit status: 1
 //! ```
 //!
-//! Every affected test failed inside `compile_and_run`, never on an assertion.
-//! A single earlier instance (2026-09-12) hit this binary alone and was recorded
-//! as unexplained; this is that mechanism. It cleared after freeing build
-//! artifacts, and the same suite then passed 126/126.
+//! After freeing build artifacts, the suite that hit this passed 126/126.
 //!
-//! The timing assertions here are *not* a plausible cause of a failure: they
-//! allow 30 seconds for 50 debug-mode iterations, and the binary survives
-//! deliberate concurrent-cargo load (74s versus ~13s isolated, still passing).
-//! So if this binary fails, read the nested cargo's stderr first — an I/O or
-//! missing-file error means the scratch tree went away, not that the codec got
-//! slow. Free disk space and re-run before investigating the code.
+//! The timing assertions allow 30 seconds for 50 debug-mode iterations, and
+//! the binary still passes under deliberate concurrent cargo load (74 s
+//! against about 13 s isolated), so they are not a plausible cause of a
+//! failure. If this binary fails, read the nested cargo's stderr first: an I/O
+//! or missing-file error means the scratch tree went away, not that the codec
+//! got slow. Free disk space and re-run before investigating the code.
 //!
-//! Real criterion benchmarks should be added once the codegen stabilises
-//! and `criterion` is added to dev-dependencies.  For now this smoke test
-//! ensures the encode/decode paths are functional and not pathologically
-//! slow.
+//! The Criterion benchmarks live in `sbe/benchmarks`.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]

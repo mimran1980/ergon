@@ -9,7 +9,7 @@ use ergo_aeron_cluster::cluster_codec_types::{
 };
 use ergo_aeron_cluster::{AeronCluster, ClusterError};
 
-use crate::market::Level;
+use crate::market::L2Snapshot;
 use crate::normalized_app::{
     AppMessageEncoder, AppMessageFixedFields, Decimal, L2BookEncoder, L2BookFixedFields, Source,
     sbe_rt,
@@ -122,7 +122,7 @@ impl ClaimIngress for AeronClusterIngress<'_> {
     }
 }
 
-/// Publishes L2 snapshots via try_claim-shaped ingress.
+/// Publishes complete L2 images (never deltas) via try_claim-shaped ingress.
 pub struct ClusterBookPublisher<I: ClaimIngress> {
     ingress: I,
 }
@@ -140,16 +140,23 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
         &self.ingress
     }
 
-    /// Publish one L2 book: SessionMessageHeader (via claim) + AppMessage(L2Book).
-    pub fn publish_l2_snapshot(
+    /// Publish one complete L2 image: SessionMessageHeader (via claim) +
+    /// AppMessage(L2Book) carrying the snapshot's epoch and sequence.
+    /// Nothing ties `snapshot.epoch` to the header's leadership term: stamp it
+    /// with the ingress's current term, or followers reject it as stale.
+    pub fn publish_snapshot(
         &mut self,
-        symbol: &str,
-        sequence: u64,
-        exchange_ts_ns: u64,
+        snapshot: &L2Snapshot,
         receive_ts_ns: u64,
-        bids: &[Level],
-        asks: &[Level],
     ) -> PublishOutcome {
+        let L2Snapshot {
+            epoch,
+            sequence,
+            ref symbol,
+            exchange_ts_ns,
+            ref bids,
+            ref asks,
+        } = *snapshot;
         let inner_len = L2BookEncoder::compute_encoded_length_with_message_header(
             bids.len(),
             asks.len(),
@@ -174,6 +181,7 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
                             exchange_timestamp: exchange_ts_ns,
                             receive_timestamp: receive_ts_ns,
                             sequence,
+                            epoch,
                         })
                         .bids(bids.len() as u16, |g| {
                             for l in bids {
@@ -225,7 +233,8 @@ pub fn app_payload(frame: &[u8]) -> Option<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::market::WireDec;
+    use crate::follower::decode_snapshot;
+    use crate::market::{Level, WireDec};
 
     fn lvl(p: i64, s: i64) -> Level {
         Level {
@@ -237,9 +246,16 @@ mod tests {
     #[test]
     fn try_claim_publish_writes_session_header_and_app_payload()
     -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot = L2Snapshot {
+            epoch: 7,
+            sequence: 1,
+            symbol: "BTCUSDT".to_owned(),
+            exchange_ts_ns: 1_000,
+            bids: vec![lvl(100, 1)],
+            asks: vec![lvl(101, 2)],
+        };
         let mut pubr = ClusterBookPublisher::new(RecordingClaimIngress::new(7, 42));
-        let o =
-            pubr.publish_l2_snapshot("BTCUSDT", 1, 1_000, 1_100, &[lvl(100, 1)], &[lvl(101, 2)]);
+        let o = pubr.publish_snapshot(&snapshot, 1_100);
         assert_eq!(o, PublishOutcome::Published);
         let frames = &pubr.ingress().committed;
         assert_eq!(frames.len(), 1);
@@ -255,6 +271,8 @@ mod tests {
         let payload = app_payload(frame).expect("payload");
         assert!(payload.len() > 8);
         assert_eq!(u16::from_le_bytes([payload[2], payload[3]]), 1);
+        // Epoch and sequence travel in the payload, not only in the header.
+        assert_eq!(decode_snapshot(payload)?, snapshot);
         Ok(())
     }
 }

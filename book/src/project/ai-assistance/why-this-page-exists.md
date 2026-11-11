@@ -23,8 +23,8 @@ a coherent implementation of the wrong mental model. The code may be clean,
 consistent, documented, and comprehensively wrong about one domain invariant.
 That changes how it should be reviewed.
 
-This page therefore exists so that an engineer—especially one responsible for
-money—can make an informed decision. Do not infer quality from the amount of
+This page therefore exists so that an engineer, especially one responsible for
+money, can make an informed decision. Do not infer quality from the amount of
 code, the fluency of the documentation, or the fact that tests are green. Look
 at the verification evidence, the remaining trust boundaries, and the
 experimental status.

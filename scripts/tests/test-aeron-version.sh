@@ -306,4 +306,19 @@ sample_manifest "$dir" vendor/crates/rusteron-client
 expect_fail "sample lock bundling another Aeron" "$dir" \
     'version 1.54.0     rusteron-client 0.2.12 (samples/demo/Cargo.lock)' 'Aeron versions disagree: 1.53.3, 1.54.0'
 
-echo "test-aeron-version: PASS (7 consistent fixtures pass; 25 drifts caught)"
+# A directory git ignores (scratch copies of old checkouts) is not part of the
+# tree: the same stale lock inside it does not fail the check, and is not read.
+dir=$(fixture ignored)
+printf 'scratch/\n' >"$dir/.gitignore"
+mkdir -p "$dir/scratch/old/src"
+: >"$dir/scratch/old/src/lib.rs"
+crate "$dir/scratch/old/vendor" rusteron-client 0.2.12 1.54.0
+printf '[package]\nname = "old"\nversion = "0.1.0"\nedition = "2021"\npublish = false\n\n[workspace]\n\n[dependencies]\nrusteron-client = { path = "vendor/crates/rusteron-client" }\n' >"$dir/scratch/old/Cargo.toml"
+cargo generate-lockfile --offline --quiet --manifest-path "$dir/scratch/old/Cargo.toml"
+expect_pass "stale lock in a directory git ignores" "$dir"
+if grep -F -q 'scratch/' <<<"$out"; then
+    echo "an ignored directory's lock was read: $out" >&2
+    exit 1
+fi
+
+echo "test-aeron-version: PASS (8 consistent fixtures pass; 25 drifts caught)"

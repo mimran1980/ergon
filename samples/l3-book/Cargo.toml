@@ -3,7 +3,7 @@ name = "l3-book"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "L3 order book sample — nested groups encode/decode with dummy data"
+description = "L3 order book sample: nested groups encoded and decoded with dummy data"
 
 # Build-dep only: generated codecs embed sbe_rt; no runtime ergo-sbe link.
 [dependencies]

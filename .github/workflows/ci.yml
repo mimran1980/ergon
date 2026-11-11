@@ -37,18 +37,23 @@ jobs:
           bash scripts/tests/test-ci-network-and-coverage.sh
           bash scripts/tests/test-repository-hygiene.sh
           bash scripts/tests/test-bench-historic.sh
+          bash scripts/tests/test-bench-ab.sh
           bash scripts/tests/test-stale-deny-ignores.sh
+          bash scripts/tests/test-no-grep-q-pipefail.sh
           bash scripts/tests/test-cluster-ergo-sbe-features.sh
           bash scripts/tests/test-book-content.sh
           bash scripts/tests/test-generated-book.sh
           bash scripts/tests/test-rerun-if-changed.sh
           bash scripts/tests/test-aeron-version.sh
+          bash scripts/tests/test-workflow-paths.sh
+          bash scripts/tests/test-fix-sbe-conformance-pin.sh
           ./scripts/check-test-policy.sh
           ./scripts/check-ci-network-and-coverage.sh
           ./scripts/check-mutation-config.sh
           ./scripts/check-stale-deny-ignores.sh
           ./scripts/check-cluster-ergo-sbe-features.sh
           ./scripts/check-rerun-if-changed.sh
+          ./scripts/check-workflow-paths.sh
 
   lint:
     needs: policy
@@ -99,6 +104,11 @@ jobs:
         run: ./scripts/check-book-content.sh
       - name: Generated book pages unedited (hashes, manifest, SUMMARY)
         run: ./scripts/check-generated-book.py
+      # GitHub's runners ship Node.js; the check fails, not skips, without it.
+      - name: Book animations (embeds, modules, node --check, offline, citations)
+        run: ./scripts/check-book-anim.py
+      - name: Performance page matches its benchmark artifacts
+        run: python3 -I scripts/generate-performance-page.py --check && python3 -I scripts/tests/test-performance-page.py
       - name: sbe-tool benchmark comparators match upstream
         run: ./scripts/regenerate-sbe-benchmark-reference.sh --check
       # Self-test of the release's fail-closed evidence packaging. This one had
@@ -388,10 +398,8 @@ jobs:
       - name: unit lane (scripts/check.sh --unit)
         run: scripts/check.sh --unit
 
-      # The Azure latency lab with no cloud: azure-vm.sh against fake az and
-      # ssh (dry plan, teardown on every exit), lib.sh and vm.sh on fixtures,
-      # and the gap probe's statistics.
-      - name: latency lab tests (lab/test/test-lab.sh)
-        run: bash lab/test/test-lab.sh
+      # lab/lib.sh is sourced by an external AWS lab: its output shape is a contract.
+      - name: lab quiet-settings test (lab/test/test-lib.sh)
+        run: bash lab/test/test-lib.sh
       - name: gap probe unit tests
         run: cargo test --manifest-path lab/gapprobe/Cargo.toml

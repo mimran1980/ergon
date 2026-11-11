@@ -1,18 +1,18 @@
-# App Types on Composites
+# App types on composites
 
 SBE composite types like `Decimal { mantissa, exponent }` have a fixed wire
-layout. Mapping them to Rust domain types is done at configuration time — no
-hand-rolled per-field converters needed.
+layout. Mapping them to Rust domain types is done at configuration time, with no
+hand-rolled per-field converters.
 
-**Option A — generic converter (`with_conversion`):** the generated codec
+Option A, generic converter (`with_conversion`): the generated codec
 emits `price_from<T: TryToSbe<Decimal>>()` and `price_as<T: TryFromSbe<Decimal>>()`.
 You implement the trait for any app type. One wire type, many app types.
 
-**Option B — concrete mapping (`with_domain_type`):** the generated codec
+Option B, concrete mapping (`with_domain_type`): the generated codec
 emits `price(rust_decimal::Decimal)?` and `price()? -> rust_decimal::Decimal`.
 Exactly one Rust type per wire type. The trait impls are generated for you.
 
-**Option C — generated mapping (`with_enum_mapping`, `with_composite_mapping`):**
+Option C, generated mapping (`with_enum_mapping`, `with_composite_mapping`):
 for an enum or composite whose application counterpart has the same shape,
 ergo-sbe writes the `TryFromSbe` / `TryToSbe` impls too. See below.
 
@@ -48,7 +48,7 @@ closure. A domain DTO's `encode` and `encode_from` report the same refusal as
 in each group on the way (`fills[1].leg`) and the `MappingError` itself.
 
 **Enum** (`EnumMapping`). A schema variant maps to the application variant of
-the same generated name (`sellShort` → `SellShort`) unless renamed. Both
+the same generated name (`sellShort` maps to `SellShort`) unless renamed. Both
 impls are exhaustive `match`es, so an application enum that lacks a schema
 variant, or has one the schema lacks, does not compile.
 
@@ -57,7 +57,7 @@ from the composite's getters, `TryToSbe` calls the composite's `new`; a
 member fills the field of the same snake-case name unless renamed. Constant
 members have no field (they are not on the wire). An optional scalar member is
 an `Option` field: `None` writes the member's null value, and `Some` of the
-null value — which would read back as `None` — is refused. A member whose enum
+null value, which would read back as `None`, is refused. A member whose enum
 or composite has its own generated mapping uses that mapping's application
 type (`price: app::Px`, `side: app::Side` above); every other member keeps its
 generated wire type. A struct missing a member's field, or with a field no
@@ -86,12 +86,12 @@ valid frame that leaves the field out failing to decode.
 ## Optional composites with a null image
 
 A composite member itself can carry `presence="optional"` with a schema
-`nullValue` — e.g. a `PriceNull9`-style Decimal whose `mantissa` is optional
-while `exponent` stays constant. That member decodes as `Option<i64>`
+`nullValue` (for example a `PriceNull9`-style Decimal whose `mantissa` is optional
+while `exponent` stays constant). That member decodes as `Option<i64>`
 (checked against the wire null sentinel), not a bare `i64`. This is distinct
 from a composite *field* gated by `sinceVersion` (which the whole composite
 accessor wraps in `Option<Decoder>`), and from a composite with no `nullValue`
-anywhere (which has no null image to check, so it decodes as a plain value —
+anywhere (which has no null image to check, so it decodes as a plain value;
 see [with_conversion vs with_domain_type](../configuration/conversion-vs-domain.md)).
 
 Because the wire null sentinel is not a valid `rust_decimal::Decimal`, the
@@ -102,5 +102,5 @@ silently decoding the sentinel as a huge/wrong number:
 {{#include ../../../../sbe/tests/baseline_test.rs:optional_composite_null_image}}
 ```
 *(From `optional_composite_member_null_image_roundtrip` in
-`sbe/tests/baseline_test.rs` — a real generated-and-compiled test, not a
+`sbe/tests/baseline_test.rs`, a real generated-and-compiled test, not a
 standalone snippet.)*

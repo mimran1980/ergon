@@ -1,8 +1,12 @@
-# L3 Order Book
+# L3 order book
 
-Deep nested / ragged L3 order-book sample for **ergo-sbe**. `publish = false`.
+Deep nested / ragged L3 order-book sample for ergo-sbe. `publish = false`.
 
 ## Conversion style: `with_domain_type` only
+
+The comparison of `with_domain_type` and `with_conversion` is
+[with_conversion vs with_domain_type](../sbe/configuration/conversion-vs-domain.md).
+This sample uses only `with_domain_type`.
 
 ```rust,no_run
 {{#include ../../examples/conversion-config.rs:with_domain_type}}
@@ -17,20 +21,20 @@ let p: rust_decimal::Decimal = dec.price()?;
 let ts: DateTime<Utc> = dec.exchange_timestamp()?;
 ```
 
-`with_domain_type` **already enables conversion** for that selector. Do not also
-call `with_conversion(Decimal)` here — it would not change the surface.
+`with_domain_type` already enables conversion for that selector. Do not also
+call `with_conversion(Decimal)` here; it would not change the surface.
 
 | Need | Use |
 |------|-----|
-| Concrete `price() -> Decimal` | **This sample** (`with_domain_type`) |
+| Concrete `price() -> Decimal` | This sample (`with_domain_type`) |
 | Generic `price_as::<T>()` / app adapters | [Exchange Example](exchange-example.md) (`with_conversion`) |
 | Side-by-side both styles | [SBE Feature Tour](sbe-feature-tour.md) |
 
 ## Encoding: size exactly, then write
 
 Nothing here guesses a buffer size. The staged `L3BookEncodedLength` builder
-walks the same shape the encoder will write — `bids_ragged` with a nested
-`orders` count per level, then `asks_ragged`, then the var-data `symbol` —
+walks the same shape the encoder will write (`bids_ragged` with a nested
+`orders` count per level, then `asks_ragged`, then the var-data `symbol`)
 and returns the exact header-inclusive length:
 
 ```rust,ignore
@@ -49,13 +53,13 @@ one chained expression:
 ```
 
 Both functions end with `encoded_length_with_header()`, and the tests assert
-the two agree — a length that does not match the bytes written is a bug in the
+the two agree: a length that does not match the bytes written is a bug in the
 sizing API, not something to paper over with a larger buffer.
 
 `symbol` declares `characterEncoding="ASCII"` in the schema, so the generated
 encoder carries a `symbol_as_str(&str)` setter alongside the raw
 `symbol(&[u8])` one. Every caller here always holds text, so `encode_book`
-takes `symbol: &str` and writes through `symbol_as_str` — the ASCII check
+takes `symbol: &str` and writes through `symbol_as_str`. The ASCII check
 runs before any byte is written rather than leaving it to the caller. Both
 setters write identical bytes for the same text; reach for the raw
 `symbol(&[u8])` setter only when the caller genuinely starts from bytes.
@@ -70,6 +74,19 @@ assert_eq!(len, actual);
 See [Exact sizing](../sbe/feature-tour/exact-sizing.md) and
 [Buffer sizing](../sbe/core-concepts/buffer-sizing.md).
 
+```mermaid
+flowchart LR
+    H["header and fixed fields"] --> B["bids"]
+    B --> BO["orders, per bid"]
+    BO --> A["asks"]
+    A --> AO["orders, per ask"]
+    AO --> S["symbol"]
+```
+
+`symbol` is last. A random-access read of it walks every order on the way
+there, then can walk them again. A staged decode visits each tail once, in
+this order, and cannot name `symbol` any earlier.
+
 ## Decoding: random access or one staged chain
 
 `L3Book` is the shape that makes the [decoder lanes](../sbe/feature-tour/decode-stages.md)
@@ -79,9 +96,9 @@ walking past every order of every level.
 
 `tests/l3_tests.rs` encodes one ragged fixture and decodes it through the
 generated lanes, asserting they produce an identical snapshot. Note what the snapshot holds:
-the schema's **domain** types (`rust_decimal::Decimal`, `DateTime<Utc>`,
-`bool`) because that is what `with_domain_type` generates, and a **borrowed**
-`&'a str` for `symbol` — copying it would defeat the flyweight.
+the schema's domain types (`rust_decimal::Decimal`, `DateTime<Utc>`,
+`bool`) because that is what `with_domain_type` generates, and a borrowed
+`&'a str` for `symbol`, since copying it would defeat the flyweight.
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:lane_snapshot}}
@@ -91,17 +108,17 @@ the schema's **domain** types (`rust_decimal::Decimal`, `DateTime<Utc>`,
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:lane_fixture}}
 ```
 
-### Random access — any order, `Sync`, re-walks
+### Random access: any order, `Sync`, re-walks
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_random_access}}
 ```
 
-Note it reads `symbol` — the *last* tail — first, then goes back to the
+Note it reads `symbol` (the *last* tail) first, then goes back to the
 groups. Only a lane that resolves each tail independently can do that. The
 cost is that every dynamic-tail getter re-walks from the fixed block.
 
-### Staged — wrong order is a compile error
+### Staged: wrong order is a compile error
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_staged}}
@@ -110,19 +127,19 @@ cost is that every dynamic-tail getter re-walks from the fixed block.
 `into_symbol` exists only on the stage reached after `asks` completes, so the
 out-of-order read above is not expressible here. One wire-order pass.
 
-### Memoized — any order, each boundary walked once
+### Memoized: any order, each boundary walked once
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_memoized}}
 ```
 
-Same getter names as random access. Read in the order shown — `symbol`, then
-back to the groups, then `symbol` again — the base lane re-walks every bid and
+Same getter names as random access. Read in the order shown (`symbol`, then
+back to the groups, then `symbol` again), the base lane re-walks every bid and
 ask order to return to `symbol`; this lane reuses the boundary it already
-found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
+found. Build it once and pass `&L3BookMemoizedDecoder` around: calling
 `.memoized()` in each function creates a separate empty cache.
 
-### Ordered — one spelling, all the way down
+### Ordered: one spelling, all the way down
 
 ```rust,ignore
 {{#include ../../../samples/l3-book/tests/l3_tests.rs:decode_ordered}}
@@ -130,7 +147,7 @@ found. Build it **once** and pass `&L3BookMemoizedDecoder` around: calling
 
 Compare it with the staged lane above: there `bids` takes a visit closure and
 `orders` is an iterator, because those two shapes genuinely differ. Here every
-message-level tail — fixed block, both groups, then the var-data — reads the
+message-level tail (fixed block, both groups, then the var-data) reads the
 same way, and each entry callback also receives an `EntryInfo` carrying
 `index`, the wire-declared `count`, and the acting `block_length`. Count and
 block length come from the group decoder the staged walk already opened; the
@@ -138,10 +155,10 @@ index advances with the walk. Using `info.count` to reserve space needs no
 entry scan. Empty groups never deliver `EntryInfo`; `<group>_count()` on the
 ordered stage still reports the declared count.
 
-**It recurses.** A `bids` level carries its own tail — the nested `orders`
-group — so the level decoder has an `ordered()` too, and the callback above
+**It recurses.** A `bids` level carries its own tail (the nested `orders`
+group), so the level decoder has an `ordered()` too, and the callback above
 uses it. The spelling does not change at the entry boundary, and returning
-that nested walk is the completion the parent closure owes — no `.done()` on
+that nested walk is the completion the parent closure owes; there is no `.done()` on
 the way out. An entry
 with no tails of its own (a fixed-stride entry) has nothing to order and gets
 no lane. An entry whose existing getter is named `ordered` also keeps its
@@ -180,10 +197,10 @@ pins the same property for generated decode under a counting allocator.
 
 | You are doing | Lane |
 |---------------|------|
-| Reading a couple of fields, or one tail | random access — smallest, `Sync` |
-| Decoding the whole book in wire order | staged `into_*` — one traversal, compile-time tail order |
+| Reading a couple of fields, or one tail | random access (smallest, `Sync`) |
+| Decoding the whole book in wire order | staged `into_*` (one traversal, compile-time tail order) |
 | Several helpers reading multiple tails, same thread | `.memoized()` |
-| Walking whole messages with uniform code, or needing entry position | `.ordered()` — one callback per tail, `EntryInfo` per entry |
+| Walking whole messages with uniform code, or needing entry position | `.ordered()` (one callback per tail, `EntryInfo` per entry) |
 
 Full comparison, including how each differs from sbe-tool's single `limit`
 cursor: [Decoder lanes](../sbe/feature-tour/decode-stages.md).
@@ -193,7 +210,7 @@ cursor: [Decoder lanes](../sbe/feature-tour/decode-stages.md).
 | Path | Role |
 |------|------|
 | `schemas/l3-book.xml` | Nested bids/asks, orders, var-data tails |
-| `build.rs` | `generate(..)?.write_to(..)` into `src/generated/` + domain objects / `with_domain_type` (**build-dep only**) |
+| `build.rs` | `generate(..)?.write_to(..)` into `src/generated/` + domain objects / `with_domain_type` (build-dep only) |
 | `src/lib.rs` | `#[path = "generated/l3_codec.rs"]` + EncodedLength helpers |
 | `src/main.rs` | Runnable demos |
 | `tests/l3_tests.rs` | Round-trips, exact-length proofs, and the four-lane decode comparison |

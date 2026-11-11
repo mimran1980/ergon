@@ -19,7 +19,7 @@ if [ -n "$tracked_targets" ]; then
   errors=$((errors + 1))
 fi
 
-# Explicitly deleted artifacts — do not re-create.
+# Explicitly deleted artifacts, do not re-create.
 forbidden=(
   package-lock.json
   bors.toml

@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:761351f0bc874b9c6c8374af62cd2e8f92b81caebb88028f34c7992b094a857d -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:4a8863e07dfdcbb1bbe94bc8a40a561a0d75a70d37789f0d18a99b515c3e836a -->
 # Backends and Configuration
 
 A backend is the kernel interface the `Driver` waits and reads with. It is
@@ -11,6 +11,7 @@ configuration, so one binary can run with each. Which to pick:
 | `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | no |
 | `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | yes |
 | `fstack-spin` | no kernel: one [F-Stack](#fstack-spin-tcp-on-f-stack) pass every poll, then its kqueue | yes, F-Stack's DPDK queue | no (a NIC of its own) |
+| `smoltcp-spin` | no kernel: one [smoltcp](#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk) pass every poll (one RX burst, the stack, one TX burst), then its ready sockets | yes, the DPDK queue, on the loop's thread | no (a NIC of its own) |
 
 - **None sleeps in the kernel.** The first three are the kernel backends
   the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` ran
@@ -506,6 +507,11 @@ flowchart TD
     SQ --> SQ1["SQPOLL kernel thread"]
     SQ1 --> SQ2["polls each NIC queue"]
     SQ2 --> SQ3["NAPI pass per queue"]
+
+    P --> DP["fstack-spin, smoltcp-spin"]
+    DP --> DP1["one RX burst from the DPDK queue"]
+    DP1 --> DP2["the stack in the process, no syscall"]
+    DP2 --> DP3["ready sockets only, no interrupt"]
 ```
 
 `recv-busy,per_queue` sits between the first two: one busy-polled read
@@ -533,17 +539,80 @@ only the ready sockets. Its NIC polling stops at the queue count.
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
 
-Graviton fair run, market data, `irqcore`. Pass = 1 ÷ the loop's passes per
-second (a mean), two rounds. The longest pass is not attributed to a cause.
+Graviton fair run (`c8g.2xlarge` receiver, Neoverse V2, ENA with
+moderation off, NIC interrupts on CPU 1: `irqcore`), market data. Pass = 1
+÷ the loop's passes per second (a mean), two rounds. The longest pass is
+not attributed to a cause. These passes predate the send set (above).
 
-| backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets |
-|---|---|---|---|
-| `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs |
-| `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs |
-| `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
-| `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
+| backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets | where the NIC is polled |
+|---|---|---|---|---|
+| `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs | nowhere: the interrupt and softirq on CPU 1 |
+| `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs | the SQPOLL thread, on another CPU |
+| `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs | inside the pass, once per queue |
+| `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs | inside the pass, once per socket |
+| `fstack-spin`, `smoltcp-spin` | not measured | not measured | not measured | inside the pass, one RX burst |
 
 Data: `loop-counters.md`.
+
+### A short pass is not a low latency
+
+`epoll-spin`'s pass is short because it does the least work in the pass,
+not because messages arrive sooner. A message's latency is how long it
+waits before the pass that reads it, plus that pass:
+
+| backend | why its pass is that long | what a message waits for |
+|---|---|---|
+| `epoll-spin` | it never polls the NIC: one `epoll_wait(0)`, reads only ready sockets | the NIC's interrupt, then the softirq on another CPU, before epoll reports the socket ready |
+| `uring-sqpoll` | the loop only reaps completions; the polling is on a second CPU, which the 27 ns does not count | the SQPOLL thread's next pass over the queue |
+| `recv-busy,per_queue` | each queue read runs one NAPI pass: the interrupt's work, done in the loop | the next pass, no interrupt |
+| `recv-busy` | the same NAPI pass, once per socket, idle or not | its socket's turn: up to a whole (long) pass |
+
+The same run's WebSocket order round trip, µs, p50 / p99 / max
+(fair run):
+
+| backend | 1 socket | 64 sockets |
+|---|---|---|
+| `epoll-spin`, interrupts on CPU 1 | 38.9–39.2 / 47.0–47.4 / 131–145 | 40.2–40.4 / 51.9–53.9 / 143–146 |
+| interrupt backends (`epoll-spin`, mio), interrupts on the loop's CPU | 37.9–39.0 / 45.9–47.2 / 135–161 | 40.0–41.2 / 68.3–80.6 / 155–185 |
+| `uring-sqpoll` | 36.5–37.0 / 45.4–45.5 / 122–262 | 40.0–40.1 / 53.7–54.8 / 110–131 |
+| `recv-busy,per_queue` | 36.8–36.9 / 44.7–45.3 / 125–138 | 44.3–44.7 / 61.7–62.2 / 134–145 |
+| `recv-busy` | 36.0–36.2 / 43.9–46.0 / 148–284 | 78.1–78.3 / 118.7–119.5 / 197–265 (could not hold the rate) |
+
+So `epoll-spin` is not always better:
+
+- **At 1 socket the NIC pollers lead** by 1.7–3.3 µs at p50: they skip
+  the interrupt that `epoll-spin` waits for.
+- **From 4 sockets `epoll-spin` and `uring-sqpoll` are level**, and both
+  beat `recv-busy` (which grows with sockets) and `per_queue` (about
+  4–5 µs behind at 16–64).
+- **`epoll-spin` needs node settings a pod cannot make:** moderation off
+  and the NIC's interrupts on a core of their own. With the interrupts on
+  the loop's CPU its p99 rose to 62–87 µs at 16–64 sockets.
+  `uring-sqpoll` needs a second CPU instead; `per_queue` needs neither.
+- **Maxima do not separate them.** The longest-pass column is the loop's
+  worst iteration, not a latency, and none has a recorded cause.
+
+### Kernel bypass: `fstack-spin` and `smoltcp-spin`
+
+One poll reads one RX burst from the DPDK queue on the loop's own thread
+(smoltcp: up to 32 frames), runs the stack in the process, then reads only the
+ready sockets. No system call and no interrupt anywhere on the path, and
+no second CPU.
+
+| | `fstack-spin` | `smoltcp-spin` |
+|---|---|---|
+| NIC poll per pass | one `ff_run_once`: RX burst, FreeBSD's stack, timers, TX | one RX burst, smoltcp's ingress and egress, one TX burst |
+| grows with sockets | the kqueue reports ready sockets only | smoltcp's egress visits every socket each pass (in the process, no system call); the ready scan runs only after a state change |
+| pass time | not measured | not measured |
+
+What was measured is the round trip, one rep, echo pinned, no A/A arm
+([ergon-io on DPDK](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)):
+against kernel `epoll-spin`, smoltcp's no-loss p50 is 3.0–8.9 µs lower on
+TCP and 3.8–7.5 µs lower on UDP; F-Stack WebSocket's is 1.0–9.8 µs lower,
+on `c7i.4xlarge` and `c8g.2xlarge`, 1 and 8 connections. Neither was run
+past 8 connections, so the socket-count rows of
+[choosing a backend](overview.md#choosing-a-backend) have no bypass
+column past 8.
 
 ## Find the crossover on your own host
 
@@ -648,5 +717,6 @@ Why it is not a backend:
    that no ergon-io arm showed. So mio is not ranked on market data. Data:
    `loop-counters.md`, "mio receive-window pressure".
 
-**Revisit if** someone needs the `Driver` on macOS or Windows for its own
-sake, not for latency.
+The `Driver` itself now runs on macOS for development (`epoll-spin` on
+kqueue, none of the Linux tuning), so that need is met without mio.
+Windows: not supported.

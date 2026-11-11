@@ -39,7 +39,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (verified on EKS 1.36). nodeadm writes `/etc/kubernetes/kubelet/config.json` and the
+**EKS AL2023** (verified on EKS 1.36): nodeadm writes `/etc/kubernetes/kubelet/config.json` and the
 `NodeConfig` kubelet settings as the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory:
@@ -63,7 +63,7 @@ Without `kubeletConfigDir` every hot create on EKS AL2023 is refused.
 
 | key | default | effect |
 |---|---|---|
-| `config.sharedCpus` | `"4"` | **required.** Inside `reservedSystemCPUs`, not an IRQ CPU |
+| `config.sharedCpus` | `"4"` | Required. Inside `reservedSystemCPUs`, not an IRQ CPU |
 | `config.namespaces` | `[trading]` | allowlist; empty refuses every opt-in |
 | `config.oversubscription` | `1` | capacity = `len(sharedCpus) × 1000 ×` this |
 | `image.digest` | empty | `sha256:…` renders `repository@digest` |
@@ -73,6 +73,20 @@ Without `kubeletConfigDir` every hot create on EKS AL2023 is refused.
 | `hostContract.kubeletConfig.path` | `/var/lib/kubelet/config.yaml` | the kubelet config file on the node |
 | `hostContract.kubeletConfigDir.enabled` | `false` | mount the kubelet's `--config-dir` read-only (a `Directory`: a missing path keeps the pod from starting) and merge its `*.conf` drop-ins as the kubelet does |
 | `hostContract.kubeletConfigDir.path` | `/etc/kubernetes/kubelet/config.json.d` | the drop-in directory on the node (the EKS AL2023 path) |
+
+## Plugin outages
+
+While the plugin is down, a kubelet restart shrinks every running exclusive
+container's cpuset to its exclusive CPUs, and helpers run there until the
+plugin is back. `required-plugins` only refuses creates. To detect it, start
+the app as `ergon-cpus --ready-addr :8086 -- <app>` and give the container an
+`httpGet` readiness probe on `:8086/placement`. The pod leaves Ready while the
+shared CPUs are missing from `cpuset.cpus.effective`. It is Ready again only
+once the plugin has re-widened the cpuset. On the node, alert on
+`ergon_shared_cpus_rewidened_total{event="sync"} > 0`, not on `increase()`:
+the counter is per plugin process and the re-widen usually lands before the
+new plugin pod's first scrape. `--ready-addr` is not
+in 0.1.3: it ships in the next release, or build `ergon-cpus` from source.
 
 Every value: `values.yaml` (`helm show values`). Node setup, pod shape,
 admission, failure modes and limits:

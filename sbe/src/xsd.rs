@@ -122,12 +122,12 @@ pub fn validate_against_sbe_xsd(xml: &str) -> Result<(), XsdValidationError> {
 
     // `id` is required: without it there is no schema identity to encode.
     //
-    // `version` is NOT required here even though the published XSD marks it
+    // `version` is not required here even though the published XSD marks it
     // `use="required"`. sbe-tool's own test resources ship schemas that omit
     // it (e.g. `basic-schema.xml`, `new-order-single-schema.xml`), so the
     // reference implementation does not enforce it either, and `parse`
-    // defaults it to 0. Enforcing it would reject upstream-mirrored fixtures
-    // — a validator stricter than both the parser and the reference tool only
+    // defaults it to 0. Enforcing it would reject upstream-mirrored fixtures:
+    // a validator stricter than both the parser and the reference tool only
     // produces false positives.
     if root.attribute("id").is_none() {
         return Err(XsdValidationError::MissingAttribute { attr: "id" });
@@ -158,10 +158,10 @@ fn check_attrs(
     allowed: &[&str],
 ) -> Result<(), XsdValidationError> {
     for attr in node.attributes() {
-        // Any namespaced attribute is outside the SBE grammar — `xsi:*`,
-        // `xi:*`, and vendor extensions alike (Binance ships `mbx:exponent`).
-        // Note `attr.name()` is the LOCAL name, so a `contains(':')` test
-        // never fires; the namespace is what identifies these.
+        // Any namespaced attribute is outside the SBE grammar: `xsi:*`,
+        // `xi:*`, and vendor extensions such as `mbx:exponent`.
+        // `attr.name()` is the local name, so a `contains(':')` test never
+        // fires; the namespace is what identifies these.
         if attr.namespace().is_some() {
             continue;
         }

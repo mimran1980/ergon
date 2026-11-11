@@ -1,8 +1,8 @@
-# Depend on the Generator
+# Depend on the generator
 
-**Minimal product path** — codegen only; generated codecs embed their own
-`sbe_rt` and do **not** link `ergo-sbe` into the application. Schema parse
-errors render a source snippet (line + span) by default:
+The minimal path is codegen only. Generated codecs embed their own
+`sbe_rt` and do not link `ergo-sbe` into the application. Schema parse
+errors render a source snippet (line and span) by default:
 
 ```toml
 [build-dependencies]
@@ -10,8 +10,8 @@ ergo-sbe = "0.1"
 # no [dependencies] ergo-sbe
 ```
 
-**Convenience path** — also pull `ergo-sbe` as a normal dependency when you use
-`sbe_mod!` / `include_sbe!` (macros expand in the app crate):
+For convenience, also add `ergo-sbe` as a normal dependency when you use
+`sbe_mod!` or `include_sbe!` (the macros expand in the app crate):
 
 ```toml
 [build-dependencies]

@@ -1,4 +1,4 @@
-# Schema Descriptions → Rustdoc
+# Schema descriptions as rustdoc
 
 ```xml
 <field name="serialNumber" id="1" type="uint64" description="VIN-style serial"/>

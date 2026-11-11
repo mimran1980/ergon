@@ -153,15 +153,14 @@ func TestHelmChartRender(t *testing.T) {
 	def := helmOut(t, "template", "rel", chart)
 	cfg, raw := configFrom(t, def)
 	t.Log("parsed by config.Parse")
-	if cfg.SchedFifo != SchedFifoOff || cfg.Ptp != "off" || cfg.SeccompIOUring {
-		t.Fatalf("seccomp/ptp/schedFifo must stay off, got fifo=%s ptp=%s seccomp=%v\n%s", cfg.SchedFifo, cfg.Ptp, cfg.SeccompIOUring, raw)
+	if cfg.Ptp != "off" || cfg.SeccompIOUring {
+		t.Fatalf("seccomp/ptp must stay off, got ptp=%s seccomp=%v\n%s", cfg.Ptp, cfg.SeccompIOUring, raw)
 	}
-	if !strings.Contains(raw, "ioUring: \"off\"") || !strings.Contains(raw, "schedFifo: \"off\"") || !strings.Contains(raw, "ptp: \"off\"") {
+	if !strings.Contains(raw, "ioUring: \"off\"") || !strings.Contains(raw, "ptp: \"off\"") {
 		t.Fatalf("off must be quoted\n%s", raw)
 	}
 	t.Log("seccomp.ioUring off")
 	t.Log("ptp off")
-	t.Log("schedFifo off")
 	if strings.Contains(raw, "cgroupRoot") {
 		t.Fatalf("cgroupRoot is not a config field\n%s", raw)
 	}
@@ -262,10 +261,10 @@ hostContract:
 	t.Log("parsed by config.Parse")
 	if cfg.Shared.List() != "0,1" || cfg.Rlimits.Memlock != "inf" || cfg.Rlimits.Nofile != "1048576" ||
 		cfg.Rlimits.RtPrio != "99" || cfg.Rlimits.Nice != "1" || cfg.HugepagesAeronDir != "/dev/hugepages/aeron" ||
-		cfg.SeccompIOUring || cfg.SchedFifo != SchedFifoOff || cfg.Ptp != "off" {
+		cfg.SeccompIOUring || cfg.Ptp != "off" {
 		t.Fatalf("supported values did not reach the parser: %+v\n%s", cfg, raw)
 	}
-	for _, key := range []string{"sharedCpus", "oversubscription", "namespaces", "defaultAffinity", "hookPath", "annotationOptIn", "metricsAddress", "devRoot", "seccomp", "ioUring", "seccompProfilePath", "schedFifo", "ptp", "hugepagesAeronDir", "rlimits", "memlock", "nofile", "rtPrio", "nice"} {
+	for _, key := range []string{"sharedCpus", "oversubscription", "namespaces", "defaultAffinity", "hookPath", "annotationOptIn", "metricsAddress", "devRoot", "seccomp", "ioUring", "seccompProfilePath", "ptp", "hugepagesAeronDir", "rlimits", "memlock", "nofile", "rtPrio", "nice"} {
 		if !strings.Contains(raw, key) {
 			t.Errorf("rendered config missing %s\n%s", key, raw)
 		}
@@ -318,6 +317,11 @@ hostContract:
 		t.Fatal("cgroupRoot must fail schema validation")
 	}
 	t.Log("cgroupRoot is not a config field")
+	fifo := exec.Command(helmBin(t), "template", "rel", chart, "--set-string", "config.schedFifo=off")
+	if err := fifo.Run(); err == nil {
+		t.Fatal("the removed schedFifo value must fail schema validation")
+	}
+	t.Log("schedFifo is refused")
 	create := exec.Command(helmBin(t), "template", "rel", chart,
 		"--set", "hostContract.kubeletOverrides.enabled=true",
 		"--set", "hostContract.kubeletOverrides.type=FileOrCreate")
@@ -349,7 +353,6 @@ config:
         memlock: "inf"
       seccomp:
         ioUring: "off"
-      schedFifo: "off"
       ptp: "off"
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -363,7 +366,7 @@ config:
 	if err != nil {
 		t.Fatalf("parsed by config.Parse via Resolve: %v\n%s", err, raw)
 	}
-	if wide.Shared.List() != "0,1" || wide.Rlimits.Memlock != "inf" || wide.SeccompIOUring || wide.SchedFifo != SchedFifoOff || wide.Ptp != "off" {
+	if wide.Shared.List() != "0,1" || wide.Rlimits.Memlock != "inf" || wide.SeccompIOUring || wide.Ptp != "off" {
 		t.Fatalf("profile wide: %+v", wide)
 	}
 	small, err := Resolve([]byte(raw), "small")

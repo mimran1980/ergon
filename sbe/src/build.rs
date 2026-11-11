@@ -1,8 +1,8 @@
-//! The generate front door: [`generate`], then write the result.
+//! Build-script entry point: [`generate`], then write the result.
 //!
 //! ```rust,no_run
-//! // build.rs — ergo_sbe::miette::Result renders schema errors with a source
-//! // snippet by default; Box<dyn std::error::Error> prints a raw Debug dump.
+//! // build.rs. ergo_sbe::miette::Result renders schema errors with a source
+//! // snippet; Box<dyn std::error::Error> prints a raw Debug dump.
 //! fn main() -> ergo_sbe::miette::Result<()> {
 //!     ergo_sbe::generate(
 //!         ergo_sbe::SchemaSource::file("schemas/messages.xml"),
@@ -21,7 +21,7 @@
 //!
 //! | Step | Call |
 //! |---|---|
-//! | Parse + generate one schema | [`generate`]`(source, config)` |
+//! | Parse and generate one schema | [`generate`]`(source, config)` |
 //! | Write into Cargo's `OUT_DIR` | [`GeneratedModuleSet::write_to_out_dir`] |
 //! | Write into a directory (e.g. `src/generated` for IDE navigation) | [`GeneratedModuleSet::write_to`] |
 //! | Several schemas sharing types | [`crate::parse`] each (consumers [`with_shared`](SchemaSource::with_shared)), [`Generator::generate_multi`], then write |
@@ -39,8 +39,8 @@ use crate::xml::{ParseError, SchemaSource, parse};
 ///
 /// Implements [`miette::Diagnostic`] so `fn main() -> miette::Result<()>` in a
 /// `build.rs` renders schema parse errors with a source snippet and span
-/// instead of a raw `Debug` dump. Plain `Box<dyn std::error::Error>` prints
-/// `{:?}` on failure — use `miette::Result` to get the readable form.
+/// instead of a raw `Debug` dump. A plain `Box<dyn std::error::Error>`
+/// prints `{:?}` on failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum BuildError {
@@ -85,12 +85,12 @@ fn io_err(action: &'static str, path: &Path, source: std::io::Error) -> BuildErr
 
 /// Parse one schema and generate its codec module in memory.
 ///
-/// `config.module_name` names the module (`"messages"` → `messages.rs`).
+/// `config.module_name` names the module: `"messages"` becomes `messages.rs`.
 /// Nothing is written: call [`GeneratedModuleSet::write_to_out_dir`] from a
 /// `build.rs`, [`GeneratedModuleSet::write_to`] for a fixed directory, or
 /// read [`GeneratedModuleSet::modules`] directly.
 ///
-/// Same as [`parse`] → [`Schema::from_ir`] → [`Generator::generate`].
+/// Same as [`parse`], then [`Schema::from_ir`], then [`Generator::generate`].
 ///
 /// # Errors
 ///
@@ -188,13 +188,13 @@ struct StagedWrite {
 /// Three phases: validate every basename first (no writes yet); stage every
 /// source to a unique sibling temp file; only once every temp file is
 /// written, back up existing destinations and promote the staged set. Any
-/// failure in staging or commit rolls back — restoring backups and removing
-/// promoted/temp files — before returning the path-aware [`BuildError::Io`].
+/// failure in staging or commit rolls back (restores backups, removes
+/// promoted and temp files) before returning the path-aware [`BuildError::Io`].
 /// A cleanup step that itself fails is reported in preference to the failure
-/// that triggered it: silently swallowing it would claim a rollback that left
+/// that triggered it: swallowing it would claim a clean rollback that left
 /// debris behind.
 ///
-/// The final step — deleting the backups of a *successful* commit — is past
+/// The final step, deleting the backups of a successful commit, is past
 /// the point of no return and does not roll back: the new outputs are
 /// installed and correct. It removes every backup it can and then fails the
 /// publication naming the first it could not, so success is never reported
@@ -210,15 +210,16 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
     // Phase 1: validate every basename before any write.
     let mut dests = Vec::with_capacity(modules.modules().len());
     for m in modules.modules() {
-        // Defense in depth: reject paths with directory components.
-        // Generated module paths must be simple basenames like "car.rs".
+        // The generator already validates module names; this guards the
+        // filesystem against a path that escapes `out`.
         let path_str = &m.path;
         if path_str.contains('/') || path_str.contains('\\') || path_str.contains("..") {
             return Err(BuildError::Generate(
                 crate::codegen::GenerateError::InvalidConfiguration {
                     option: "module_path".into(),
                     value: path_str.clone(),
-                    reason: "module path must be a plain .rs basename — no path separators".into(),
+                    reason: "module path must be a file name, without path separators or '..'"
+                        .into(),
                 },
             ));
         }
@@ -301,7 +302,7 @@ fn write_module_set(modules: &GeneratedModuleSet, out: &Path) -> Result<(), Buil
     }
 
     // Success: drop backups. The new outputs are installed and correct, so
-    // there is nothing to roll back — but a leftover `.bak` is debris. Remove
+    // there is nothing to roll back, but a leftover `.bak` is debris. Remove
     // every backup we can, then fail the publication naming the first we
     // could not, rather than report success with stray files.
     let mut backup_err = None;
@@ -340,8 +341,8 @@ fn remove_staged_temps(staged: &[StagedWrite]) -> Result<(), BuildError> {
     )
 }
 
-/// A promoted file that had NO backup did not exist before this call — remove
-/// it so a failed generation leaves no partial output.
+/// A promoted file with no backup did not exist before this call, so remove
+/// it: a failed generation must leave no partial output.
 fn remove_unbacked_promotions(
     promoted: &[&StagedWrite],
     backed_up: &[(PathBuf, PathBuf)],
@@ -358,9 +359,9 @@ fn remove_unbacked_promotions(
     )
 }
 
-/// Drain `results` and report the first failure. Deliberately *not*
-/// `try_fold`: short-circuiting would strand the rest of the debris behind
-/// one unremovable path.
+/// Drain `results` and report the first failure. Not `try_fold`:
+/// short-circuiting would strand the rest of the debris behind one
+/// unremovable path.
 fn first_err(results: impl Iterator<Item = Result<(), BuildError>>) -> Result<(), BuildError> {
     let mut first = None;
     for r in results {
@@ -407,12 +408,10 @@ fn restore_backed_up(backed_up: &[(PathBuf, PathBuf)]) -> Result<(), BuildError>
 
 /// Include a module written by [`GeneratedModuleSet::write_to_out_dir`].
 ///
-/// After `generate(source, GenerationConfig::new("messages"))?.write_to_out_dir()?`:
-/// `ergo_sbe::include_sbe!("messages");`
-///
-/// → [`samples/sbe-feature-tour/build.rs`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs)
-///
-/// Expands to `include!(concat!(env!("OUT_DIR"), "/messages.rs"))`.
+/// After `generate(source, GenerationConfig::new("messages"))?.write_to_out_dir()?`,
+/// `ergo_sbe::include_sbe!("messages");` expands to
+/// `include!(concat!(env!("OUT_DIR"), "/messages.rs"))`. See
+/// [`samples/sbe-feature-tour/build.rs`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/build.rs).
 #[macro_export]
 macro_rules! include_sbe {
     ($module:literal) => {
@@ -425,14 +424,16 @@ macro_rules! include_sbe {
 
 /// Declare a module that includes generated SBE codecs from `OUT_DIR`.
 ///
-/// Applies the usual `allow`s for generated code (snake/camel, unused, …).
+/// The module allows the lints generated code trips (naming, unused items,
+/// clippy).
 ///
-/// After build.rs generates `$OUT_DIR/messages.rs`:
-/// `ergo_sbe::sbe_mod!(messages);` → `mod messages { ... include!(.../messages.rs); }`
-/// `ergo_sbe::sbe_mod!(pub codecs);` → public module `codecs` → `codecs.rs`
-/// `ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");` → `car_bench.rs`
+/// | Call | Module | Includes |
+/// |---|---|---|
+/// | `ergo_sbe::sbe_mod!(messages);` | private `messages` | `$OUT_DIR/messages.rs` |
+/// | `ergo_sbe::sbe_mod!(pub codecs);` | public `codecs` | `$OUT_DIR/codecs.rs` |
+/// | `ergo_sbe::sbe_mod!(pub ergo_car = "car_bench");` | public `ergo_car` | `$OUT_DIR/car_bench.rs` |
 ///
-/// → [`samples/sbe-feature-tour/src/lib.rs`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs)
+/// See [`samples/sbe-feature-tour/src/lib.rs`](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs).
 #[macro_export]
 macro_rules! sbe_mod {
     ($name:ident) => {
@@ -558,8 +559,8 @@ mod tests {
     /// [`GeneratedModuleSet::write_to_out_dir`] only works inside a build
     /// script. Called anywhere else it must fail with
     /// [`BuildError::MissingOutDir`] rather than panicking or picking an
-    /// arbitrary directory — ergo-sbe has no build script of its own, so
-    /// `OUT_DIR` is genuinely unset here and the test needs no environment
+    /// arbitrary directory. ergo-sbe has no build script of its own, so
+    /// `OUT_DIR` is unset here and the test needs no environment
     /// mutation.
     #[test]
     fn write_to_out_dir_reports_missing_out_dir_outside_a_build_script()
@@ -869,7 +870,7 @@ mod tests {
 
     /// First generation into an empty directory: if staging the second
     /// module fails, the first module's temp file must be cleaned up and
-    /// neither destination must exist — a fresh generation either lands
+    /// neither destination must exist: a fresh generation either lands
     /// completely or not at all.
     #[test]
     fn generate_multi_staging_failure_rolls_back_to_no_outputs()
@@ -880,8 +881,8 @@ mod tests {
         fs::create_dir_all(&out)?;
 
         // Block the second module's ("orders") staging temp file with a
-        // pre-existing directory at that exact path — the same naming
-        // scheme write_module_set uses (same process, so the same pid).
+        // pre-existing directory at that exact path, named the way
+        // write_module_set names it (same process, so the same pid).
         let pid = std::process::id();
         let orders_temp = out.join(format!("orders.rs.tmp.{pid}.1"));
         fs::create_dir_all(&orders_temp)?;
@@ -929,7 +930,7 @@ mod tests {
     /// Regenerating over an existing output set: if the commit phase fails
     /// partway (backing up module two's destination), every pre-existing
     /// destination must come back byte-identical and no backup/temp debris
-    /// must remain — a failed regeneration must never leave a mixture of the
+    /// must remain: a failed regeneration must never leave a mixture of the
     /// old and new generated graphs.
     #[test]
     fn generate_multi_commit_failure_restores_pre_existing_outputs()
@@ -945,7 +946,7 @@ mod tests {
         fs::write(out.join("common_types.rs"), &original_common)?;
         fs::write(out.join("orders.rs"), &original_orders)?;
 
-        // Block module two's backup destination with a non-empty directory —
+        // Block module two's backup destination with a non-empty directory:
         // `fs::rename` onto that fails, forcing a commit-phase error after
         // staging has already succeeded for both modules.
         let pid = std::process::id();
@@ -977,7 +978,7 @@ mod tests {
         assert_eq!(
             fs::read(out.join("orders.rs"))?,
             original_orders,
-            "module two must be untouched — its backup step never completed"
+            "module two must be untouched: its backup step never completed"
         );
         let debris: Vec<_> = fs::read_dir(&out)?
             .filter_map(Result::ok)
@@ -994,7 +995,7 @@ mod tests {
     }
 
     /// The commit succeeds, but deleting one backup afterwards fails. The new
-    /// outputs are installed and correct, so there is nothing to roll back —
+    /// outputs are installed and correct, so there is nothing to roll back,
     /// but the publication must still fail naming the backup it could not
     /// remove, and must have removed every *other* backup rather than
     /// abandoning the tail on the first error.
@@ -1008,7 +1009,7 @@ mod tests {
 
         // Module one's destination is a *directory*. It counts as
         // pre-existing, so commit renames it aside to `common_types.rs.bak.
-        // {pid}` — which succeeds — and promotes the staged file into the
+        // {pid}`, which succeeds, and promotes the staged file into the
         // vacated name. Only the final backup delete trips: `remove_file` on
         // a directory is EISDIR/EPERM.
         fs::create_dir_all(out.join("common_types.rs"))?;
@@ -1034,7 +1035,7 @@ mod tests {
         }
         assert!(
             !out.join(format!("orders.rs.bak.{pid}")).exists(),
-            "module two's backup must still be removed — one undeletable \
+            "module two's backup must still be removed: one undeletable \
              backup must not strand the rest of the debris"
         );
 
@@ -1042,8 +1043,8 @@ mod tests {
         Ok(())
     }
 
-    /// Cleanup tolerates an already-absent file — a staged temp that was
-    /// promoted is legitimately gone — but never swallows a real failure.
+    /// Cleanup tolerates an already-absent file (a staged temp that was
+    /// promoted is gone) but never swallows a real failure.
     #[test]
     fn remove_if_present_tolerates_missing_but_reports_real_failures()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1064,8 +1065,8 @@ mod tests {
     }
 
     /// `BuildError::Io` must name the exact action and path attempted, and
-    /// keep the original `std::io::Error` reachable through `source()` — not
-    /// just a flattened "I/O error: ..." string with no diagnostic context.
+    /// keep the original `std::io::Error` reachable through `source()`, not
+    /// only a flattened "I/O error: ..." string.
     #[test]
     fn build_error_io_display_and_source_preserve_action_and_path()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1073,8 +1074,8 @@ mod tests {
         let schema_path = dir.join("messages.xml");
         fs::write(&schema_path, minimal_schema())?;
 
-        // A regular file where the output directory should be — creating a
-        // directory there fails with a real `std::io::Error`.
+        // A regular file where the output directory should be, so creating
+        // the directory fails with a real `std::io::Error`.
         let blocked = dir.join("blocked");
         fs::write(&blocked, b"not a directory")?;
 
@@ -1183,9 +1184,9 @@ mod tests {
     }
 
     /// Proves `BuildError::Parse` forwards the inner `ParseError`'s source +
-    /// span through `#[diagnostic(transparent)]` — the wrapped error still
-    /// renders a real snippet, not just the outer `{}`/`{:?}` message. This is
-    /// what a `build.rs` returning `miette::Result<()>` actually shows on a
+    /// span through `#[diagnostic(transparent)]`, so the wrapped error still
+    /// renders a real snippet, not only the outer `{}`/`{:?}` message. This is
+    /// what a `build.rs` returning `miette::Result<()>` shows on a
     /// malformed schema, instead of the raw `Debug` dump you get from
     /// `Box<dyn std::error::Error>`.
     #[test]

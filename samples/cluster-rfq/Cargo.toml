@@ -3,7 +3,7 @@ name = "cluster-rfq"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "RFQ protocol examples — moved from cluster/examples/"
+description = "RFQ protocol examples, moved from cluster/examples/"
 
 [[example]]
 name = "rfq_client"
@@ -23,7 +23,7 @@ required-features = ["test-harness"]
 [dependencies]
 ergo-aeron-cluster = { path = "../../cluster" }
 ergo-aeron-cluster-test-harness = { path = "../../cluster-test-harness", optional = true }
-rusteron-client = "0.2.16"
+rusteron-client = "0.2.18"
 
 [features]
 default = []

@@ -14,7 +14,7 @@ use crate::quota::{CpuCgroup, cpu_cgroup, t9_cpu_quota};
 
 const K_EVIDENCE: &str = "Kubernetes documentation (Pod QoS, CPU Management Policies, Topology \
      Management, Linux capabilities); Linux Documentation/admin-guide/cgroup-v2.rst (memory.high, \
-     cpuset partitions) and accounting/psi.rst; K3's figures are T10's; otherwise not measured \
+     cpuset partitions); K3's figures are T10's; otherwise not measured \
      here";
 
 /// What the caller does in the pod, so the checks warn only about the
@@ -108,7 +108,7 @@ pub fn k8s_checks(host: &Host, cpus: &HotSet, needs: &Needs) -> Vec<Finding> {
         k3_smt_sibling(host, cpus, cg.as_ref().ok()),
         k4_helpers(host, cpus, cg.as_ref().ok()),
         k5_capabilities(host, needs),
-        k6_pressure(host, cg.as_ref().ok()),
+        k6_memory_high(host, cg.as_ref().ok()),
         k7_numa(host, cg.as_ref().ok(), needs.nic.as_ref()),
     ]
 }
@@ -313,7 +313,7 @@ fn k2_exclusive(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
         K_EVIDENCE,
         format!(
             "this pod's cpuset ({set}) is a proper subset of the node's online CPUs ({online}), \
-             which is what exclusive CPUs look like — and also what a restricted shared pool \
+             which is what exclusive CPUs look like, and also what a restricted shared pool \
              looks like from inside the pod. Nothing here says which"
         ),
         "no cpuset.cpus.partition (isolated/root) and no cpuset.cpus.exclusive matching this \
@@ -421,9 +421,9 @@ fn named_helpers(host: &Host) -> bool {
 ///
 /// A CPU counts only when no busy-spinning role is pinned to it: two CPUs
 /// that both spin leave the helpers nowhere to go, whatever the cpuset's
-/// size. A spare that is a busy CPU's SMT sibling still counts — the book's
-/// `x86 with SMT, cpu: 2` layout puts the helpers there — and the message
-/// says so, because those helpers take that core's execution units.
+/// size. A spare that is a busy CPU's SMT sibling still counts, because the
+/// book's `x86 with SMT, cpu: 2` layout puts the helpers there, and the
+/// message says so: those helpers share that core's execution units.
 fn k4_helpers(host: &Host, cpus: &HotSet, cg: Option<&CpuCgroup>) -> Finding {
     let id = "K4";
     let sev = Severity::Warn;
@@ -605,29 +605,13 @@ fn k5_capabilities(host: &Host, needs: &Needs) -> Finding {
     )
 }
 
-/// `some avg10` of a PSI file (`cpu.pressure`, `memory.pressure`).
-fn psi_avg10(host: &Host, path: &str) -> Option<f64> {
-    let text = host.read(path).ok()?;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("some ") {
-            for field in rest.split_whitespace() {
-                if let Some(v) = field.strip_prefix("avg10=") {
-                    return v.parse::<f64>().ok();
-                }
-            }
-        }
-    }
-    None
-}
-
-/// K6: no `memory.high`, no CPU or memory pressure.
-fn k6_pressure(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
+/// K6: no `memory.high` on this cgroup or the root.
+fn k6_memory_high(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
     let id = "K6";
     let sev = Severity::Warn;
     let mut dirs: Vec<String> = cg.map(|c| vec![c.dir.clone()]).unwrap_or_default();
     dirs.push("/sys/fs/cgroup".to_owned());
     let mut high: Option<String> = None;
-    let mut pressure: Vec<String> = Vec::new();
     let mut saw_file = false;
     for dir in &dirs {
         let path = format!("{dir}/memory.high");
@@ -638,59 +622,30 @@ fn k6_pressure(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
                 high = Some(format!("{path} is `{v}`"));
             }
         }
-        for name in ["cpu.pressure", "memory.pressure"] {
-            let path = format!("{dir}/{name}");
-            if host.exists(&path) {
-                saw_file = true;
-            }
-            if let Some(avg) = psi_avg10(host, &path)
-                && avg > 0.0
-            {
-                pressure.push(format!("{path} some avg10 {avg}"));
-            }
-        }
     }
-    let mut problems: Vec<String> = Vec::new();
     if let Some(h) = high {
-        problems.push(format!(
-            "{h}: the kernel reclaims this cgroup's memory once its working set reaches it, and \
-             throttles the cgroup's threads while it does (cgroup-v2.rst; not measured here)"
-        ));
-    }
-    for p in pressure {
-        problems.push(format!(
-            "{p}: the CPU or the memory was under pressure recently (any non-zero reading \
-             warns; no threshold is measured)"
-        ));
-    }
-    if problems.is_empty() {
-        if !saw_file {
-            return Finding::unknown(
-                id,
-                sev,
-                K_EVIDENCE,
-                "no cgroup v2 memory.high or pressure file here to read".to_owned(),
-                "no memory.high and no PSI file is a kernel that will not say, not a quiet cgroup",
-            );
-        }
-        return Finding::ok(
+        return Finding::found(
             id,
             sev,
             K_EVIDENCE,
-            "no memory.high and no CPU or memory pressure".to_owned(),
+            format!(
+                "{h}: the kernel reclaims this cgroup's memory once its working set reaches it, \
+                 and throttles the cgroup's threads while it does (cgroup-v2.rst; not measured \
+                 here). Fix (pod spec): give this container a memory limit far above its working \
+                 set (or none). Fix (node): taint the latency nodes so nothing else runs there"
+            ),
         );
     }
-    Finding::found(
-        id,
-        sev,
-        K_EVIDENCE,
-        format!(
-            "{}. Fix (pod spec): give this container a memory limit far above its working set (or \
-             none), and its own exclusive CPUs. Fix (node): taint the latency nodes so nothing \
-             else runs there",
-            problems.join("; ")
-        ),
-    )
+    if !saw_file {
+        return Finding::unknown(
+            id,
+            sev,
+            K_EVIDENCE,
+            "no cgroup v2 memory.high here to read".to_owned(),
+            "no memory.high file is a cgroup that will not say, not one without a limit",
+        );
+    }
+    Finding::ok(id, sev, K_EVIDENCE, "no memory.high".to_owned())
 }
 
 /// The NIC's NUMA node, or `None` when it has no PCI device or no node

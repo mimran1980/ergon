@@ -1,4 +1,4 @@
-//! Auction cluster client — ported from `BasicAuctionClusterClient.java`.
+//! Auction cluster client, ported from `BasicAuctionClusterClient.java`.
 //!
 //! ```bash
 //! cargo run --example auction_client --features test-harness

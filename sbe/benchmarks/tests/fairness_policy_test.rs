@@ -737,9 +737,72 @@ fn encode_arms_index_the_buffer_without_a_per_iteration_bounds_check()
                 "{fn_name}/{label} must index the buffer through `slot_slice`, which \
                  both arms share so the timed loops retire the same instructions"
             );
+            for len in slot_slice_lengths(&code) {
+                assert!(
+                    len.starts_with(|c: char| c.is_ascii_uppercase()),
+                    "{fn_name}/{label} passes `{len}` as a `slot_slice` length. It must be a \
+                     `const`: an arm is a boxed `dyn FnMut`, so a captured local length is an \
+                     opaque load, and sbe-tool's `put_bytes_at` then keeps a bounds check per \
+                     field that ergon's unchecked setters do not (2026-11-07: 3 extra \
+                     `cmp`/`b.ls` per iteration in `bench_claim_shaped_write`'s sbe-tool arm, \
+                     a different loop from ergon's)."
+                );
+            }
         }
     }
     Ok(())
+}
+
+/// Cluster decode arms must time the shared `decode_arms` bodies.
+///
+/// `cluster/tests/bench_decode_arms_agree.rs` proves both arms of each pair
+/// meet truncated and corrupt frames the same way (panic, skip or equal
+/// values), but only for the bodies in `cluster/benches/decode_arms`. An arm
+/// written inline again would escape that check.
+#[test]
+fn cluster_decode_arms_time_the_bodies_the_outcome_test_checks()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (fn_name, body) in [
+        ("bench_decode_msg_header", "session_message_header"),
+        ("bench_decode_session_event", "session_event"),
+        ("bench_decode_new_leader", "new_leader_event"),
+    ] {
+        let fn_src = function_source(CLUSTER_CODEC, fn_name)
+            .ok_or_else(|| format!("{fn_name}: not found"))?;
+        for (label, prefix) in [("ergo-sbe", "ergo"), ("sbe-tool", "tool")] {
+            let arm = timed_arm_body(fn_src, label)
+                .ok_or_else(|| format!("{fn_name}/{label}: timed arm not found"))?;
+            let call = format!("decode_arms::{prefix}_{body}(");
+            assert!(
+                strip_line_comments(arm).contains(&call),
+                "{fn_name}/{label} must time `{call}…)`, the body bench_decode_arms_agree \
+                 checks; an inline arm can drift to skip where the other arm panics"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The last argument of every `slot_slice(…)` call in `code`, trimmed.
+fn slot_slice_lengths(code: &str) -> Vec<&str> {
+    let mut lengths = Vec::new();
+    for (start, _) in code.match_indices("slot_slice(") {
+        let args = &code[start + "slot_slice(".len()..];
+        let (mut depth, mut last_comma) = (0_usize, 0);
+        for (i, c) in args.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ',' if depth == 0 => last_comma = i + 1,
+                ')' if depth == 0 => {
+                    lengths.push(args[last_comma..i].trim());
+                    break;
+                }
+                ')' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    lengths
 }
 
 /// A/A controls must run identical work in both arms.

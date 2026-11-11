@@ -23,15 +23,15 @@ began as an unplanned way to avoid an interruption became the project's main
 implementation workhorse.
 
 The model split also reflects the change in development style. Early in the
-project I was using **UltraMode through Claude Code CLI**. UltraMode created
+project I was using UltraMode through Claude Code CLI. UltraMode created
 subagents and selected the model it considered appropriate for each task. In
 my custom endpoint configuration, the model slot that UltraMode treated as
-Sonnet was mapped to **DeepSeek V4 Flash**. Consequently, much of the early
+Sonnet was mapped to DeepSeek V4 Flash. Consequently, much of the early
 parallel work ran on Flash without me manually choosing Flash for each
 subagent.
 
 Once the codebase became too coupled for parallel development, I moved to a
-mostly sequential workflow and kept the main session on **DeepSeek V4 Pro**.
+mostly sequential workflow and kept the main session on DeepSeek V4 Pro.
 This explains why the dashboard contains substantial use of both models and
 why the actual bill was lower than an all-Pro estimate. Flash handled a large
 amount of the early, highly parallel token volume; Pro carried the longer
@@ -71,7 +71,7 @@ including 2.65 billion on GLM-5.2.
 
 ![GLM model usage over 30 days](glm-30-day-model-usage.jpg)
 
-I bought the highest coding-plan tier I was using—about **$114**—and still hit
+I bought the highest coding-plan tier I was using (about $114) and still hit
 limits during the intensive development schedule.
 
 ## Claude, OpenAI, and Grok

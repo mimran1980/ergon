@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# regenerate-sbe-benchmark-reference.sh — rebuild the two sbe-tool comparators
+# regenerate-sbe-benchmark-reference.sh: rebuild the two sbe-tool comparators
 # the head-to-head benchmarks measure against.
 #
 # `scripts/regenerate-sbe-tool-reference.sh` regenerates the *test* reference
@@ -58,11 +58,11 @@ command -v rustfmt >/dev/null 2>&1 || {
 }
 
 UPSTREAM_COMMIT="$(git -C "$SBE_UPSTREAM" rev-parse HEAD)"
-# `version.txt` is sbe-tool's own declared version — the number that appears in
+# `version.txt` is sbe-tool's own declared version, the number that appears in
 # the generated `SBE_SEMANTIC_VERSION`. Pin both it and the commit: a comparator
 # is only reproducible if the tool that produced it is identified.
 [ -f "$SBE_UPSTREAM/version.txt" ] || {
-    echo "error: $SBE_UPSTREAM/version.txt missing — cannot pin the tool version" >&2
+    echo "error: $SBE_UPSTREAM/version.txt missing, cannot pin the tool version" >&2
     exit 1
 }
 TOOL_VERSION="$(tr -d '[:space:]' < "$SBE_UPSTREAM/version.txt")"
@@ -145,27 +145,27 @@ header = "\n".join(
 lib = (src / "lib.rs").read_text()
 modules = re.findall(r"pub mod (\w+);", lib)
 
-# Patch 1 — the crate root becomes an inner module, so its `mod` declarations
+# Patch 1: the crate root becomes an inner module, so its `mod` declarations
 # are replaced by the inlined module bodies and its inner attributes move to
 # the commented header above (inner attributes are illegal inside a module).
 body = re.sub(r"^pub mod \w+;\n", "", lib, flags=re.M)
 body = re.sub(r"^#!\[.*\]\n", "", body, flags=re.M)
-# Patch 2 — the benchmark reaches this helper across the module boundary.
+# Patch 2: the benchmark reaches this helper across the module boundary.
 body = body.replace("pub(crate) fn get_bytes_at", "pub fn get_bytes_at")
 
 out = [header, "pub mod sbe_tool {", textwrap.indent(body.strip("\n"), "    ")]
 for module in modules:
     text = (src / f"{module}.rs").read_text()
-    # Patch 3 — `crate::` referred to the generated crate root, which is now
+    # Patch 3: `crate::` referred to the generated crate root, which is now
     # `super`. The glob already re-exports those items, so the explicit
     # re-exports are dropped rather than rewritten.
     text = re.sub(r"^use crate::\*;\n", "", text, flags=re.M)
     text = re.sub(r"^pub use crate::\w+;\n", "", text, flags=re.M)
-    # Patch 4 — inner doc comments are illegal at this nesting depth.
+    # Patch 4: inner doc comments are illegal at this nesting depth.
     text = re.sub(r"^//!.*\n", "", text, flags=re.M)
     if "crate::" in text:
         raise SystemExit(
-            f"{module}.rs still references crate:: after patching — "
+            f"{module}.rs still references crate:: after patching: "
             "the assembly rules need updating, not the output"
         )
     out.append(f"    pub mod {module} {{")
@@ -236,7 +236,7 @@ if [ "$MODE" = "check" ]; then
     fi
     rm -f "$MANIFEST.new"
     if [ "$status" -ne 0 ]; then
-        echo "error: benchmark comparators are stale — run $0 without --check" >&2
+        echo "error: benchmark comparators are stale; run $0 without --check" >&2
         exit 1
     fi
     echo "ok: both patched comparators match sbe-tool $UPSTREAM_COMMIT"

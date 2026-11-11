@@ -22,7 +22,6 @@ profiles:
     oversubscription: 1
     seccomp:
       ioUring: "off"
-    schedFifo: "off"
     ptp: "off"
     rlimits:
       memlock: "inf"
@@ -33,7 +32,7 @@ func TestResolveSelectsOneProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wide.Shared.List() != "0,1" || wide.Rlimits.Memlock != "inf" || wide.SeccompIOUring || wide.Ptp != "off" || wide.SchedFifo != SchedFifoOff {
+	if wide.Shared.List() != "0,1" || wide.Rlimits.Memlock != "inf" || wide.SeccompIOUring || wide.Ptp != "off" {
 		t.Fatalf("wide profile: %+v", wide)
 	}
 	small, err := Resolve([]byte(twoProfiles), "small")
@@ -51,6 +50,14 @@ func TestResolveSelectsOneProfile(t *testing.T) {
 		t.Fatalf("unknown profile: %v", err)
 	}
 	t.Log("unknown profile")
+}
+
+func TestProfileRefusesRemovedSchedFifo(t *testing.T) {
+	old := "nodeProfileLabel: ergon.io/node-profile\nprofiles:\n  small:\n    sharedCpus: \"0\"\n    schedFifo: \"off\"\n"
+	_, err := Resolve([]byte(old), "small")
+	if err == nil || !strings.Contains(err.Error(), "schedFifo") {
+		t.Fatalf("profile with schedFifo: %v", err)
+	}
 }
 
 func TestProfileModeRejectsLegacyFields(t *testing.T) {

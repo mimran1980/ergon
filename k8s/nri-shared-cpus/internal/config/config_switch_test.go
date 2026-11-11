@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// seccomp.ioUring and schedFifo share one parse: the field's own mode
-// words, or a YAML 1.1 boolean spelling, quoted or not, any case.
+// seccomp.ioUring takes the field's own mode word, or a YAML 1.1 boolean
+// spelling, quoted or not, any case.
 func TestSwitchSpellings(t *testing.T) {
 	// y/Y/n/N are YAML 1.1 booleans too: unquoted they arrive as
 	// "true"/"false", so the quoted spelling must mean the same.
@@ -25,8 +25,6 @@ func TestSwitchSpellings(t *testing.T) {
 	}{
 		{"seccomp.ioUring", func(v string) string { return "seccomp:\n  ioUring: " + v + "\n" }, "allow", "thread",
 			func(c *Config) bool { return c.SeccompIOUring }},
-		{"schedFifo", func(v string) string { return "schedFifo: " + v + "\n" }, "thread", "allow",
-			func(c *Config) bool { return c.SchedFifo == SchedFifoThread }},
 	} {
 		check := func(v string, want bool) {
 			t.Helper()
@@ -37,9 +35,6 @@ func TestSwitchSpellings(t *testing.T) {
 			}
 			if f.isOn(c) != want {
 				t.Errorf("%s: %s gave on=%v, want %v", f.name, v, f.isOn(c), want)
-			}
-			if c.SchedFifo != SchedFifoOff && c.SchedFifo != SchedFifoThread {
-				t.Errorf("%s: %s left schedFifo %q, want off or thread", f.name, v, c.SchedFifo)
 			}
 		}
 		for _, v := range offWords {

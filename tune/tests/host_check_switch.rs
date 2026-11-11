@@ -202,7 +202,7 @@ fn require_refuses_on_an_unproven_proof_but_not_on_a_missing_subsystem() -> R {
     );
     assert!(
         !unknown_stops_require("K6"),
-        "K6 reads PSI, which a kernel may not have"
+        "K6 reads memory.high, which a cgroup v1 node does not have"
     );
     // The proof: refused, and the ids are named.
     let findings = vec![ok(), unknown("K2")];
@@ -222,7 +222,7 @@ fn require_refuses_on_an_unproven_proof_but_not_on_a_missing_subsystem() -> R {
     assert_eq!(
         HostCheckPolicy::Require.refusal(&findings),
         None,
-        "a host with no PSI and no NIC node is a real host"
+        "a host with no memory.high and no NIC node is a real host"
     );
     // And the unknowns still print.
     let lines = HostCheckPolicy::Require.lines("net-io", &findings);

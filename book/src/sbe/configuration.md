@@ -1,16 +1,19 @@
 # Configuration
 
-- [Feature Integrations](configuration/feature-integrations.md)
+- [Feature integrations](configuration/feature-integrations.md)
 - [with_conversion vs with_domain_type](configuration/conversion-vs-domain.md)
-- [GenerationConfig Options](configuration/generation-config.md)
-- [Code-Generation Hooks](configuration/hooks.md)
+- [GenerationConfig options](configuration/generation-config.md)
+- [Code-generation hooks](configuration/hooks.md)
 
 ## Wire type vs app type
 
+The full comparison is
+[with_conversion vs with_domain_type](configuration/conversion-vs-domain.md).
+
 | Name | Role |
 |------|------|
-| **`Decimal`** (schema composite) | **Wire** — generated type / `price_value()` — what is in the buffer |
-| **`Cents`**, **`rust_decimal::Decimal`**, … | **App** — what your code wants to use |
+| `Decimal` (schema composite) | Wire: generated type / `price_value()`, what is in the buffer |
+| `Cents`, `rust_decimal::Decimal`, … | App: what your code wants to use |
 
 ```rust,ignore
   app  ──price_from / price(v)──►  wire Decimal on the buffer

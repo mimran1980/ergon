@@ -171,8 +171,10 @@ pub(crate) fn generate_message_decoder(
 
             /// Full structural verification of a buffer: validates header,
             /// block-length extent, group dimension headers, entry strides,
-            /// and var-data bounds. Use **before** construction when the
-            /// entire frame must be proven valid without building a decoder.
+            /// var-data bounds, and var-data lengths against the schema
+            /// `maxValue` (`VerifyError::DecodeError(InvalidVarDataLength)`).
+            /// Use **before** construction when the entire frame must be
+            /// proven valid without building a decoder.
             #[inline]
             pub fn verify(buf: &[u8]) -> Result<(), sbe_rt::VerifyError> {
                 #decoder_ident::verify(buf)
@@ -400,6 +402,7 @@ pub(crate) fn generate_message_decoder(
 
     {
         let hs = syn::LitInt::new(&header_size.to_string(), proc_macro2::Span::call_site());
+        let header_short = super::region_exceeds_buffer(header_size, "offset");
         let hp = syn::Ident::new(&header_pascal, proc_macro2::Span::call_site());
         let hsi = syn::Ident::new(&header_si, proc_macro2::Span::call_site());
         let hti = syn::Ident::new(&header_ti, proc_macro2::Span::call_site());
@@ -442,7 +445,7 @@ pub(crate) fn generate_message_decoder(
             /// message-start coordinate system.
             #[inline]
             pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
-                if #hs > buf.len().saturating_sub(offset) {
+                if #header_short {
                     sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
@@ -1201,10 +1204,8 @@ pub(crate) fn generate_message_decoder(
         let g_decoder_ident =
             syn::Ident::new(&format!("{scoped}Decoder"), proc_macro2::Span::call_site());
         let m_idx_lit = syn::LitInt::new(&g_idx.to_string(), proc_macro2::Span::call_site());
-        let tail_offset_ident: syn::Ident = syn::Ident::new(
-            &format!("tail_offset_{}", g_idx),
-            proc_macro2::Span::call_site(),
-        );
+        // Locating the group only passes over earlier tails: bounds only.
+        let tail_call = super::tail_cache::tail_offset_call(g_idx, &quote::quote! { false });
         let g_snake_str = g_snake.clone();
         let version_check = if g.since_version > 0 {
             let g_since_lit =
@@ -1244,7 +1245,7 @@ pub(crate) fn generate_message_decoder(
             #[inline]
             pub fn #g_snake_ident(&self) -> Result<#g_decoder_ident<'a>, sbe_rt::DecodeError> {
                 #version_check
-                let offset = self.#tail_offset_ident()?;
+                let offset = self.#tail_call?;
                 #g_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
         });
@@ -1277,15 +1278,11 @@ pub(crate) fn generate_message_decoder(
         let len_field_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
         let prefix_size_lit =
             syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
-        let vd_tail_ident: syn::Ident = syn::Ident::new(
-            &format!("tail_offset_{}", vd_idx),
-            proc_macro2::Span::call_site(),
-        );
+        // Locating the field only passes over earlier tails: bounds only. The
+        // field's own length is checked against its maximum below.
+        let vd_tail_call = super::tail_cache::tail_offset_call(vd_idx, &quote::quote! { false });
 
-        // resolver fills default_max for every group; generator trusts it, add validation if resolver ever skips a group
-        // primitive, so max_length is always Some. The else branch can't fire.
-        let max = vd.max_length.unwrap_or(0);
-        let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
+        let max_lit = super::runtime::var_data_max_lit(vd.max_length);
         let vd_snake_str = vd_snake.clone();
         let version_check = if vd.since_version > 0 {
             let vd_since_lit = syn::LitInt::new(
@@ -1314,7 +1311,7 @@ pub(crate) fn generate_message_decoder(
             #[inline]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
-                let offset = self.#vd_tail_ident()?;
+                let offset = self.#vd_tail_call?;
                 #vd_cache_hit
                 if offset + #prefix_size_lit > self.buf.len() {
                     sbe_rt::cold();
@@ -1332,15 +1329,7 @@ pub(crate) fn generate_message_decoder(
                 };
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
-                if wire_length > #max_lit as u64 {
-                    sbe_rt::cold();
-                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                        field: stringify!(#vd_snake_ident),
-                        length: wire_length,
-                        max_length: #max_lit as u64,
-                    });
-                }
-                let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                     stringify!(#vd_snake_ident),
                     offset,
                     #prefix_size_lit,
@@ -1384,15 +1373,13 @@ pub(crate) fn generate_message_decoder(
         });
     }
 
-    let total_tail_ident: syn::Ident = syn::Ident::new(
-        &format!("tail_offset_{}", total_tail),
-        proc_macro2::Span::call_site(),
-    );
+    // Whole-message paths reject an over-max var-data length wherever it is.
+    let total_tail_call = super::tail_cache::tail_offset_call(total_tail, &quote::quote! { true });
     impl_body.extend(quote::quote! {
         #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-            let end = self.#total_tail_ident()?;
+            let end = self.#total_tail_call?;
             Ok(end - self.byte_offset())
         }
 
@@ -1406,7 +1393,7 @@ pub(crate) fn generate_message_decoder(
         #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn as_body_bytes(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-            let end = self.#total_tail_ident()?;
+            let end = self.#total_tail_call?;
             let start = self.byte_offset();
             Ok(&self.buf[start..end])
         }
@@ -1414,7 +1401,7 @@ pub(crate) fn generate_message_decoder(
         #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
         pub fn as_bytes_with_header(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
-            let end = self.#total_tail_ident()?;
+            let end = self.#total_tail_call?;
             let start = self.byte_offset().saturating_sub(Self::HEADER_LENGTH);
             Ok(&self.buf[start..end])
         }
@@ -1597,6 +1584,7 @@ pub(crate) fn generate_message_decoder(
         let ps_lit = syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
         let tp_ident = syn::Ident::new(&type_pascal, proc_macro2::Span::call_site());
         let lf_ident = syn::Ident::new(&len_field, proc_macro2::Span::call_site());
+        let max_lit = super::runtime::var_data_max_lit(vd.max_length);
         verify_stmts.push(quote::quote! {
             {
                 if #ps_lit > buf.len().saturating_sub(offset) {
@@ -1610,7 +1598,7 @@ pub(crate) fn generate_message_decoder(
                 let bytes: [u8; #ps_lit] = read_bytes::<#ps_lit>(buf, offset);
                 let var_header = #tp_ident(bytes);
                 let len = var_header.#lf_ident() as u64;
-                let (_, data_end) = match sbe_rt::checked_var_data_bounds(
+                let (_, data_end) = match sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                     #vd_snake,
                     offset,
                     #ps_lit,
@@ -1618,6 +1606,11 @@ pub(crate) fn generate_message_decoder(
                     buf.len(),
                 ) {
                     Ok(bounds) => bounds,
+                    // Same variant as nested var-data, which verify reaches
+                    // through the decode walkers.
+                    Err(e @ sbe_rt::DecodeError::InvalidVarDataLength { .. }) => {
+                        return Err(sbe_rt::VerifyError::DecodeError(e));
+                    }
                     Err(_) => {
                         sbe_rt::cold();
                         return Err(sbe_rt::VerifyError::VarDataOutOfBounds {

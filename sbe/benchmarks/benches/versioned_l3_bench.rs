@@ -17,14 +17,12 @@
 //! `.memoized()` on the decoder the `base/` arms use directly.
 //!
 //! Every comparative pair runs the same generated traversal (`lane_traversal!`)
-//! and asserts both arms return an identical decoded sum before timing starts —
-//! that is simultaneously the equal-work proof and the value-correctness check,
-//! and it is what a hand-copied per-arm dispatch failed to guarantee.
+//! and asserts both arms return an identical decoded sum before timing starts.
+//! That is both the equal-work proof and the value-correctness check.
 //!
 //! `vl3/warm` reaches its tails through `memo::touch_root_*`, whose `match
 //! tail` adds one branch per access inside the timed loop. Both arms pay it
-//! equally, so the comparison holds — but absolute `vl3/warm` numbers are not
-//! comparable with results recorded before the arms were paired this way.
+//! equally, so the comparison holds.
 //!
 //! Buffers are encoded once outside `b.iter`; nothing on the timed path
 //! allocates. `just bench-diagnostics` runs both LTO profiles; directly:
@@ -75,14 +73,14 @@ fn seeded_order() -> [u8; 7] {
 /// One traversal implementation per decoder lane.
 ///
 /// The base and memoized decoders are distinct types with identical getter
-/// names, so a macro is the only way to share this code — and sharing it is
-/// the point: the seven-tail dispatch used to be copied per arm, and the
-/// copies drifted into comparing different work.
+/// names, so a macro is the only way to share this code. Sharing it is the
+/// point: per-arm copies of the seven-tail dispatch can drift into comparing
+/// different work.
 ///
 /// Both functions return a wrapping sum of every value they read. Two arms
 /// that return the same sum read the same fields, in the same quantity, and
-/// decoded them to the same values — so a comparison is proven equal-work
-/// *and* value-correct before any timing happens. Absent tails on old wire
+/// decoded them to the same values, so a comparison is proven equal-work
+/// and value-correct before any timing happens. Absent tails on old wire
 /// contribute nothing, which keeps the same closure valid at every acting
 /// version.
 macro_rules! lane_traversal {
@@ -273,7 +271,7 @@ fn bench_cold_tails(c: &mut Criterion) {
 
 /// Repeated access to one already-constructed decoder, per lane.
 ///
-/// Only the memoized arms have a cache to warm — the base decoder is stateless
+/// Only the memoized arms have a cache to warm; the base decoder is stateless
 /// between getters, so "warm" describes the *workload* (a decoder already read
 /// once), not a property of that lane. Both arms of a pair are pre-read
 /// identically before timing, run the same repetition count, and reach the
@@ -447,7 +445,7 @@ fn bench_nested_entry_access(c: &mut Criterion) {
 /// pair asserts an identical decoded sum before timing, so an arm cannot
 /// silently do less work.
 ///
-/// Cold single-pass favours the base lane — it never pays for a cache, and a
+/// Cold single-pass favours the base lane: it never pays for a cache, and a
 /// wire-order pass gains nothing because each tail begins where the last ended.
 /// Repeated and out-of-order access is what `.memoized()` exists for.
 fn bench_memoization_lane(c: &mut Criterion) {
@@ -498,7 +496,7 @@ fn bench_memoization_lane(c: &mut Criterion) {
         });
     });
 
-    // Full traversal, one pass in wire order — the fair single-pass compare.
+    // Full traversal, one pass in wire order: the fair single-pass compare.
     group.bench_function("base/cold_traverse", |b| {
         b.iter(|| {
             let dec = L3BookDecoder::try_decode(black_box(v3.as_slice()), 0).unwrap();

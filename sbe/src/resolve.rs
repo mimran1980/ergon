@@ -51,12 +51,14 @@ pub enum ResolveError {
         span: Option<miette::SourceSpan>,
     },
     /// Field offsets are overlapping or unaligned.
-    #[error("overlapping offsets or invalid alignment at offset {offset}")]
+    #[error("overlapping offsets or invalid alignment at offset {offset} of `{field}`")]
     #[diagnostic(code(ergo_sbe::resolve::invalid_offset))]
     #[diagnostic(help("check explicit offset attributes for clashes"))]
     InvalidOffset {
         /// The invalid offset.
         offset: usize,
+        /// Name of the field or composite member declaring the offset.
+        field: String,
         /// Source document for miette span rendering.
         #[source_code]
         source_code: Option<miette::NamedSource<String>>,
@@ -346,6 +348,7 @@ fn resolve_composite_offsets(
         if resolved_offset < current_offset {
             return Err(ResolveError::InvalidOffset {
                 offset: resolved_offset,
+                field: tokens[i].name.clone(),
                 source_code: src.clone(),
                 span: tokens[i].span.clone().map(miette::SourceSpan::from),
             });
@@ -356,8 +359,8 @@ fn resolve_composite_offsets(
         // Inlined nested composites (via `<ref type="Composite"/>` or
         // nested type expansion) store their wire size on BeginComposite
         // `encoding.offset`. Codegen reads that as `MemberType::Composite.size`.
-        // Cloned registry tokens often still have `offset: None` here — resolve
-        // the nested layout so size is never left as 0 (`read_bytes::<0>`).
+        // Cloned registry tokens often still have `offset: None` here, so
+        // resolve the nested layout; a size left at 0 emits `read_bytes::<0>`.
         if tokens[i].signal == Signal::BeginField && i + 1 < next_i {
             if tokens[i + 1].signal == Signal::BeginComposite {
                 let nested_end =
@@ -413,6 +416,7 @@ fn resolve_message_offsets(
         if resolved_offset < current_offset {
             return Err(ResolveError::InvalidOffset {
                 offset: resolved_offset,
+                field: tokens[i].name.clone(),
                 source_code: src.clone(),
                 span: tokens[i].span.clone().map(miette::SourceSpan::from),
             });
@@ -488,6 +492,7 @@ fn resolve_group_offsets(
         if resolved_offset < current_offset {
             return Err(ResolveError::InvalidOffset {
                 offset: resolved_offset,
+                field: tokens[i].name.clone(),
                 source_code: src.clone(),
                 span: tokens[i].span.clone().map(miette::SourceSpan::from),
             });
@@ -935,6 +940,7 @@ mod tests {
     fn take_source_code_from_invalid_offset() -> Result<(), Box<dyn std::error::Error>> {
         let mut err = ResolveError::InvalidOffset {
             offset: 99,
+            field: "f".to_string(),
             source_code: None,
             span: None,
         };
@@ -989,10 +995,11 @@ mod tests {
 
         let err = ResolveError::InvalidOffset {
             offset: 42,
+            field: "f".to_string(),
             source_code: None,
             span: None,
         };
-        assert!(format!("{err}").contains("offset 42"));
+        assert!(format!("{err}").contains("offset 42 of `f`"));
 
         let err = ResolveError::EmptyComposite {
             name: "X".to_string(),
@@ -1091,7 +1098,7 @@ mod tests {
                 },
             ],
         };
-        // Should not panic or error — the message has no id to conflict
+        // The message has no id, so there is nothing to conflict with.
         assert!(resolve_schema(&mut ir, None).is_ok());
 
         Ok(())
@@ -1151,7 +1158,7 @@ mod tests {
                 encoding: crate::ir::Encoding::default(),
                 span: None,
             },
-            // No BeginComposite — jump straight to a field
+            // No BeginComposite: straight to a field.
             Token {
                 id: None,
                 name: "field".to_string(),
@@ -1196,7 +1203,7 @@ mod tests {
                 encoding: crate::ir::Encoding::default(),
                 span: None,
             },
-            // No BeginComposite — just EndVarData
+            // No BeginComposite: only EndVarData.
             Token {
                 id: None,
                 name: "data".to_string(),

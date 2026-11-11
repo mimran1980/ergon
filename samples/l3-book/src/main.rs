@@ -1,4 +1,4 @@
-//! L3 order book demos — four SBE patterns: uniform, ragged, var-data, depth-3.
+//! L3 order book demos of four SBE patterns: uniform, ragged, var-data, depth-3.
 //!
 //! Each example computes the exact encoded length up-front via the staged
 //! EncodedLength builder (zero user-defined constants), allocates the exact
@@ -51,7 +51,7 @@ fn example_1_uniform() -> Result<(), Box<dyn std::error::Error>> {
 // ── Example 2: Ragged groups (entries have different shapes) ──────────────
 //
 // Bid 1 has 2 orders, bid 2 has 1 order. Each bid entry's inner group
-// count differs — the ragged path handles this by calling `add()` per entry.
+// count differs, so the ragged path handles this by calling `add()` per entry.
 
 fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Example 2: Ragged groups ===\n");
@@ -83,7 +83,7 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
     let _ts: DateTime<Utc> = dec.exchange_timestamp()?;
     println!("  {dec}");
 
-    // DTO round-trip — byte-identical.
+    // DTO round-trip is byte-identical.
     let dto =
         l3_book::L3BookDomain::try_from_decoder(l3_book::L3BookDecoder::try_from(&buf[..actual])?)?;
     let mut storage2 = [0u8; 4096];
@@ -100,7 +100,7 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
 // ── Example 3: Var-data ragged (orders carry variable-length order_id) ────
 //
 // Each order has a var-data `order_id` of differing length (e.g. "A" vs "BBB").
-// The ragged wrapper exposes `og.add()?.order_id(len)?` — field-named,
+// The ragged wrapper exposes `og.add()?.order_id(len)?`: field-named,
 // chained, zero constants.
 
 fn example_3_vardata() -> Result<(), Box<dyn std::error::Error>> {

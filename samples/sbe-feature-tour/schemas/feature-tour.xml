@@ -3,17 +3,18 @@
   Self-contained multi-message schema for the ergo-sbe feature-tour sample.
 
   Messages:
-    1 Heartbeat  — fixed-block only → Encoder::ENCODED_LENGTH
-    2 Car        — scalars, enum, set, composite, nested groups, var-data
-                   → staged CarEncodedLength + consuming encode/decode stages
-    3 Note       — second template for AnyMessage / FrameCursor dispatch
+    1 Heartbeat: fixed block only (sized by Encoder::ENCODED_LENGTH)
+    2 Car: scalars, enum, set, composite, nested groups and var-data
+           (sized by the staged CarEncodedLength, written by the consuming
+           encode and decode stages)
+    3 Note: second template for AnyMessage and FrameCursor dispatch
 -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="feature.tour"
                    id="77"
                    version="0"
                    semanticVersion="1.0"
-                   description="ErgoSBE feature tour — fixed, dynamic, multi-message."
+                   description="ErgoSBE feature tour: fixed, dynamic and multi-message."
                    byteOrder="littleEndian">
     <types>
         <composite name="messageHeader" description="Message identifiers and root block length.">
@@ -75,13 +76,13 @@
             <choice name="cruiseControl">2</choice>
         </set>
         <!-- Wire composite used with with_conversion (generic *_as / *_from),
-             not with_domain_type — see build.rs comments. -->
+             not with_domain_type (see the build.rs comments). -->
         <composite name="Decimal" description="mantissa * 10^exponent">
             <type name="mantissa" primitiveType="int64"/>
             <type name="exponent" primitiveType="int8"/>
         </composite>
         <!-- Same shape as Decimal, but mapped via with_domain_type(...,
-             DomainImpl::Manual) — see build.rs / lib.rs demo_domain_type_manual_impl. -->
+             DomainImpl::Manual); see build.rs and demo_domain_type_manual_impl in lib.rs. -->
         <composite name="ManualDecimal" description="mantissa * 10^exponent">
             <type name="mantissa" primitiveType="int64"/>
             <type name="exponent" primitiveType="int8"/>

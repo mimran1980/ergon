@@ -1,7 +1,7 @@
-# Error Diagnostics
+# Error diagnostics
 
 Schema errors use [`miette`](https://docs.rs/miette) for pinpointed diagnostics.
-The generator shows **what** went wrong, **where** in the XML, and a unique
+The generator shows what went wrong, where in the XML, and a unique
 **error code** you can match on programmatically.
 
 ## Invalid type reference
@@ -95,7 +95,7 @@ match parse(SchemaSource::file("my-schema.xml")) {
 }
 ```
 
-For programmatic handling, match on the variant directly — `ParseError` is
+For programmatic handling, match on the variant directly; `ParseError` is
 a plain enum, no downcast needed. Keep a wildcard so new variants are not
 a compile break:
 

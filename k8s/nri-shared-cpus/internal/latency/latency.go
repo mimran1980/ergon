@@ -585,7 +585,6 @@ const (
 	EnvRlimitMemlock  = "ERGON_RLIMIT_MEMLOCK"
 	EnvRlimitNofile   = "ERGON_RLIMIT_NOFILE"
 	EnvRlimitRtPrio   = "ERGON_RLIMIT_RTPRIO"
-	EnvSchedFifo      = "ERGON_SCHED_FIFO"
 	EnvSeccomp        = "ERGON_SECCOMP"
 	EnvNumaNodes      = "ERGON_NUMA_NODES"
 	EnvPtpDevice      = "ERGON_PTP_DEVICE"
@@ -609,8 +608,6 @@ const (
 type EnvGrant struct {
 	// Rlimits are the POSIX rlimits that were added.
 	Rlimits []Rlimit
-	// SchedFifo is the SCHED_FIFO priority the hot thread may take, or 0.
-	SchedFifo int
 	// SeccompMode is the seccomp mode that was applied, or "".
 	SeccompMode string
 	// NumaNodes is the cpuset.mems string, or "".
@@ -641,9 +638,6 @@ func GrantEnv(g EnvGrant) []KV {
 		case "RLIMIT_RTPRIO":
 			out = append(out, KV{EnvRlimitRtPrio, FormatRlimit(r.Soft)})
 		}
-	}
-	if g.SchedFifo > 0 {
-		out = append(out, KV{EnvSchedFifo, strconv.Itoa(g.SchedFifo)})
 	}
 	if g.SeccompMode != "" {
 		out = append(out, KV{EnvSeccomp, g.SeccompMode})

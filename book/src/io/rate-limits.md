@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:3e9f1c94d6cdd714b63fc73be9d76335ebc6f1b2438d90ad6102bc9d25491eac -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:62d50e300d384555d687443724709dc42675b45be1c6097e716eafcf8d2c020b -->
 # Rate Limits and Errors
 
 ergon-io has no rate limiter. Pacing requests, orders and connects to a
@@ -21,6 +21,25 @@ costs and usage headers. ergon-io gives the pieces a pacer needs.
 A gate answers `Ok(())` to connect now or `Err(wait_ns)` to be asked
 again after the wait. It returns a wait, not a time, so its clock is
 yours. A refusal is not a failed attempt: the backoff does not grow.
+
+<div class="ergon-anim" data-anim="connect-gate" data-title="Pacing with gates and verdicts: Sent, Verdict and the connect gate"></div>
+
+*In words:* three requests end three ways. Request 1's single TLS record
+was only partly (illustrative: 3 of 8 parts) with the kernel when the connection dropped: `Sent::No`,
+`Verdict::NotRun`, safe to send again. Request 2's whole record was with
+the kernel and no response came: `Sent::Maybe`, `Verdict::Unknown`; look
+the order up by its client order id. Request 3 gets a 429 with
+`Retry-After: 2`: `Throttled { retry_after_ms: Some(2000) }`, and your
+pacer holds the scope. Then two links share one IP and one pacer
+(an illustrative 3 connects per second) under `Retry::default`. Link A's
+handshake is refused with a 429; your handler holds the gate and defers A
+to 2,080 ms, and the refused handshake counts as attempt 1 (backoff
+225 ms, but the server's wait wins). Link B drops at 400 ms and is due at
+625 ms; `poll_gated` asks the gate, which answers `Err` with 1,455 ms. B
+keeps attempt 1: a gate refusal is not a failed attempt (A's refused handshake was). At 2,080 ms the gate
+passes both, B first: a pass starts after the last link it passed; A opens for the first time (`reconnect: false`), B
+reconnects (`reconnect: true`, resubscribe). Times are illustrative; the
+book records no latency for this.
 
 ## Outcomes and HTTP
 

@@ -1,8 +1,15 @@
 # Domain DTOs
 
-Use when you want **owned** values (`Vec` groups, owned tails) and simple
-structs — **not** the zero-copy hot path. DTOs allocate on decode; the
-flyweight path does not. A DTO-vs-flyweight latency A/B was **not measured**.
+This is the encode and decode recipe for an owned DTO. When to prefer a
+flyweight: [Flyweight vs whole struct](../core-concepts/flyweight-vs-struct.md).
+`with_conversion` versus `with_domain_type` (a Rust type on the flyweight,
+not an owned DTO):
+[with_conversion vs with_domain_type](../configuration/conversion-vs-domain.md).
+The compiled tour example is [Domain objects](../feature-tour/domain-objects.md).
+
+Use a DTO when you want owned values (`Vec` groups, owned tails) and simple
+structs, not the zero-copy hot path. DTOs allocate on decode; the
+flyweight path does not. A DTO-vs-flyweight latency A/B was not measured.
 
 For re-encode, eligible flat groups are bulk-written directly from
 `&[EntryDomain]`: no temporary `Vec<Entry>` and no encode-time allocation.
@@ -24,12 +31,12 @@ DTO re-encode of eligible flat groups is a DTO-to-DTO diagnostic
 quote numbers from this page.
 
 ```rust,no_run
-// build.rs — DomainVarData picks the DTO field type for var-data:
+// build.rs: DomainVarData picks the DTO field type for var-data:
 // .with_domain_objects(DomainVarData::Strings) // String (invalid UTF-8 → InvalidUtf8 error)
 // .with_domain_objects(DomainVarData::Bytes)        // Vec<u8> (byte-exact)
 ```
 
-**Generated shape** (illustrative — your names follow your schema):
+Generated shape (illustrative; your names follow your schema):
 
 ```rust,ignore
 pub struct QuoteDomain {
@@ -50,7 +57,7 @@ impl QuoteDomain {
 }
 ```
 
-**Wire → DTO → wire round-trip** (the docs fixture uses `DomainVarData::Bytes`):
+Wire to DTO and back (the docs fixture uses `DomainVarData::Bytes`):
 
 ```rust,no_run
   // Encode a message first (the usual flyweight path)
@@ -68,7 +75,7 @@ impl QuoteDomain {
       })?
       .note_as_str("hi")?
       .encoded_length_with_header();
-  // Decode → owned DTO (allocates — not for the hot path)
+  // Decode to an owned DTO (allocates, so not for the hot path)
   let dec = QuoteDecoder::try_from(&buf[..len])?;
   let mut dto = QuoteDomain::try_from_decoder(dec)?;
   assert_eq!(dto.seq, 1);
@@ -81,12 +88,12 @@ impl QuoteDomain {
 
 ### `with_domain_objects(DomainVarData)`
 
-SBE `<data>` is length-prefixed **bytes**. The enum picks the DTO field type:
+SBE `<data>` is length-prefixed bytes. The enum picks the DTO field type:
 
 | Call | Field type | Invalid UTF-8 | When to use |
 |------|------------|---------------|-------------|
-| `.with_domain_objects(DomainVarData::Strings)` | `String` | **`InvalidUtf8` error** (strict; 0.1.10) | Text schemas when validity is known |
-| `.with_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or **byte-exact** re-encode |
+| `.with_domain_objects(DomainVarData::Strings)` | `String` | `InvalidUtf8` error (strict) | Text schemas when validity is known |
+| `.with_domain_objects(DomainVarData::Bytes)` | `Vec<u8>` | n/a (raw copy) | Binary tails or byte-exact re-encode |
 
 **`Strings` rejects invalid UTF-8.** Materialise returns `InvalidUtf8`
 for bad bytes; there is no silent empty-string fallback. Use `Bytes` (or stay

@@ -1,23 +1,23 @@
 //! Code generation configuration ([`GenerationConfig`]).
 //!
-//! # Conversion: pick **one** style per selector
+//! # Conversion: pick one style per selector
 //!
 //! | API | When to use | Generated decode | Generated encode |
 //! |-----|-------------|------------------|------------------|
-//! | [`GenerationConfig::with_conversion`] | Pluggable adapters; no forced crate dep | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
-//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.price()? -> path::Type` | `enc.price(value)?` |
+//! | [`GenerationConfig::with_conversion`] | Pluggable adapters; no forced crate dependency | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
+//! | [`GenerationConfig::with_domain_type`] | One canonical application type | `dec.price()? -> path::Type` | `enc.price(value)?` |
 //!
-//! `with_domain_type` **implies** conversion for that selector. Do **not** also
-//! call `with_conversion` for the same selector.
+//! `with_domain_type` implies conversion for that selector, so do not also
+//! call `with_conversion` for it.
 //!
 //! ```rust
 //! use ergo_sbe::{GenerationConfig, ConversionSelector};
 //!
-//! // A — generic / pluggable (you implement TryFromSbe / TryToSbe)
+//! // Pluggable: you implement TryFromSbe / TryToSbe.
 //! let _a = GenerationConfig::new("msgs")
 //!     .with_conversion(ConversionSelector::named_type("Decimal"));
 //!
-//! // B — concrete Rust type (Generated impl is the default)
+//! // One concrete Rust type; ergo-sbe generates the impl by default.
 //! let _b = GenerationConfig::new("msgs")
 //!     .with_domain_type(
 //!         ConversionSelector::named_type("Decimal"),
@@ -83,19 +83,19 @@ impl ConversionSelector {
 
 /// How owned domain DTO `<data>` / var-data fields are typed.
 ///
-/// Passed to [`GenerationConfig::with_domain_objects`]. Wire is always
-/// length-prefixed **bytes**; this only chooses the **owned** DTO field type.
+/// Passed to [`GenerationConfig::with_domain_objects`]. The wire always holds
+/// length-prefixed bytes; this chooses only the owned DTO field type.
 ///
 /// | Variant | DTO field | Feature | Invalid UTF-8 |
 /// |---------|-----------|---------|---------------|
-/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | — | n/a |
-/// | [`Strings`](DomainVarData::Strings) | `String` | — | **`InvalidUtf8` error** |
-/// | `CompactStrings` | `CompactString` | `compact_str` | **`InvalidUtf8` error** |
-/// | `SmolStrings` | `SmolStr` | `smol_str` | **`InvalidUtf8` error** |
+/// | [`Bytes`](DomainVarData::Bytes) | `Vec<u8>` | none | n/a |
+/// | [`Strings`](DomainVarData::Strings) | `String` | none | `InvalidUtf8` error |
+/// | `CompactStrings` | `CompactString` | `compact_str` | `InvalidUtf8` error |
+/// | `SmolStrings` | `SmolStr` | `smol_str` | `InvalidUtf8` error |
 /// | `BytesCrate` | `bytes::Bytes` | `bytes` | n/a |
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainVarData {
-    /// Byte-exact var-data (`Vec<u8>`) — binary tails or lossless re-encode.
+    /// Byte-exact var-data (`Vec<u8>`), for binary tails or lossless re-encode.
     #[default]
     Bytes,
     /// Text-friendly var-data (`String`). Invalid UTF-8 returns
@@ -117,17 +117,16 @@ pub enum DomainVarData {
 /// [`GenerationConfig::with_domain_type`] mapping (`bool` /
 /// `rust_decimal::Decimal` / `chrono::DateTime<Utc>`).
 ///
-/// Only matters for those three well-known type paths — any other
-/// `rust_type` never gets an auto-generated impl regardless of this setting,
-/// since ergo-sbe has no built-in conversion logic to offer for it.
+/// It matters only for those three type paths. ergo-sbe has no built-in
+/// conversion for any other `rust_type`, so it never generates one.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum DomainImpl {
     /// ergo-sbe writes the impl for you (default).
     #[default]
     Generated,
-    /// You write `impl TryFromSbe<Wire>` / `impl TryToSbe<Wire>` yourself —
-    /// e.g. a custom rounding rule, or null/validation behaviour the
-    /// built-in impl doesn't match. ergo-sbe still generates the concrete
+    /// You write `impl TryFromSbe<Wire>` / `impl TryToSbe<Wire>` yourself,
+    /// for example for a custom rounding rule, or null or validation
+    /// behaviour the built-in impl does not match. ergo-sbe still generates the concrete
     /// `price(...)?` / `price()?` signatures that call it.
     Manual,
 }
@@ -272,8 +271,6 @@ pub enum GenerationProfile {
     Lean,
 }
 
-// ── Hook types ────────────────────────────────────────────────────────────
-
 /// Kinds of generated items a hook can observe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ItemKind {
@@ -344,8 +341,8 @@ pub struct FieldInfo {
     pub rust_type: String,
     /// Whether this field is a fixed-block field, a repeating group, or
     /// var-data. Recorded when the field is built, never inferred from
-    /// [`Self::rust_type`] — renaming a generated type must not be able to
-    /// change a field's meaning.
+    /// [`Self::rust_type`], so renaming a generated type cannot change a
+    /// field's meaning.
     pub kind: FieldKind,
     /// Byte offset from the message body start, when this is a fixed
     /// scalar/array/composite/enum/set field. `None` for groups and
@@ -469,7 +466,7 @@ impl std::fmt::Debug for ItemContext<'_> {
     }
 }
 
-/// Token streams returned by hooks — appended after the generated item.
+/// A hook: returns token streams appended after the generated item.
 pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream> + Send + Sync;
 
 /// Wrapper so hooks can live in [`GenerationConfig`]. Uses [`Arc`] so
@@ -493,8 +490,6 @@ impl Hooks {
         self.0.is_empty()
     }
 }
-
-// ── GenerationConfig ──────────────────────────────────────────────────────
 
 /// Options that shape generated Rust codecs.
 ///
@@ -531,27 +526,25 @@ pub struct GenerationConfig {
     /// type. Reported as [`crate::GenerateError::InvalidConversion`] at
     /// generation time; the builder itself cannot fail.
     pub(crate) domain_type_conflicts: Vec<(ConversionSelector, String, String)>,
-    /// Selectors passed to [`Self::with_manual_domain_type`]:
-    /// get the same concrete domain accessor signatures as any other `domain_types`
-    /// entry, but the built-in `TryFromSbe`/`TryToSbe` impl (for `bool` /
-    /// `rust_decimal::Decimal` / `chrono::DateTime<Utc>`) is not generated —
-    /// the caller supplies it.
+    /// Selectors passed to [`Self::with_manual_domain_type`]. They get the
+    /// same domain accessor signatures as any other `domain_types` entry, but
+    /// the caller supplies the `TryFromSbe`/`TryToSbe` impl that ergo-sbe
+    /// would generate for `bool`, `rust_decimal::Decimal` or
+    /// `chrono::DateTime<Utc>`.
     pub(crate) manual_impl_selectors: Vec<ConversionSelector>,
     /// When set, emit `pub use <path> as sbe_rt;` instead of inlining runtime.
     pub(crate) external_sbe_rt_path: Option<String>,
-    /// Map enum/boolean NullVal → `Option<T>`. Matched selectors produce
-    /// `Option<EventCode>` accessors instead of bare enum types.
-    /// Wire is byte-identical: `None` writes the `NullVal` discriminant.
+    /// Enums whose `NullVal` maps to `None`: matched selectors produce
+    /// `Option<EventCode>` accessors instead of bare enum types. The wire is
+    /// unchanged: `None` writes the `NullVal` discriminant.
     pub(crate) null_as_option: Vec<ConversionSelector>,
     /// When true, every enum in the schema gets `Option<Enum>` accessors
     /// without needing individual `with_null_as_option` calls.
     pub(crate) all_enums_as_option: bool,
-    /// Emit `bool` ↔ BooleanType converters automatically for every enum
-    /// detected as boolean (name `BooleanType` or `semanticType="Boolean"`).
-    /// Equivalent to calling `with_domain_type(named_type(name), "bool")` for
-    /// each — saves boilerplate on schemas with many boolean flags.
+    /// Emit `bool` converters for every enum detected as boolean (name
+    /// `BooleanType` or `semanticType="Boolean"`), as if
+    /// `with_domain_type(named_type(name), "bool")` were called for each.
     pub(crate) auto_bool_domain: bool,
-    /// Emit `_unchecked` companions for benchmarking.
     /// Appended when a name is a Rust keyword (default `"_"`).
     pub(crate) keyword_append_token: String,
     /// Emit `#[deprecated]` on schema-deprecated items (opt-in).
@@ -570,10 +563,10 @@ pub struct GenerationConfig {
     /// full schema so it can read every acting version the schema declares.
     /// `None` means encode at the schema version (default).
     pub(crate) encode_version: Option<u16>,
-    /// Generated SBE-enum ↔ application-enum mappings, one per enum
+    /// Generated SBE-enum to application-enum mappings, one per enum
     /// (last registered wins). Each also registers a domain type.
     pub(crate) enum_mappings: Vec<EnumMapping>,
-    /// Generated composite ↔ application-struct mappings, one per composite
+    /// Generated composite to application-struct mappings, one per composite
     /// (last registered wins). Each also registers a domain type.
     pub(crate) composite_mappings: Vec<CompositeMapping>,
     /// Emit a `{Message}Source` trait per message (and `…EntrySource` per
@@ -654,9 +647,9 @@ impl GenerationConfig {
     /// Create a config with [`GenerationProfile::Lean`] defaults (no
     /// Display/Debug, no meta attributes, no dispatch, no domain objects).
     ///
-    /// Equivalent to `GenerationConfig::new(name).profile(GenerationProfile::Lean)`
-    /// but more direct. Explicit `with_*` settings (conversions, domain types,
-    /// auto-bool) can be added after — they are not cleared.
+    /// Same as `GenerationConfig::new(name).profile(GenerationProfile::Lean)`.
+    /// Explicit `with_*` settings (conversions, domain types, auto-bool) can
+    /// be added after; the profile does not clear them.
     ///
     /// ```rust
     /// use ergo_sbe::GenerationConfig;
@@ -673,9 +666,10 @@ impl GenerationConfig {
         &self.module_name
     }
 
-    /// Override the module name set in [`new`](Self::new). Use when cloning a base
-    /// config across several schemas — set the placeholder in [`new`](Self::new), then
-    /// call `.clone().with_module_name("orderbook")` on each.
+    /// Override the module name set in [`new`](Self::new). Use it to share
+    /// one base config across several schemas: pass a placeholder to
+    /// [`new`](Self::new), then call `.clone().with_module_name("orderbook")`
+    /// for each.
     ///
     /// ```rust
     /// use ergo_sbe::GenerationConfig;
@@ -695,31 +689,20 @@ impl GenerationConfig {
         self
     }
 
-    #[must_use]
-    pub(crate) const fn domain_objects_enabled(&self) -> bool {
-        self.domain_objects
-    }
-
     pub(crate) const fn has_conversions(&self) -> bool {
-        // `with_bool_domain_type` is syntax sugar for `with_domain_type` on
-        // each boolean enum — it must also emit TryFromSbe/TryToSbe traits.
+        // `with_bool_domain_type` stands for `with_domain_type` on each
+        // boolean enum, so it needs the TryFromSbe/TryToSbe traits too.
         !self.conversions.is_empty() || !self.domain_types.is_empty() || self.auto_bool_domain
-    }
-
-    /// The external sbe_rt path, if set.
-    #[must_use]
-    pub(crate) fn external_sbe_rt_path(&self) -> Option<&str> {
-        self.external_sbe_rt_path.as_deref()
     }
 
     /// Re-use one `sbe_rt` runtime across separately generated schema modules.
     ///
     /// `path` must work in `pub use <path> as sbe_rt;`. Every generated `sbe_rt`
     /// is whole (`EntryInfo`, `Ordered`, `OrderedFixed` included) whether or not
-    /// that schema's own messages can reach them, so a consumer is only
-    /// `pub use <path> as sbe_rt` — never a second module that glob-re-exports
+    /// that schema's own messages can reach them, so a consumer needs only
+    /// `pub use <path> as sbe_rt`, never a second module that glob-re-exports
     /// the owner and defines those types beside it. One shared runtime means
-    /// one set of types: `consumer::sbe_rt::EntryInfo` *is* the owner's.
+    /// one set of types: `consumer::sbe_rt::EntryInfo` is the owner's.
     ///
     /// ```
     /// # use ergo_sbe::GenerationConfig;
@@ -736,7 +719,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Enable **generic** conversion methods for matching fields.
+    /// Enable generic conversion methods for matching fields.
     ///
     /// # Generated API
     ///
@@ -752,7 +735,8 @@ impl GenerationConfig {
     ///     .with_conversion(ConversionSelector::named_type("Decimal"));
     /// ```
     ///
-    /// → [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
+    /// [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
+    /// has more.
     ///
     /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
     /// Duplicate selectors are ignored. A selector that matches no field (or,
@@ -767,10 +751,10 @@ impl GenerationConfig {
         self
     }
 
-    /// Map matching enum fields from `NullVal` → `Option<T>`.
+    /// Give matching enum fields `Option<T>` accessors, with `NullVal` as `None`.
     ///
-    /// Wire encoding is byte-identical: `None` writes the `NullVal`
-    /// discriminant, `Some(v)` writes `v`. Zero runtime cost.
+    /// The wire is unchanged: `None` writes the `NullVal` discriminant and
+    /// `Some(v)` writes `v`, at no runtime cost.
     ///
     /// Only [`ConversionSelector::named_type`] naming an enum is applied. Any
     /// other selector, or a name that is not an enum of the schema, is
@@ -779,7 +763,7 @@ impl GenerationConfig {
     /// ```rust
     /// use ergo_sbe::{ConversionSelector, GenerationConfig};
     ///
-    /// // EventCode fields → Option<EventCode>
+    /// // EventCode fields become Option<EventCode>.
     /// let config = GenerationConfig::new("msgs")
     ///     .with_null_as_option(ConversionSelector::named_type("EventCode"));
     /// ```
@@ -791,11 +775,10 @@ impl GenerationConfig {
         self
     }
 
-    /// Map **every** enum field in the schema to `Option<Enum>`.
+    /// Map every enum field in the schema to `Option<Enum>`.
     ///
     /// Shorthand for calling [`with_null_as_option`](Self::with_null_as_option)
-    /// on every named type. Opt-out per-enum is not yet supported —
-    /// the blanket flag always wins.
+    /// on every enum. No enum can opt out.
     ///
     /// ```rust
     /// use ergo_sbe::GenerationConfig;
@@ -808,7 +791,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Map matching fields to a **concrete** Rust type path.
+    /// Map matching fields to a concrete Rust type path.
     ///
     /// Implies [`Self::with_conversion`] for the same selector and emits
     /// well-known `TryFromSbe`/`TryToSbe` impls for `bool`,
@@ -835,7 +818,7 @@ impl GenerationConfig {
     ///     );
     /// ```
     ///
-    /// Do **not** also call [`Self::with_conversion`] for the same selector.
+    /// Do not also call [`Self::with_conversion`] for the same selector.
     ///
     /// Generation fails closed with [`crate::GenerateError::InvalidConversion`]
     /// when the selector matches no field, when a second call gives the same
@@ -851,8 +834,8 @@ impl GenerationConfig {
     }
 
     /// Like [`Self::with_domain_type`], but you write `impl TryFromSbe<Wire>`
-    /// / `impl TryToSbe<Wire>` yourself — e.g. a custom rounding rule, or
-    /// null/validation behaviour the built-in impl does not match.
+    /// / `impl TryToSbe<Wire>` yourself, for example for a custom rounding
+    /// rule, or null or validation behaviour the built-in impl does not match.
     ///
     /// ergo-sbe still generates the concrete `price(...)?` / `price()?`
     /// signatures that call those impls. A missing impl fails closed with a
@@ -943,9 +926,9 @@ impl GenerationConfig {
     /// The application enum must be fieldless and exhaustively matchable
     /// from the generated module (not `#[non_exhaustive]` in another
     /// crate). A later mapping for the same enum replaces an earlier one.
-    /// Mismatches the schema can reveal — an unknown enum or variant, two
-    /// variants mapped to one, an optional field of the enum without
-    /// `with_null_as_option` — are [`crate::GenerateError::InvalidConfiguration`].
+    /// An unknown enum or variant, two variants mapped to one, or an optional
+    /// field of the enum without `with_null_as_option` is
+    /// [`crate::GenerateError::InvalidConfiguration`].
     ///
     /// ```rust
     /// use ergo_sbe::{EnumMapping, GenerationConfig};
@@ -1039,8 +1022,8 @@ impl GenerationConfig {
     }
 
     /// Emit `validate(&self) -> Result<(), sbe_rt::ValidateError>` on every
-    /// message decoder, group entry decoder and `AnyMessage` (**off by
-    /// default**).
+    /// message decoder, group entry decoder and `AnyMessage` (off by
+    /// default).
     ///
     /// `try_decode` proves bounds only and is unchanged. `validate()` is a
     /// separate, opt-in pass for frames from older or foreign producers. It
@@ -1066,7 +1049,9 @@ impl GenerationConfig {
 
     /// Generate owned domain structs next to flyweight codecs.
     ///
-    /// # `var_data` — important choice ([`DomainVarData`])
+    /// # Var-data field type
+    ///
+    /// `var_data` ([`DomainVarData`]) picks the DTO type of every var-data field.
     ///
     /// | Mode | DTO field | Invalid UTF-8 |
     /// |------|-----------|---------------|
@@ -1084,10 +1069,9 @@ impl GenerationConfig {
     ///
     /// # Generated API
     ///
-    /// `DomainVarData::Strings` → `manufacturer: String`.
-    /// `DomainVarData::Bytes` → `manufacturer: Vec<u8>`.
-    ///
-    /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
+    /// `DomainVarData::Strings` gives `manufacturer: String`;
+    /// `DomainVarData::Bytes` gives `manufacturer: Vec<u8>`. See
+    /// [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs).
     #[must_use]
     pub const fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
         self.domain_objects = true;
@@ -1105,7 +1089,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Token appended when a schema name is a Rust keyword (default `”_”`).
+    /// Token appended when a schema name is a Rust keyword (default `"_"`).
     ///
     /// Schema field `name="type"` becomes method `type_()`; with token `"x"`,
     /// it becomes `typex()`.
@@ -1121,11 +1105,10 @@ impl GenerationConfig {
         self
     }
 
-    /// Auto-register `bool` converters for every boolean enum in the
-    /// schema. Syntax sugar for calling
-    /// `with_domain_type(named_type("BooleanType"), "bool")` for each —
-    /// detects by name, `semanticType="Boolean"`, or True/False value pairs
-    /// with discriminants `0` and `1`.
+    /// Register `bool` converters for every boolean enum in the schema, as
+    /// if `with_domain_type(named_type("BooleanType"), "bool")` were called
+    /// for each. An enum is boolean by its name, by `semanticType="Boolean"`,
+    /// or by a true/false value pair with discriminants `0` and `1`.
     ///
     /// Only the canonical `{0, 1}` discriminant representation is detected
     /// automatically. Schemas with non-standard boolean encodings (e.g.
@@ -1145,7 +1128,7 @@ impl GenerationConfig {
         self
     }
 
-    /// Control generated `Debug` and `Display` impls (**enabled by default**).
+    /// Control generated `Debug` and `Display` impls (on by default).
     /// Pass `false` to omit them and shrink generated output.
     #[must_use]
     pub const fn with_display_debug(mut self, enable: bool) -> Self {
@@ -1153,8 +1136,8 @@ impl GenerationConfig {
         self
     }
 
-    /// Control meta-attribute constants (**enabled by default**). Pass `false`
-    /// to omit — removes `*_meta_attribute`, `*_ENCODING_OFFSET`,
+    /// Control meta-attribute constants (on by default). `false` omits
+    /// `*_meta_attribute`, `*_ENCODING_OFFSET`,
     /// `*_ENCODING_LENGTH`, `*_ID`, `*_SINCE_VERSION`, null/min/max field
     /// constants, and the per-message `*_field_meta` module.
     #[must_use]
@@ -1164,8 +1147,8 @@ impl GenerationConfig {
     }
 
     /// Control `AnyMessage` / `FrameCursor` / `MessageVisitor` dispatch code
-    /// (**enabled by default**). Pass `false` to omit — saves ~300 lines;
-    /// only meaningful when you do not need multi-template frame dispatch.
+    /// (on by default). Pass `false` to omit it, about 300 lines, when you do
+    /// not need multi-template frame dispatch.
     #[must_use]
     pub const fn with_dispatch(mut self, enable: bool) -> Self {
         self.enable_dispatch = enable;
@@ -1176,7 +1159,7 @@ impl GenerationConfig {
     ///
     /// The generated encoder writes `version` in the message header and
     /// omits groups, var-data, and fixed fields with `sinceVersion` above
-    /// it — including nested groups, which occupy zero bytes on older
+    /// it. That includes nested groups, which take zero bytes on the older
     /// wire rather than a count-zero header. The generated decoder still
     /// understands every member in the schema, so a module built at
     /// encode version 1 can decode acting versions 0..=schema version.
@@ -1185,14 +1168,14 @@ impl GenerationConfig {
     /// [`Self::with_domain_objects`] when it would drop members is rejected
     /// at generate time.
     ///
-    /// **Scope.** The projection is derived from the *current* schema, not
-    /// from the historical one. `blockLength` becomes the retained fields'
-    /// extent plus any trailing padding the current schema declares beyond
-    /// every field. Padding that only the historical schema declared is not
-    /// recoverable from the current schema, so this generates wire that is
-    /// *version-compatible* at `version` — decodable by any conforming
-    /// decoder — not necessarily byte-identical to a codec built from the
-    /// archived schema of that version. When byte-identical historical output
+    /// **Scope.** The projection comes from the current schema, not the
+    /// historical one.
+    /// `blockLength` becomes the retained fields' extent plus any trailing
+    /// padding the current schema declares beyond every field. Padding that
+    /// only the historical schema declared cannot be recovered, so the wire
+    /// is version-compatible at `version` (any conforming decoder reads it)
+    /// but not necessarily byte-identical to a codec built from the archived
+    /// schema of that version. When byte-identical historical output
     /// matters, generate from the archived schema instead.
     ///
     /// ```rust
@@ -1213,8 +1196,8 @@ impl GenerationConfig {
     /// | [`GenerationProfile::Lean`] | off | off | off | off |
     ///
     /// Explicit `with_*` settings (conversions, domain types, auto-bool) win
-    /// regardless of order — `profile()` only sets the knobs it owns and
-    /// never clears explicit configuration. Prefer
+    /// in any order: `profile()` sets only the knobs it owns and never clears
+    /// explicit configuration. Prefer
     /// [`lean`](Self::lean) for a clean Lean baseline.
     ///
     /// Chain further `with_*` calls after `profile` to override individual
@@ -1237,9 +1220,8 @@ impl GenerationConfig {
                 self.enable_meta_attributes = false;
                 self.enable_dispatch = false;
                 self.domain_objects = false;
-                // ponytail: explicit conversion/domain-type settings survive
-                // profile() — they represent deliberate schema choices with
-                // higher precedence than a bulk surface preset.
+                // Conversions and domain types are left alone: they are
+                // per-schema choices, which outrank a size preset.
             }
         }
         self
@@ -1253,7 +1235,7 @@ impl GenerationConfig {
     /// Hooks fire in registration order. Use [`quote::quote!`] in your
     /// closure body to build the returned tokens.
     ///
-    /// # Example — serde `Serialize` for enums
+    /// # Example: serde `Serialize` for enums
     ///
     /// ```rust
     /// use ergo_sbe::{GenerationConfig, ItemContext};
@@ -1284,12 +1266,10 @@ impl GenerationConfig {
         !self.hooks.is_empty()
     }
 
-    /// Iterate all registered hooks.
+    /// Run every hook on `ctx` and append its tokens to `out`.
     pub(crate) fn run_hooks(&self, ctx: &ItemContext, out: &mut String) {
         for hook in self.hooks.iter() {
             for ts in hook(ctx) {
-                // Use TokenStream Display impl for formatting.
-                // For simple impl blocks this produces valid Rust.
                 use std::fmt::Write;
                 let _ = writeln!(out, "{}", ts);
             }
@@ -1305,10 +1285,10 @@ impl Default for GenerationConfig {
 
 /// Reject module names that are not valid for `mod name;` in generated Rust.
 ///
-/// `syn::parse_str::<syn::Ident>` alone accepts keywords (they parse as idents
-/// in isolation). We additionally reject strict keywords and reserved words
-/// that require a raw identifier (`r#gen`) under current/edition-reserved
-/// Rust editions — including 2024's `gen`.
+/// `syn::parse_str::<syn::Ident>` alone accepts keywords, which parse as idents
+/// in isolation, so strict keywords and reserved words that need a raw
+/// identifier (`r#gen`) in any edition, including 2024's `gen`, are rejected
+/// first.
 pub(crate) fn is_valid_module_ident(name: &str) -> bool {
     if name.is_empty()
         || name.contains('/')
@@ -1359,7 +1339,7 @@ mod tests {
     fn default_config_is_clean() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::default();
         assert_eq!(config.module_name(), "messages");
-        assert!(!config.domain_objects_enabled());
+        assert!(!config.domain_objects);
         assert!(!config.has_conversions());
         Ok(())
     }
@@ -1393,8 +1373,6 @@ mod tests {
         assert!(!lean.enable_meta_attributes);
         assert!(!lean.enable_dispatch);
         assert!(!lean.domain_objects);
-        // Explicit conversions and domain types survive Lean — they're
-        // deliberate schema choices with higher precedence than a bulk preset.
         assert!(
             lean.has_conversions(),
             "explicit conversions must survive Lean"
@@ -1473,7 +1451,10 @@ mod tests {
     #[test]
     fn with_external_sbe_rt_sets_path() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("m").with_external_sbe_rt("crate::rt::sbe_rt");
-        assert_eq!(config.external_sbe_rt_path(), Some("crate::rt::sbe_rt"));
+        assert_eq!(
+            config.external_sbe_rt_path.as_deref(),
+            Some("crate::rt::sbe_rt")
+        );
         Ok(())
     }
 
@@ -1495,7 +1476,7 @@ mod tests {
     fn new_config_has_correct_defaults() -> Result<(), Box<dyn std::error::Error>> {
         let config = GenerationConfig::new("mymod");
         assert_eq!(config.module_name(), "mymod");
-        assert!(!config.domain_objects_enabled());
+        assert!(!config.domain_objects);
         assert!(config.conversions.is_empty());
         assert!(config.domain_types.is_empty());
         assert_eq!(config.domain_var_data, DomainVarData::Bytes);
@@ -1508,10 +1489,10 @@ mod tests {
     #[test]
     fn with_domain_objects_var_data_modes() -> Result<(), Box<dyn std::error::Error>> {
         let text = GenerationConfig::new("m").with_domain_objects(DomainVarData::Strings);
-        assert!(text.domain_objects_enabled());
+        assert!(text.domain_objects);
         assert_eq!(text.domain_var_data, DomainVarData::Strings);
         let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
-        assert!(bytes.domain_objects_enabled());
+        assert!(bytes.domain_objects);
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
         Ok(())
     }

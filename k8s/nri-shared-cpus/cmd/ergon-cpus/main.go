@@ -6,8 +6,9 @@
 //	ergon-cpus hook --shared S          the OCI createRuntime hook
 //	ergon-cpus hook --isolated E --partition-child P   build the isolated child
 //	ergon-cpus hook --isolated E --release-child P     take it down (poststop)
-//	ergon-cpus [--env NAME=SPEC]... [--affinity shared|keep] [--fifo PRIO] -- cmd [args...]
+//	ergon-cpus [--env NAME=SPEC]... [--affinity shared|keep] [--ready-addr A] -- cmd [args...]
 //	ergon-cpus show                     print the container's CPU plan
+//	ergon-cpus ready --addr A           serve the placement readiness probe
 //
 // An app never writes a real CPU number: it pins its hot threads by index into
 // ERGON_ISOLATED_CPUS and leaves every helper on the shared CPUs. This tool
@@ -21,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/mimran1980/ergon/k8s/nri-shared-cpus/internal/cpuset"
@@ -50,6 +50,8 @@ func run(args, env []string, stdin *os.File, stdout, stderr *os.File) int {
 		return runHook(args[1:], stdin, stderr)
 	case "show":
 		return runShow(env, stdout, stderr)
+	case "ready":
+		return runReady(args[1:], env, stderr)
 	case "version", "--version":
 		fmt.Fprintf(stdout, "ergon-cpus %s\n", version)
 		return 0
@@ -75,7 +77,13 @@ func usage(w *os.File) {
   ergon-cpus hook --isolated E --partition-child P   build the isolated child cgroup
   ergon-cpus hook --isolated E --release-child P     take it back down (poststop)
   ergon-cpus show                               print the container's CPU plan as JSON
-  ergon-cpus [--env NAME=SPEC]... [--affinity shared|keep] [--fifo PRIO] -- cmd [args...]
+  ergon-cpus ready --addr HOST:PORT             serve the placement readiness probe
+  ergon-cpus [--env NAME=SPEC]... [--affinity shared|keep] [--ready-addr HOST:PORT] -- cmd [args...]
+
+--ready-addr starts "ergon-cpus ready" beside the command: an httpGet
+readiness probe on it gets 200 while cpuset.cpus.effective holds the
+isolated and shared CPUs, and 503 with the reason when it does not (a
+kubelet restart while the plugin is down shrinks it to the isolated CPUs).
 
 SPEC values for --env:
   isolated:<i>    the CPU at index i (from 0) of ERGON_ISOLATED_CPUS, not CPU i
@@ -179,13 +187,19 @@ func threadAllowed() []map[string]string {
 
 func runWrap(args []string, env []string, stderr *os.File) int {
 	var bindings []wrap.EnvBinding
-	affinity := "shared"
-	fifoPrio := 0
+	affinity, readyAddr := "shared", ""
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--":
-			return execRest(args[i+1:], env, bindings, affinity, fifoPrio, stderr)
+			return execRest(args[i+1:], env, bindings, affinity, readyAddr, stderr)
+		case a == "--ready-addr":
+			if i+1 >= len(args) || args[i+1] == "" {
+				fmt.Fprintln(stderr, "ergon-cpus: --ready-addr needs HOST:PORT")
+				return 2
+			}
+			readyAddr = args[i+1]
+			i++
 		case a == "--env":
 			if i+1 >= len(args) {
 				fmt.Fprintln(stderr, "ergon-cpus: --env needs NAME=SPEC")
@@ -209,18 +223,6 @@ func runWrap(args []string, env []string, stderr *os.File) int {
 				return 2
 			}
 			i++
-		case a == "--fifo":
-			if i+1 >= len(args) {
-				fmt.Fprintln(stderr, "ergon-cpus: --fifo needs a priority 1..99")
-				return 2
-			}
-			p, err := strconv.Atoi(args[i+1])
-			if err != nil || p < 1 || p > 99 {
-				fmt.Fprintf(stderr, "ergon-cpus: --fifo %q must be a priority 1..99\n", args[i+1])
-				return 2
-			}
-			fifoPrio = p
-			i++
 		case a == "--version":
 			fmt.Printf("ergon-cpus %s\n", version)
 			return 0
@@ -233,7 +235,7 @@ func runWrap(args []string, env []string, stderr *os.File) int {
 	return 2
 }
 
-func execRest(argv, env []string, bindings []wrap.EnvBinding, affinity string, fifoPrio int, stderr *os.File) int {
+func execRest(argv, env []string, bindings []wrap.EnvBinding, affinity, readyAddr string, stderr *os.File) int {
 	if len(argv) == 0 {
 		fmt.Fprintln(stderr, "ergon-cpus: no command after --")
 		return 2
@@ -248,17 +250,32 @@ func execRest(argv, env []string, bindings []wrap.EnvBinding, affinity string, f
 		fmt.Fprintf(stderr, "ergon-cpus: %v\n", err)
 		return 1
 	}
-	if affinity == "shared" {
-		// init() already locked this goroutine to its OS thread.
+	// init() already locked this goroutine to its OS thread.
+	var keep cpuset.Set
+	if readyAddr != "" && affinity == "keep" {
+		if keep, err = wrap.SelfAffinity(); err != nil {
+			fmt.Fprintf(stderr, "ergon-cpus: own affinity: %v\n", err)
+			return 1
+		}
+	}
+	if affinity == "shared" || readyAddr != "" {
 		if err := wrap.PinSelf(plan.Shared); err != nil {
 			fmt.Fprintf(stderr, "ergon-cpus: start on the shared CPUs %s: %v\n", plan.Shared.List(), err)
 			return 1
 		}
 	}
-	if fifoPrio > 0 {
-		if err := wrap.SetFifo(fifoPrio); err != nil {
+	if readyAddr != "" {
+		// The probe child starts from this thread, so it runs on the shared
+		// CPUs whatever --affinity says about the command.
+		if err := startReady(readyAddr, env); err != nil {
 			fmt.Fprintf(stderr, "ergon-cpus: %v\n", err)
 			return 1
+		}
+		if affinity == "keep" {
+			if err := wrap.PinSelf(keep); err != nil {
+				fmt.Fprintf(stderr, "ergon-cpus: restore own affinity %s: %v\n", keep.List(), err)
+				return 1
+			}
 		}
 	}
 	newEnv := mergeEnv(env, assigns)

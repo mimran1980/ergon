@@ -616,7 +616,7 @@ fn all_issue_schemas_codegen() -> Result<(), Box<dyn std::error::Error>> {
             sources: Vec::new(),
             tokens: vec![],
         });
-        // Module names must be Rust identifiers (T-3); hyphens become underscores.
+        // Module names must be Rust identifiers; hyphens become underscores.
         let module_name = format!("issue{}", num.replace('-', "_"));
         let mut generator =
             ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name.clone()));

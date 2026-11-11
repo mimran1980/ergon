@@ -398,54 +398,57 @@ fn k5_takes_an_unlimited_memlock_for_mlockall() -> R {
     Ok(())
 }
 
-// ----------------------------------------------------- K6 memory / pressure
+// ------------------------------------------------------- K6 memory.high
 
 #[test]
-fn k6_is_ok_with_no_memory_high_and_no_pressure() -> R {
+fn k6_is_ok_with_no_memory_high_whatever_the_pressure() -> R {
+    // PSI is not read: a non-zero avg10 has no measured threshold, so it
+    // must not turn a cgroup without memory.high into a warning.
     let f = pod_at("k6-quiet", QOS_BURSTABLE, Some("2"))?;
     let dir = format!("/sys/fs/cgroup{QOS_BURSTABLE}");
     f.file(&format!("{dir}/memory.high"), "max\n")?;
-    f.file(
-        &format!("{dir}/cpu.pressure"),
-        "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
-    )?;
-    let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k6 = by_id(&v, "K6")?;
-    assert_eq!(k6.status, Status::Ok, "{v:#?}");
-    assert!(k6.message.contains("no memory.high"), "{}", k6.message);
-    Ok(())
-}
-
-#[test]
-fn k6_warns_on_memory_high_and_on_pressure() -> R {
-    let f = pod_at("k6-high", QOS_BURSTABLE, Some("2"))?;
-    let dir = format!("/sys/fs/cgroup{QOS_BURSTABLE}");
-    f.file(&format!("{dir}/memory.high"), "800000000\n")?;
     f.file(
         &format!("{dir}/memory.pressure"),
         "some avg10=2.50 avg60=1.00 avg300=0.10 total=98765\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
     let k6 = by_id(&v, "K6")?;
+    assert_eq!(k6.status, Status::Ok, "{v:#?}");
+    assert!(k6.message.contains("no memory.high"), "{}", k6.message);
+    assert!(!k6.message.contains("pressure"), "{}", k6.message);
+    Ok(())
+}
+
+#[test]
+fn k6_warns_on_memory_high() -> R {
+    let f = pod_at("k6-high", QOS_BURSTABLE, Some("2"))?;
+    let dir = format!("/sys/fs/cgroup{QOS_BURSTABLE}");
+    f.file(&format!("{dir}/memory.high"), "800000000\n")?;
+    let v = k8s_checks(&f.host(), &hot(), &needs());
+    let k6 = by_id(&v, "K6")?;
     assert!(k6.is_warning(), "{v:#?}");
     let m = &k6.message;
     assert!(m.contains("memory.high is `800000000`"), "{m}");
-    assert!(m.contains("memory.pressure some avg10 2.5"), "{m}");
     assert!(m.contains("Fix (pod spec):"), "{m}");
     assert!(m.contains("Fix (node):"), "{m}");
     Ok(())
 }
 
 #[test]
-fn k6_is_unknown_when_there_is_no_pressure_evidence() -> R {
-    // No memory.high and no PSI file is not "no pressure": it is a kernel or
-    // a cgroup that will not say. The check must not report success.
+fn k6_is_unknown_without_a_memory_high_file() -> R {
+    // No memory.high file is a cgroup that will not say (cgroup v1), not one
+    // without a limit. A PSI file next to it proves nothing about the limit.
     let f = pod_at("k6-nofiles", QOS_BURSTABLE, Some("2"))?;
+    let dir = format!("/sys/fs/cgroup{QOS_BURSTABLE}");
+    f.file(
+        &format!("{dir}/cpu.pressure"),
+        "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+    )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
     let k6 = by_id(&v, "K6")?;
     assert!(
         !matches!(k6.status, Status::Ok),
-        "missing pressure evidence must not pass: {v:#?}"
+        "a missing memory.high must not pass: {v:#?}"
     );
     assert!(k6.is_unknown(), "{v:#?}");
     Ok(())

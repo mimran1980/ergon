@@ -84,9 +84,25 @@ PRUNE = {"target", "aeron", "simple-binary-encoding", "node_modules"}
 root_lock = root / "Cargo.lock"
 
 
+def ignored_dirs():
+    # A directory git ignores (tmp/, scratch copies of old checkouts) is not
+    # part of the tree. A sample's own lock is an ignored file in a directory
+    # git does not ignore, so it is still read. No git repo: nothing skipped.
+    out = run("git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
+    if out.returncode != 0:
+        return set()
+    return {(root / p).resolve() for p in out.stdout.split("\0") if p.endswith("/")}
+
+
 def other_locks():
+    ignored = ignored_dirs()
     for directory, dirs, files in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in PRUNE and not d.startswith("."))
+        here = pathlib.Path(directory)
+        dirs[:] = sorted(
+            d
+            for d in dirs
+            if d not in PRUNE and not d.startswith(".") and (here / d).resolve() not in ignored
+        )
         lock = pathlib.Path(directory) / "Cargo.lock"
         if "Cargo.lock" in files and lock != root_lock:
             yield lock

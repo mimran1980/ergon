@@ -159,6 +159,48 @@ restart_kubelet() {
     fi
 }
 
+# Park the DaemonSet on a nodeSelector that matches nothing, or put it back.
+# The node label stays on, so the test pods still schedule; only the plugin
+# goes away. (Removing the node label would unschedule every pod that
+# carries nodeSelector ergon.io/shared-cpus=true.)
+set_plugin_selector() {
+    kube -n ergon-system patch ds ergon-shared-cpus --type=json \
+        -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/nodeSelector\",\"value\":{\"ergon.io/shared-cpus\":\"$1\"}}]" >/dev/null
+}
+plugin_gone() {
+    local names
+    names=$(kube -n ergon-system get pods -l app=ergon-shared-cpus -o name 2>/dev/null) || return 0
+    ! grep -q . <<<"$names"
+}
+plugin_ready() {
+    local ready
+    ready=$(kube -n ergon-system get pods -l app=ergon-shared-cpus \
+        -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null) || return 1
+    grep -q true <<<"$ready"
+}
+
+pod_ready() { # the pod's Ready condition: True, False or empty
+    kube get pod "$1" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null
+}
+ready_is() { test "$(pod_ready "$1")" = "$2"; }
+
+# placement <pod>: the body of the pod's ergon-cpus --ready-addr endpoint,
+# then its HTTP code as the last word. Fetched on the node, so it reaches the
+# pod IP the way the kubelet's probe does and runs nothing inside the pod.
+placement() {
+    local ip
+    ip=$(kube get pod "$1" -n "$NS" -o jsonpath='{.status.podIP}' 2>/dev/null)
+    node_exec curl -s -m 2 -w ' %{http_code}' "http://$ip:8086/placement" 2>/dev/null || echo "unreachable 000"
+}
+
+logged_since() { # logged_since <pod> <since RFC3339> <pattern>
+    local logs
+    logs=$(kube logs "$1" -n "$NS" --since-time="$2" --tail=-1 2>/dev/null) || return 1
+    grep -q -- "$3" <<<"$logs"
+}
+
+ts_ns() { node_exec date -u -d "$1" +%s%N; } # RFC3339 -> ns since the epoch (GNU date on the node)
+
 # ---------------------------------------------------------------- checks
 
 step_failed=0
@@ -194,7 +236,7 @@ cleanup() {
     local rc=$?
     set +e
     say ""
-    say "########## step 18: cleanup ##########"
+    say "########## step 19: cleanup ##########"
     say "deleting everything this run created (script exit rc=$rc)..."
 
     if docker volume inspect "$TOOLS_VOL" >/dev/null 2>&1; then
@@ -391,6 +433,12 @@ step4_pod_a() {
     sleep 1
 
     local out
+    must wait_for 30 "pod A Ready" ready_is a True || return 1
+    out=$(placement a)
+    say "  placement endpoint: $out"
+    check "pod A is Ready: ergon-cpus --ready-addr answers 200 placement verified" \
+        bash -c '[[ $1 == "placement verified"*" 200" ]]' _ "$out"
+
     out=$(probe a) || { say "  FAIL: pin-test probe did not run"; return 1; }
     printf '%s\n' "$out" | sed 's/^/  | /'
     printf '%s\n' "$out" >/tmp/ergon-nri-probe-a.txt
@@ -449,6 +497,19 @@ step4_pod_a() {
     [[ $ok -eq 1 ]] || step_failed=1
 
     check "cpu.max = max 100000 (no CFS quota)" test "$qmax" = "max 100000"
+
+    # The ready child must run on S only, whatever --affinity says: it has to
+    # keep answering while the exclusive CPUs are busy, and it must not
+    # compete with the hot thread. Found by argv in /proc (the image has sh
+    # and grep, no ps); the [r] keeps this script's own argv from matching.
+    local rmask
+    rmask=$(kube exec a -n "$NS" -- sh -c 'for p in /proc/[0-9]*; do
+        if tr "\0" " " <"$p/cmdline" 2>/dev/null | grep -q "ergon-cpus ready --add[r]"; then
+            sed -n "s/^Cpus_allowed_list:[[:space:]]*//p" "$p/status"; break
+        fi; done' | tr -d '\r')
+    say "  ergon-cpus ready child Cpus_allowed_list: ${rmask:-not found}"
+    check "the ergon-cpus ready child's Cpus_allowed_list == S" \
+        cmp -s <(printf '%s\n' "$rmask" | cpus_of) <(cpus_of </tmp/s.txt)
     return $step_failed
 }
 
@@ -573,6 +634,14 @@ step8_kubelet_restart() {
     say "  cpuset.cpus.effective after restart = $eff"
     check "cpuset still E union S" cmp -s <(printf '%s\n' "$eff" | cpus_of) /tmp/eu.txt
 
+    # A kubelet restart resets its probe results, so Ready alone could flip
+    # for that reason. The probe's own log says whether placement broke.
+    must wait_for 60 "pod A Ready after the restart" ready_is a True || true
+    out=$(placement a)
+    check "placement still 200 with the plugin up" bash -c '[[ $1 == *" 200" ]]' _ "$out"
+    check "the probe never saw placement broken" bash -c \
+        "! docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf logs a -n $NS --tail=-1 | grep -q 'placement broken'"
+
     check "no VIOLATION lines so far" bash -c \
         "! docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf logs a -n $NS --tail=-1 | grep -q VIOLATION"
     return $step_failed
@@ -585,16 +654,11 @@ step9_plugin_down() {
     # plugin is down the kubelet rewrites the cpuset to the exclusive CPUs
     # and helpers run there. Recovery does not prove the contract held
     # during the outage. required-plugins protects creation, not a pod that
-    # is already running.
-    # Park the DaemonSet on a nodeSelector that matches nothing. The node
-    # label stays on, so the test pods below still schedule; only the plugin
-    # goes away. (Removing the node label would unschedulable every pod that
-    # carries nodeSelector ergon.io/shared-cpus=true.)
-    must kube -n ergon-system patch ds ergon-shared-cpus --type=json \
-        -p '[{"op":"replace","path":"/spec/template/spec/nodeSelector","value":{"ergon.io/shared-cpus":"off"}}]' >/dev/null || return 1
+    # is already running. What a running pod gets is detection: its
+    # ergon-cpus --ready-addr probe fails and the pod leaves Ready.
+    must set_plugin_selector off || return 1
     say "DaemonSet parked; waiting for the plugin pod to go away"
-    must wait_for 60 "plugin pod gone" \
-        bash -c "! docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf -n ergon-system get pods -l app=ergon-shared-cpus -o name | grep -q ." || return 1
+    must wait_for 60 "plugin pod gone" plugin_gone || return 1
 
     restart_kubelet
     say "waiting 30 s for the kubelet to re-write cpusets without the plugin..."
@@ -613,6 +677,16 @@ step9_plugin_down() {
         bash -c "! grep -q 'VIOLATION hot' <<<\"$logs\""
     say "  VIOLATION lines so far: $(printf '%s\n' "$logs" | grep -c VIOLATION || true)"
     printf '%s\n' "$logs" | grep VIOLATION | head -3 | sed 's/^/  | /'
+
+    local pl
+    pl=$(placement a)
+    say "  placement endpoint: $pl"
+    check "placement endpoint is 503 while the shared CPU is missing" bash -c '[[ $1 == *" 503" ]]' _ "$pl"
+    check "it names the missing shared CPU" bash -c '[[ $1 == *"ERGON_SHARED_CPUS is "*", which is not in "* ]]' _ "$pl"
+    must wait_for 30 "pod A NotReady" ready_is a False || true
+    check "pod A is NotReady" ready_is a False
+    check "the probe logged placement broken" bash -c \
+        "docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf logs a -n $NS --tail=-1 | grep -q 'ergon-cpus ready: placement broken'"
 
     must docker cp "$MANIFESTS/pod-b.yaml" "$NODE:/root/pod-b.yaml" || return 1
     must docker cp "$MANIFESTS/pod-c.yaml" "$NODE:/root/pod-c.yaml" || return 1
@@ -667,11 +741,9 @@ step9_plugin_down() {
 step10_plugin_back() {
     step_failed=0
     need_layout || return 1
-    must kube -n ergon-system patch ds ergon-shared-cpus --type=json \
-        -p '[{"op":"replace","path":"/spec/template/spec/nodeSelector","value":{"ergon.io/shared-cpus":"true"}}]' >/dev/null || return 1
+    must set_plugin_selector true || return 1
     say "DaemonSet restored; waiting for the plugin"
-    must wait_for 120 "plugin pod Ready" \
-        bash -c "docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf -n ergon-system get pods -l app=ergon-shared-cpus -o jsonpath='{.items[0].status.containerStatuses[0].ready}' | grep -q true" || return 1
+    must wait_for 120 "plugin pod Ready" plugin_ready || return 1
     sleep 8
 
     local out eff logs v1 v2
@@ -680,8 +752,22 @@ step10_plugin_back() {
     say "  cpuset.cpus.effective after restore = $eff"
     check "Synchronize re-widened A to E union S" cmp -s <(printf '%s\n' "$eff" | cpus_of) /tmp/eu.txt
 
+    # Readiness resumes only after placement is verified: the probe's first
+    # "verified" line after it broke comes after the plugin's re-widen.
+    must wait_for 60 "pod A Ready again" ready_is a True || true
+    check "pod A is Ready again" ready_is a True
+    local t_rw t_ok
+    t_rw=$(kube logs -n ergon-system -l app=ergon-shared-cpus --tail=-1 --timestamps 2>/dev/null |
+        grep 'sync: re-widen' | grep 'ergon-e2e/a' | tail -1 | awk '{print $1}')
+    t_ok=$(kube logs a -n "$NS" --tail=-1 --timestamps 2>/dev/null |
+        awk '/placement broken/{b=1} b && /placement verified/{print $1; exit}')
+    say "  plugin re-widen at $t_rw; probe verified at $t_ok"
+    check "the probe verified placement only after the re-widen" \
+        test -n "$t_rw" -a -n "$t_ok" -a "$(ts_ns "${t_ok:-0}")" -ge "$(ts_ns "${t_rw:-0}")"
+
     logs=$(kube logs a -n "$NS" --tail=-1 || true)
-    check "hot thread never moved" bash -c "! grep -q 'VIOLATION hot' <<<\"$logs\""
+    # Piped, not passed to bash -c: a slow host's helper log outgrows ARG_MAX.
+    check "hot thread never moved" bash -c "! grep -q 'VIOLATION hot'" <<<"$logs"
     v1=$(printf '%s\n' "$logs" | grep -c VIOLATION || true)
     sleep 3
     logs=$(kube logs a -n "$NS" --tail=-1 || true)
@@ -891,6 +977,108 @@ step17_capacity() {
     return $step_failed
 }
 
+# dist <label>: n, min, p50, p99, p99.99 and max (nearest rank) of the numbers
+# on stdin. At small n the high percentiles are the max.
+dist() {
+    sort -n | awk -v l="$1" '
+        function r(p,  k) { k = int(p * n); if (k < p * n) k++; if (k < 1) k = 1; return k }
+        { v[NR] = $1 }
+        END {
+            n = NR
+            if (n == 0) { printf "  %-28s %4d\n", l, 0; exit }
+            printf "  %-28s %4d %9.1f %9.1f %9.1f %9.1f %9.1f\n", l, n, v[1], v[r(0.5)], v[r(0.99)], v[r(0.9999)], v[n]
+        }'
+}
+
+# One outage of the plugin with pod A running: park the plugin, restart the
+# kubelet (it rewrites A's cpuset to the exclusive CPUs), hold the outage,
+# bring the plugin back. Appends one row of timings in ms to /tmp/ergon-nri-outage.tsv.
+outage_cycle() {
+    local i=$1 dir=$2 hold=$3 eu=$4
+    local since trace="/tmp/ergon-nri-cpuset-trace-$i.txt" stop="/tmp/ergon-e2e-trace-stop-$i" tpid
+    local iso0 iso1 t_unpark
+    since=$(node_exec date -u +%Y-%m-%dT%H:%M:%SZ)
+    iso0=$(kube logs a -n "$NS" --tail=-1 2>/dev/null | awk -F'isolated_ns=' '/VIOLATION helper/{v=$2} END{print v+0}')
+    # Ground truth: the node's own view of the container's cpuset, read every
+    # 20 ms, one timestamped line per change. It stops on a marker file (a
+    # killed docker exec client would leave the loop running in the node).
+    docker exec "$NODE" bash -c "p=; end=\$((SECONDS + 900)); while [ ! -e $stop ] && [ \$SECONDS -lt \$end ]; do v=\$(cat '$dir/cpuset.cpus.effective' 2>/dev/null); if [ \"\$v\" != \"\$p\" ]; then echo \"\$(date +%s%N) \$v\"; p=\$v; fi; sleep 0.02; done" >"$trace" 2>/dev/null &
+    tpid=$!
+
+    must set_plugin_selector off || return 1
+    must wait_for 60 "cycle $i: plugin pod gone" plugin_gone || return 1
+    restart_kubelet
+    must wait_for 120 "cycle $i: the probe says placement broken" logged_since a "$since" 'placement broken' || true
+    must wait_for 60 "cycle $i: pod A NotReady" ready_is a False || true
+    sleep "$hold"
+    t_unpark=$(node_exec date +%s%N)
+    must set_plugin_selector true || return 1
+    must wait_for 120 "cycle $i: plugin pod Ready" plugin_ready || return 1
+    must wait_for 120 "cycle $i: pod A Ready" ready_is a True || true
+    sleep 2 # the helper's last 10 ms rounds and the trace's last read
+    node_exec touch "$stop"
+    wait "$tpid" 2>/dev/null || true
+
+    local logs t_shrink t_widen t_detect t_ok n_viol t_last
+    t_shrink=$(while read -r ts v; do
+        [[ -n "$v" && "$(printf '%s\n' "$v" | cpus_of | paste -sd, -)" != "$eu" ]] && { echo "$ts"; break; }
+    done <"$trace")
+    t_widen=$(awk -v s="${t_shrink:-0}" '$1 > s' "$trace" | while read -r ts v; do
+        [[ "$(printf '%s\n' "$v" | cpus_of | paste -sd, -)" == "$eu" ]] && { echo "$ts"; break; }
+    done)
+    logs=$(kube logs a -n "$NS" --since-time="$since" --tail=-1 --timestamps 2>/dev/null)
+    t_detect=$(printf '%s\n' "$logs" | awk '/placement broken/{print $1; exit}')
+    t_ok=$(printf '%s\n' "$logs" | awk '/placement broken/{b=1} b && /placement verified/{print $1; exit}')
+    t_last=$(printf '%s\n' "$logs" | awk '/VIOLATION helper/{t=$1} END{print t}')
+    n_viol=$(printf '%s\n' "$logs" | grep -c 'VIOLATION helper' || true)
+    iso1=$(kube logs a -n "$NS" --tail=-1 2>/dev/null | awk -F'isolated_ns=' '/VIOLATION helper/{v=$2} END{print v+0}')
+    if [[ -z "$t_shrink" || -z "$t_widen" || -z "$t_detect" || -z "$t_ok" ]]; then
+        say "  FAIL: cycle $i: missing a mark (shrink=$t_shrink widen=$t_widen detect=$t_detect verified=$t_ok)"
+        step_failed=1
+        return 1
+    fi
+    t_detect=$(ts_ns "$t_detect")
+    t_ok=$(ts_ns "$t_ok")
+    t_last=$([[ -n "$t_last" ]] && ts_ns "$t_last" || echo "$t_widen")
+    # t_widen comes from the node's 20 ms poll, so it can lag the real re-widen by up to 20 ms.
+    check "cycle $i: the probe verified placement only after the cpuset was whole again" test "$t_ok" -ge "$((t_widen - 20000000))"
+    check "cycle $i: the helper ran on an exclusive CPU (the harm is real)" test "$n_viol" -gt 0
+    awk -v i="$i" -v sh="$t_shrink" -v wd="$t_widen" -v dt="$t_detect" -v ok="$t_ok" -v un="$t_unpark" \
+        -v la="$t_last" -v nv="$n_viol" -v i0="$iso0" -v i1="$iso1" 'BEGIN {
+        printf "%d\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%d\n", i, (dt-sh)/1e6, (wd-sh)/1e6, (wd-un)/1e6,
+            (ok-wd)/1e6, (la-wd)/1e6, (i1-i0)/1e6, nv }' >>"/tmp/ergon-nri-outage.tsv"
+    tail -1 "/tmp/ergon-nri-outage.tsv" | sed 's/^/  row: /'
+}
+
+step18_outage_cycles() {
+    step_failed=0
+    need_layout || return 1
+    local cycles=${E2E_OUTAGE_CYCLES:-2} hold=${E2E_OUTAGE_HOLD_S:-5} id dir eu i c
+    id=$(kube get pod a -n "$NS" -o jsonpath='{.status.containerStatuses[0].containerID}' | sed 's|.*://||')
+    dir=$(node_exec sh -c "find /sys/fs/cgroup -type d -name '*$id*' 2>/dev/null | head -1")
+    say "  pod A container cgroup on the node: ${dir:-not found}"
+    must test -n "$dir" || return 1
+    eu=$(paste -sd, - </tmp/eu.txt)
+    : >"/tmp/ergon-nri-outage.tsv"
+    say "  uptime: $(uptime)"
+    say "  $cycles cycles; outage held ${hold} s after detection; probe periodSeconds 1; helper burns 5 ms per 10 ms round"
+    for ((i = 1; i <= cycles; i++)); do
+        outage_cycle "$i" "$dir" "$hold" "$eu" || step_failed=1
+    done
+    say "  uptime: $(uptime)"
+    say ""
+    say "  functional timings on kind (not a latency platform), ms; p99.99 is the max at this n"
+    printf '  %-28s %4s %9s %9s %9s %9s %9s\n' metric n min p50 p99 p99.99 max
+    c=2
+    for m in "detect: shrink -> probe 503" "harm: shrink -> whole" "recover: plugin -> whole" \
+        "verify: whole -> probe 200" "helper back: whole -> last" "helper CPU on exclusive"; do
+        cut -f"$c" "/tmp/ergon-nri-outage.tsv" | dist "$m"
+        c=$((c + 1))
+    done
+    cut -f8 "/tmp/ergon-nri-outage.tsv" | dist "helper rounds off S (count)"
+    return $step_failed
+}
+
 # kube_in is used by step 14: pipe a host file into kubectl on the node.
 kube_in() {
     local file=$1
@@ -926,6 +1114,7 @@ run_step 14 "API: 500m is not an integer" step14_api_integer
 run_step 15 "opt-out keeps the whole cpuset" step15_opt_out
 run_step 16 "annotation fallback" step16_fallback
 run_step 17 "capacity: oversubscription 50 = 100000" step17_capacity
+run_step 18 "plugin outages: detect, NotReady, recover (timed)" step18_outage_cycles
 
 say ""
 say "================ summary ================"

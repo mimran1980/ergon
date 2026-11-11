@@ -1,4 +1,4 @@
-# Aeron try_claim Integration
+# Aeron try_claim integration
 
 ergo-sbe's exact sizing is built for encoding straight into a claimed
 region: size the frame, claim exactly that many bytes, encode into the claim,
@@ -6,6 +6,29 @@ commit. No scratch buffer, no copy. Connecting and adding the publication:
 [rusteron-client](https://docs.rs/rusteron-client). The generated `send` and `send_fixed` do
 the last three steps and check the result, so a frame that does not fill its
 claim is a typed error and the claim is aborted, never a corrupt publication.
+
+<div class="ergon-anim" data-anim="try-claim-send" data-title="try_claim: encode straight into the publication's term buffer"></div>
+
+*Animation, in words:* the Note from the examples below, body
+`"rebalance at close"`, is 34 bytes (header 8, `noteId` 4, length prefix 4,
+body 18), and `compute_length_with_header(18)` gives that before any buffer
+exists. `try_claim_owned(34)` moves the log's tail on by 96 bytes (Aeron's
+32-byte header plus 34, rounded up to 32) and writes the header with a
+negative length, −66, so subscribers stop in front of the frame. `send` wraps
+the encoder on the claimed bytes and writes the header, `noteId`, length and
+body in place; `send_frame` checks 34 against 34 and the header template,
+then `commit` stores +66 and subscribers read past the frame. A 35-byte claim
+fails with `LengthMismatch`, and a 19-byte body in a claim sized for 18
+fails with `BufferTooShort` after only the header and `noteId` are written
+(the setter checks room before it writes); either way
+the claim is aborted, Aeron turns the frame into padding, and subscribers
+skip it. The offer route zeroes a 34-byte scratch buffer, encodes into it,
+and `offer` copies the 34 bytes into the log: three writes of the frame
+against one. `AeronCluster::try_claim(34)` claims 32 + 34 bytes and writes
+the 32-byte `SessionMessageHeader` first; the Note goes into
+`payload_mut()`. try_claim needs the exact length first, fits one frame
+only, and stalls subscribers while a claim is open. These are byte counts
+from the code, not timings.
 
 ## The `Claim` trait
 
@@ -32,15 +55,15 @@ impl messages::sbe_rt::Claim for AeronClaim {
 }
 ```
 
-`send` calls `abort` whenever it publishes nothing — an encoder error, a
-length or header mismatch, and while unwinding from a panic in your closure —
+`send` calls `abort` whenever it publishes nothing (an encoder error, a
+length or header mismatch, or unwinding from a panic in your closure),
 so the term-buffer slot is released at once rather than after Aeron's unblock
 timeout.
 
 No encoder writes a block's padding (the bytes past its last field, up to the
 schema's `blockLength`), so they go out as the claimed region held them. An
 Aeron `try_claim` region starts zeroed by the transport; the cost of that
-zeroing is **not measured** here. A `Claim` you implement over a region the
+zeroing is not measured here. A `Claim` you implement over a region the
 transport reuses must hand it out zeroed, as `OfferClaim` (below) does.
 
 ## Fixed-only messages: `send_fixed`
@@ -59,7 +82,7 @@ Size the frame with the encoder's `compute_length*` helpers (or the staged
 `EncodedLength` builder for nested groups), claim that length, and hand
 `send` a closure that writes the message. The closure receives the encoder
 already wrapped on the claim, header written, and must return the message's
-terminal stage — so a frame with tails still to write does not compile:
+terminal stage, so a frame with tails still to write does not compile:
 
 ```rust,ignore
 let len = NoteEncoder::compute_length_with_header(body.len());
@@ -73,7 +96,7 @@ for a different frame would otherwise publish stale bytes or a truncated
 message) and that it starts with the message's own header. Each failure has
 its own `SendError` variant: `Encode` for the encoder's error,
 `LengthMismatch`, `HeaderMismatch`, and `Commit` for the transport refusing
-the frame — the only case where the claim was not aborted, because the
+the frame, the only case where the claim was not aborted, because the
 transport already had it.
 
 ## Offer-style transports: `OfferClaim`
@@ -96,7 +119,7 @@ previous frame's bytes in the next one's padding:
 ```rust,no_run
 {{#include ../../../examples/claim-send.rs:length_mismatch}}
 ```
-*(From `book/examples/claim-send.rs` — compiled against the feature-tour codec.)*
+*(From `book/examples/claim-send.rs`, compiled against the feature-tour codec.)*
 
 ## Encoding an application type
 

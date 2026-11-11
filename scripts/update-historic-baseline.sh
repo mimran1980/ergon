@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# update-historic-baseline.sh — snapshot current ergo historic benchmarks
+# update-historic-baseline.sh: snapshot current ergo historic benchmarks
 # into sbe/benchmarks/ergo-historic-baseline.env.
 set -euo pipefail
 

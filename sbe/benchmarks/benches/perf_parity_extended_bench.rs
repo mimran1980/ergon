@@ -219,13 +219,21 @@ fn decode_group_with_data_tool(buf: &[u8], msg_offset: usize, bl: u16, version: 
     };
     let dec = StDecoder::default().wrap(ReadBuf::new(buf), 8 + msg_offset, bl, version);
     let tag1 = dec.tag_1();
+    // The same walk as ergon's `into_entries`: every entry until the count is
+    // exhausted, then back to the message with the limit after the group.
     let mut entries = dec.entries_decoder();
-    assert!(entries.advance().expect("advance").is_some());
-    let symbol = entries.tag_group_1();
-    let tag2 = entries.tag_group_2();
-    let coords = entries.var_data_field_decoder();
-    let var = entries.var_data_field_slice(coords);
-    fold_group_entry(tag1, &symbol, tag2, var)
+    let mut total = 0u32;
+    while entries.advance().expect("advance").is_some() {
+        let symbol = entries.tag_group_1();
+        let tag2 = entries.tag_group_2();
+        let coords = entries.var_data_field_decoder();
+        let var = entries.var_data_field_slice(coords);
+        total = fold_group_entry(tag1, &symbol, tag2, var);
+    }
+    // Discarded like ergon's next stage: `black_box`ing only this arm's
+    // parent stored a whole decoder per op that ergon never pays.
+    entries.parent().expect("entries parent");
+    total
 }
 
 fn assert_group_with_data_value_parity(encoded: &[u8], bl: usize, version: u16) {

@@ -1,5 +1,5 @@
 //! Demonstrates the poll-driven `async_connect()` and zero-copy
-//! `try_claim()` — the two Java-parity features.
+//! `try_claim()`, the two Java-parity features.
 //!
 //! ```bash
 //! cargo run -p ergo-aeron-cluster-test-harness --example async_connect_demo

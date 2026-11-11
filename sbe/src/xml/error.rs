@@ -193,16 +193,16 @@ impl From<crate::resolve::ResolveError> for ParseError {
     }
 }
 
-/// Build a [`miette::NamedSource`] with the real source name, not the
-/// old hardcoded `"schema.xml"`. Callers thread the name from [`WarnState`]
-/// (set by the entry point — file path or `"<xml>"`).
+/// Build a [`miette::NamedSource`] under the source's real name, which
+/// callers take from [`WarnState`]: the file path, or `"<xml>"` for inline
+/// input.
 pub(crate) fn named_source(name: &str, xml: &str) -> miette::NamedSource<String> {
     miette::NamedSource::new(name, xml.to_owned())
 }
 
-/// Internal, source-free error — converted to [`ParseError`] at the boundary,
-/// where the parsed source text is known. Keeps the recursive helpers cheap and
-/// free of source-cloning on the success path.
+/// Internal error without the source text, converted to [`ParseError`] at the
+/// boundary where that text is known, so the recursive helpers never clone
+/// the source.
 #[derive(Debug)]
 pub(crate) struct Fault {
     pub(crate) kind: FaultKind,

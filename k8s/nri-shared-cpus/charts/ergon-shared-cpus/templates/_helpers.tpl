@@ -81,7 +81,6 @@ devRoot: {{ .devRoot | default "/host/dev" | quote }}
 seccomp:
   ioUring: {{ $io | quote }}
 seccompProfilePath: {{ .seccompProfilePath | default "/etc/ergon-shared-cpus/ergon-io-uring.json" | quote }}
-schedFifo: {{ .schedFifo | default "off" | quote }}
 ptp: {{ .ptp | default "off" | quote }}
 hugepagesAeronDir: {{ .hugepagesAeronDir | default "" | quote }}
 {{- with .rlimits }}

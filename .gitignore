@@ -49,3 +49,10 @@ book/mermaid-init.js
 /Idle2.java
 /Idle2.class
 /*.profraw
+
+# Plans, handovers and backlogs are working notes, never committed.
+/docs/plans/
+/docs/backlog/
+/docs/specs/
+HANDOVER*.md
+TODO-PLAN*.md

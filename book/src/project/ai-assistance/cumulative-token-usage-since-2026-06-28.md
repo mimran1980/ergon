@@ -1,25 +1,29 @@
 # Cumulative token usage (since 2026-06-28)
 
-Per-model figures for Claude Code, Codex, and Grok Build CLI. The other
-machine's per-model high-water mark — every `ccusage` snapshot committed to
-this file (2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15, 2026-08-19,
-2026-08-20, 2026-08-27, 2026-09-07, 2026-09-13 and 2026-09-14, plus the
-2026-10-13 run) — is added to this MacBook's local `ccusage` 20.0.40 reads on
-2026-10-21. A later `npx ccusage@latest --since 2026-06-01 -b` that day raised
-only the Grok row. It did not replace the other machine, and it did not drop
-Codex usage from before 2026-06-01. The two ledgers are summed. A `ccusage`
-run on either machine alone will not match this table.
+Per-model figures for Claude Code, Codex, and Grok Build CLI, summed over
+two machines: a Mac mini (called "the other machine" in the older notes
+below) and a MacBook. Each machine's figure is a per-model, per-column
+high-water mark of its own `ccusage` reads. Both machines were last read on
+2026-11-05. The Mac mini's earlier mark comes from every `ccusage` snapshot
+committed to this file (2026-08-03, 2026-08-07, 2026-08-13, 2026-08-15,
+2026-08-19, 2026-08-20, 2026-08-27, 2026-09-07, 2026-09-13 and 2026-09-14,
+plus the 2026-10-13 run); the MacBook's from its reads on 2026-10-21. Claude
+Code transcripts from 2026-10-13 to 2026-11-03 exist on both machines,
+because the MacBook's were copied to the Mac mini on 2026-11-03; those days
+count once. A `ccusage` run on either machine alone will not match this
+table.
 
 | Model | Input | Output | Cache Create | Cache Read | Reasoning Output | Total Tokens | Cost (USD) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | claude-fable-5 | 403,485 | 1,349,254 | 12,230,126 | 487,557,778 | — | 501,540,643 | $802.28 |
 | claude-haiku-4-5-20251001 | 936 | 31,021 | 203,279 | 10,487,325 | — | 10,722,561 | $1.56 |
-| claude-opus-4-8 | 189,029 | 553,025 | 4,804,415 | 97,619,868 | — | 103,166,337 | $99.09 |
-| claude-opus-5 | 13,757,961 | 4,705,886 | 36,674,520 | 3,652,158,264 | — | 3,707,296,631 | $2,360.26 |
-| claude-opus-5-5 | 220,976,251 | 113,604,569 | 593,122,783 | 27,123,459,935 | — | 28,051,163,538 | $11,887.75 |
+| claude-haiku-5-5 | 12 | 21,757 | 165,636 | 152,101 | — | 339,506 | $0.08 |
+| claude-opus-4-8 | 189,031 | 554,780 | 4,981,359 | 97,619,868 | — | 103,345,038 | $100.90 |
+| claude-opus-5 | 13,758,229 | 4,833,901 | 37,960,920 | 3,736,999,202 | — | 3,793,552,252 | $2,418.75 |
+| claude-opus-5-5 | 251,055,503 | 148,796,765 | 877,700,171 | 36,319,018,461 | — | 37,596,570,900 | $16,029.01 |
 | claude-sonnet-4-6 | 1,406 | 233,671 | 986,400 | 34,920,711 | — | 36,142,188 | $19.90 |
-| claude-sonnet-5 | 88,990 | 2,988,394 | 31,267,091 | 2,340,454,308 | — | 2,374,798,783 | $622.06 |
-| claude-sonnet-5-5 | 11,512 | 5,102,015 | 32,656,109 | 834,727,182 | — | 872,496,818 | $221.22 |
+| claude-sonnet-5 | 88,994 | 2,990,761 | 31,408,720 | 2,340,474,205 | — | 2,374,962,680 | $622.44 |
+| claude-sonnet-5-5 | 17,266 | 7,083,348 | 55,569,040 | 1,291,485,363 | — | 1,354,155,017 | $345.70 |
 | deepseek-flash | 8,991,713 | 5,070,512 | — | 3,202,997,632 | — | 3,217,059,857 | $28.00 |
 | deepseek-v4-flash | 52,791,367 | 17,446,045 | — | 2,734,161,536 | — | 2,802,078,889 | $35.00 |
 | deepseek-v4-pro | 85,359,087 | 21,733,136 | — | 24,546,493,056 | — | 24,653,585,279 | $551.30 |
@@ -27,22 +31,22 @@ run on either machine alone will not match this table.
 | glm-5.2 | 27,277,618 | 3,460,625 | — | 2,274,775,808 | — | 2,305,514,051 | $644.86 |
 | gpt-5.5 | 7,380,642 | 366,392 | — | 69,651,456 | 105,368 | 77,503,858 | $92.47 |
 | gpt-5.6-luna | 1,754,305 | 188,525 | — | 54,281,984 | 105,116 | 56,329,930 | $36.18 |
-| gpt-5.6-sol | 60,151,783 | 5,239,880 | — | 1,520,516,224 | 2,617,722 | 1,588,525,609 | $1,011.70 |
-| gpt-5.6-terra | 676,005 | 34,650 | — | 7,455,232 | 16,229 | 8,182,116 | $4.33 |
-| gpt-6-astra | 9,061,594 | 681,360 | — | 140,212,992 | 217,983 | 150,173,929 | $236.08 |
-| gpt-6.1-sol | 18,651,728 | 2,136,766 | — | 522,706,816 | 976,793 | 544,472,103 | $146.59 |
+| gpt-5.6-sol | 60,170,156 | 5,240,538 | — | 1,520,615,040 | 2,617,722 | 1,588,643,456 | $1,011.83 |
+| gpt-5.6-terra | 693,820 | 34,722 | — | 7,463,168 | 16,229 | 8,207,939 | $4.37 |
+| gpt-6-astra | 10,296,875 | 740,421 | — | 153,900,160 | 217,983 | 165,155,439 | $262.68 |
+| gpt-6.1-sol | 29,423,415 | 3,171,384 | — | 808,357,760 | 976,793 | 841,929,352 | $224.99 |
 | grok-4.5-build | 10,030,758 | 881,349 | — | 177,071,360 | — | 187,983,467 | $114.67 |
 | grok-4.6-build | 44,849,892 | 3,100,656 | — | 812,446,592 | — | 860,397,140 | $293.80 |
-| grok-4.7-build | 39,298,841 | 5,592,936 | — | 621,799,168 | — | 666,690,945 | $166.51 |
-| mimo-v2.6-pro | 62,028,500 | 1,093,150 | — | 1,875,607,680 | — | 1,938,729,330 | $34.69 |
+| grok-4.7-build | 55,733,853 | 8,299,594 | — | 962,121,472 | — | 1,026,154,919 | $244.67 |
+| mimo-v2.6-pro | 63,865,972 | 1,135,818 | — | 1,930,584,704 | — | 1,995,586,494 | $66.97 |
 | gpt-5.3-codex | 22,573,884 | 2,873,034 | — | 786,800,512 | 1,263,964 | 813,511,394 | $217.63 |
 | gpt-5-codex | 9,351,684 | 988,119 | — | 204,395,904 | 689,664 | 215,425,371 | $45.08 |
 | gpt-5.1-codex-max | 2,116,543 | 122,477 | — | 45,743,360 | 46,976 | 48,029,356 | $11.63 |
 | gpt-5.4 | 1,517,763 | 54,121 | — | 14,817,280 | 24,110 | 16,413,274 | $8.09 |
 | gpt-5 | 701,637 | 79,205 | — | 8,801,920 | 51,776 | 9,634,538 | $2.77 |
-| mimo-v2.6-flash | 359,723 | 15,224 | — | 1,104,448 | — | 1,479,395 | $0.06 |
+| mimo-v2.6-flash | 1,197,143 | 24,099 | — | 41,376,064 | — | 42,597,306 | $0.75 |
 | gpt-5.4-mini | 122,102 | 4,288 | — | 434,560 | 2,399 | 563,349 | $0.20 |
-| **Total** | **707,426,440** | **200,490,665** | **711,944,723** | **74,472,096,987** | **6,118,100** | **76,095,756,856** | **$19,731.14** |
+| **Total** | **768,664,792** | **241,670,698** | **1,021,205,651** | **84,944,442,438** | **6,118,100** | **86,979,781,620** | **$24,273.94** |
 
 **Notes:**
 
@@ -75,7 +79,7 @@ run on either machine alone will not match this table.
   (2026-06-20 to 2026-07-05). `ccusage gemini` reports **553,921** tokens and
   **$0.56** (November 2025, December 2025, and February 2026). Those reads are
   recorded here and were not added to the rows above.
-- Hermes and OpenCode are excluded — automation, not development work on this
+- Hermes and OpenCode are excluded: automation, not development work on this
   project. This MacBook had no Hermes transcripts. Its OpenCode total is
   178,124,443 tokens and stays out of the table.
 - Codex reports cost per day rather than per model. On days that used more
@@ -117,3 +121,42 @@ run on either machine alone will not match this table.
   previous cost total was $14,394.52; combined **$19,731.14**.
   `deepseek-v4-flash`'s Total Tokens cell remains 2,320,059 below the sum of
   its own columns, as previously published.
+- 2026-11-05 reads: `npx ccusage@latest daily -b` (20.0.48) on the Mac mini,
+  and the same unified daily report on the MacBook. The MacBook report's
+  rows reconcile exactly with its own Total row (23,931,907,711 tokens, all
+  agents).
+- The copy. 1,518 Claude Code transcript files on the Mac mini were created
+  at 11:31 on 2026-11-03 (UTC+8): the MacBook's sessions active from 13:02
+  on 2026-10-13. From 2026-10-14 to 2026-11-02 the Mac mini's Claude Code
+  usage equals the MacBook's per day and model, token for token, except
+  2026-10-15 and 2026-10-27, where the Mac mini holds slightly less. The
+  Mac mini had no Codex or Grok usage in that window, and neither tool's
+  logs were copied. Those 21,770,555,386 Claude Code tokens count once, in
+  the MacBook's figures. The MacBook's Claude rows for 2026-10-13 and
+  2026-11-03 are subtracted from the Mac mini's read of those days, with
+  their cost. The whole 2026-10-13 row is subtracted although only its
+  afternoon was copied, so up to about 43 million tokens of that day may be
+  missing. Like transcript cleanup, this can only under-report.
+- MacBook: per model and column, the larger of its 2026-10-21 figures and
+  the new read up to 2026-10-22, plus the new read from 2026-10-23. The
+  2026-10-21 read already held part of 2026-10-22, so the split falls there.
+  The MacBook adds 8,286,299,912 tokens and $3,422.62.
+- Mac mini: the larger of its 2026-10-13 high-water mark and the new read up
+  to 2026-10-13, plus the new read from 2026-10-14 without the copied days.
+  It adds 2,596,671,615 tokens and $1,120.18.
+- Cost: published costs stay as they are. Added tokens carry the cost the
+  new read gives them; where a read up to a split date exceeds the earlier
+  figure, the excess is priced at that segment's average rate. The new
+  reads price `mimo-v2.6-pro` at about $0.57 per million tokens, against
+  about $0.018 in the 2026-10-21 read; the earlier tokens keep their earlier
+  cost.
+- The new reads have no reasoning column. Reasoning output stays at its
+  earlier figures, and a changed row's Total Tokens is the sum of its
+  columns, which carries 1,053,237 earlier reasoning tokens of `gpt-6-astra`
+  and `gpt-6.1-sol` into Total.
+- Not added, as before: on the Mac mini, Gemini CLI 375,413,088 tokens
+  ($183.59), Hermes 311,780,314, OpenCode 246,593,840, Antigravity
+  44,554,114 and ZCode 22,091,463; on the MacBook, Antigravity 290,048,735
+  (unchanged) and OpenCode 62,841,911 (2026-10-23 and 2026-10-24).
+- The grand total rises from 76,095,756,856 to **86,979,781,620** tokens and
+  the cost from $19,731.14 to **$24,273.94**.

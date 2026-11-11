@@ -53,8 +53,11 @@ lane. `scripts/check-test-policy.sh` rejects:
 The policy cannot see a test that returns `Ok` early without printing those
 words. The RLValidator leg is not such a test. It is compiled only with
 `--cfg ergon_rlvalidator` (`scripts/run-fix-sbe-conformance.sh`). With that
-cfg, a missing suite, class directory or classpath fails the test. `just test`
-does not pass the cfg, so the leg is absent from the default suite.
+cfg, a missing suite, class directory or classpath fails the test, and so does
+a suite that is not at the commit in `scripts/fix-sbe-conformance-pin.txt`.
+`just test` does not pass the cfg, so the leg is absent from the default suite;
+`just release` and the weekly `nightly.yml` run it
+(`just test-fix-sbe-conformance`).
 
 A failure seen while changing the repository is not a pass because it looks
 pre-existing. Fix it, or stop and report it as a blocker. Never make a lane
@@ -66,8 +69,8 @@ failure.
 | Workflow | What it runs |
 |---|---|
 | `ci.yml` | policy; lint and test jobs on `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm` (arm64); Rust 1.99.0; Java 25 for the Aeron jobs; the coverage ratchet; the fixture crate as ordinary tests; benches compiled with `--no-run`, none run |
-| `cluster-compatibility.yml` | the cluster harness against Aeron 1.46.8 on Java 21, when `cluster/` or `sbe/src/` changes |
-| `nightly.yml` | weekly (Sunday): every fuzz target for 600 s, and the fixture crate under Miri |
+| `cluster-compatibility.yml` | the cluster harness against Aeron 1.46.8 on Java 21, when the cluster crate, the harness, `sbe/src/`, a manifest, `Cargo.lock`, the toolchain pin, the Aeron submodule or the recipes it runs change (`scripts/check-workflow-paths.sh` fails if the filter drops one) |
+| `nightly.yml` | weekly (Sunday): every fuzz target for 600 s, the fixture crate under Miri, and the FIX SBE conformance suite with the Java RLValidator (`just test-fix-sbe-conformance`, suite pinned in `scripts/fix-sbe-conformance-pin.txt`) |
 | `release.yml` | `just release-check`, then `just bench` and `just bench-cluster` on `ubuntu-latest`, blocking |
 
 Mutation testing is manual; CI checks only its configuration, and the ratchet
@@ -81,10 +84,23 @@ just bench           # after a change that can affect generated hot paths
 just bench-cluster   # after a cluster session codec, offer, claim or egress change
 ```
 
+`just bench-cluster` takes every invocation twice, arms in registration order
+and then reversed, because whichever arm of a Criterion group runs first is
+measured differently from the one after it. The gate combines the two orders,
+so with the default `BENCH_REPEATS=5` expect 20 `cargo bench` runs. It then
+prints, for every arm, the sample count, mean, and the min, p50, p99, p99.99
+and max of the batch means pooled over all of them
+(`scripts/bench-cluster-report.py`; a sample is one 10,000-operation batch's
+mean, so these are not per-message tails), and every pair's gate verdict as
+PASS, INCONCLUSIVE or FAIL. An inconclusive pair passes the gate but is not
+parity. Quote a ratio only beside that table, and give each max a cause.
+
 The target is ergon / sbe-tool ≤ `1.00` on equal work. Ceilings, the gate's
 pass/inconclusive/fail rules and the fairness rules:
 [`sbe/BENCHMARKS.md`](sbe/BENCHMARKS.md). Do not raise a ceiling. Do not copy
-benchmark numbers into docs. A docs-only change needs no benchmark run.
+benchmark numbers into docs by hand: `book/src/project/performance.md` is
+generated from benchmark artifacts (`just perf-page`). A docs-only change
+needs no benchmark run.
 
 `fairness_policy_test` requires the SBE and cluster parity suites to use
 `std::hint::black_box`, assert correctness before timing, and keep the

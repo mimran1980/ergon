@@ -115,8 +115,7 @@ pub(crate) fn generate_group_decoder(
     // own, and the trusted path dropped the check. A parent entry's warm
     // extent proves the nested dimension header is in-bounds; it does not
     // prove this group's wire block length can hold the fields its getters
-    // then read unchecked. `min_fixed` stays in scope for the dynamic-extent
-    // store below.
+    // then read unchecked.
     let dimensions = quote::quote! {
         let min_fixed = #decoder_ident::min_readable_fixed_extent(acting_version);
         let (count, block_length) = sbe_rt::checked_group_dimensions(
@@ -131,46 +130,17 @@ pub(crate) fn generate_group_decoder(
     // proven once at wrap time. Each private entry construction is instead
     // preceded by a proof of the acting fixed block at that position.
     //
-    // How much an entry needs, though, depends only on `acting_version` and
-    // `acting_block_length` — both fixed for the decoder's lifetime. It is
-    // resolved once at wrap and stored, so the per-entry cost in the iteration
-    // hot path is one subtraction and one comparison, not a re-run of the
-    // version-branch chain in `min_readable_fixed_extent`.
-    let (
-        dyn_extent_field,
-        dyn_extent_decl,
-        dyn_extent_init,
-        dyn_extent_reinit,
-        dyn_extent_init_absent,
-    ) = if g.has_dynamic_entries() {
-        (
-            quote::quote! { min_entry_extent: usize, },
-            quote::quote! {
-                let min_entry_extent = if block_length > min_fixed { block_length } else { min_fixed };
-            },
-            quote::quote! { min_entry_extent, },
-            quote::quote! { min_entry_extent: attached.min_entry_extent, },
-            quote::quote! { min_entry_extent: 0, },
-        )
-    } else {
-        // A fixed-stride group proves its whole entry region at wrap time, so
-        // it needs no per-entry extent and carries no field for one.
-        (
-            proc_macro2::TokenStream::new(),
-            proc_macro2::TokenStream::new(),
-            proc_macro2::TokenStream::new(),
-            proc_macro2::TokenStream::new(),
-            proc_macro2::TokenStream::new(),
-        )
-    };
-
+    // That block is `acting_block_length`: `checked_group_dimensions` rejects a
+    // stride below the acting-version minimum whenever the group has an entry,
+    // and every proof below runs only for an entry (count or index in range).
+    // So the per-entry cost is one subtraction and one comparison.
     let dynamic_entry_extent_proof = quote::quote! {
         let __available = self.buf.len().saturating_sub(self.offset);
-        if self.min_entry_extent > __available {
+        if self.acting_block_length > __available {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: #g_name_lit,
-                needed: self.min_entry_extent,
+                needed: self.acting_block_length,
                 available: __available,
             });
         }
@@ -234,7 +204,6 @@ pub(crate) fn generate_group_decoder(
             parent_pos: usize,
             parent_block_length: usize,
             #poison_field
-            #dyn_extent_field
             // Zero-sized: attachment is a type-level fact, not a runtime flag.
             _context: core::marker::PhantomData<C>,
         }
@@ -276,7 +245,6 @@ pub(crate) fn generate_group_decoder(
                 let header = #dim_name_ident(bytes);
                 #dimensions
                 let entries_start = offset + #dim_size_lit;
-                #dyn_extent_decl
                 #fixed_extent_validation
                 Ok(#decoder_ident {
                     buf,
@@ -289,7 +257,6 @@ pub(crate) fn generate_group_decoder(
                     parent_pos,
                     parent_block_length,
                     #poison_init
-                    #dyn_extent_init
                     _context: core::marker::PhantomData,
                 })
             }
@@ -320,7 +287,6 @@ pub(crate) fn generate_group_decoder(
                     parent_pos,
                     parent_block_length,
                     #poison_init
-                    #dyn_extent_init_absent
                     _context: core::marker::PhantomData,
                 }
             }
@@ -395,7 +361,6 @@ pub(crate) fn generate_group_decoder(
                     parent_pos: attached.parent_pos,
                     parent_block_length: attached.parent_block_length,
                     #poison_init
-                    #dyn_extent_reinit
                     _context: core::marker::PhantomData,
                 })
             }
@@ -432,13 +397,11 @@ pub(crate) fn generate_group_decoder(
                 let bytes: [u8; #dim_size_lit] = unsafe { read_bytes_unchecked::<#dim_size_lit>(buf, offset) };
                 let header = #dim_name_ident(bytes);
                 #dimensions
-                #dyn_extent_decl
                 Ok(Self {
                     buf, offset: offset + #dim_size_lit, count, start: offset + #dim_size_lit,
                     total: count, acting_version, acting_block_length: block_length,
                     parent_pos, parent_block_length,
                     #poison_init
-                    #dyn_extent_init
                     _context: core::marker::PhantomData,
                 })
             }
@@ -619,7 +582,8 @@ pub(crate) fn generate_group_decoder(
                     for _ in 0..n {
                         #dynamic_entry_extent_proof
                         // SAFETY: acting fixed block proven in-bounds directly
-                        // above; encoded_length re-validates the dynamic tail.
+                        // above; encoded_length re-validates the dynamic tail,
+                        // var-data maxima included.
                         let entry = unsafe {
                             #entry_decoder_ident::wrap(
                                 self.buf,
@@ -699,9 +663,11 @@ pub(crate) fn generate_group_decoder(
                             available: self.total.saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
                         });
                     }
+                    // Random access, like iteration: earlier entries and this
+                    // one are bounds-checked only; getters check their maxima.
                     let mut offset = self.start;
                     for _ in 0..idx {
-                        offset = #entry_decoder_ident::skip(
+                        offset = #entry_decoder_ident::skip_with::<false>(
                             self.buf,
                             offset,
                             self.acting_block_length,
@@ -709,17 +675,17 @@ pub(crate) fn generate_group_decoder(
                         )?;
                     }
                     let available = self.buf.len().saturating_sub(offset);
-                    if self.min_entry_extent > available {
+                    if self.acting_block_length > available {
                         sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: self.min_entry_extent,
+                            needed: self.acting_block_length,
                             available,
                         });
                     }
                     // SAFETY: skip walked prior entries and the acting fixed
-                    // block at `offset` is proven above; encoded_length
-                    // validates the dynamic tail.
+                    // block at `offset` is proven above; iter_extent
+                    // validates the dynamic tail's bounds.
                     let entry = unsafe {
                         #entry_decoder_ident::wrap(
                             self.buf,
@@ -728,7 +694,7 @@ pub(crate) fn generate_group_decoder(
                             self.acting_version,
                         )
                     };
-                    entry.encoded_length()?;
+                    entry.iter_extent()?;
                     Ok(entry)
                 }
             }
@@ -786,13 +752,14 @@ pub(crate) fn generate_group_decoder(
                     if self.poisoned.is_some() || self.count == 0 {
                         return None;
                     }
-                    // Extent resolved once at wrap: the hot path is a
-                    // subtraction and a comparison.
+                    // `count > 0`, so the wrap proved the acting block holds
+                    // every required field: the hot path is a subtraction and
+                    // a comparison.
                     let available = self.buf.len().saturating_sub(self.offset);
-                    if self.min_entry_extent > available {
+                    if self.acting_block_length > available {
                         let error = sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
-                            needed: self.min_entry_extent,
+                            needed: self.acting_block_length,
                             available,
                         };
                         // Zero the count with the poison so `remaining()`,
@@ -805,8 +772,8 @@ pub(crate) fn generate_group_decoder(
                         return Some(Err(error));
                     }
                     // SAFETY: acting fixed block at offset proven directly above;
-                    // encoded_length() re-validates the dynamic tail before
-                    // advancing.
+                    // iter_extent() re-validates the dynamic tail's bounds
+                    // before advancing. Getters check their own maxima.
                     let entry = unsafe {
                         #entry_decoder_ident::wrap(
                             self.buf,
@@ -815,7 +782,7 @@ pub(crate) fn generate_group_decoder(
                             self.acting_version,
                         )
                     };
-                    let size = match entry.encoded_length() {
+                    let size = match entry.iter_extent() {
                         Ok(s) => s,
                         Err(e) => {
                             self.poisoned = Some(e);
@@ -867,9 +834,10 @@ pub(crate) fn generate_group_decoder(
     // is a separate, opt-in lane (`memoized_decoder.rs`).
     let entry_cache_init = quote::quote! { tail_end: core::cell::Cell::new(None), };
     let entry_cache_field = quote::quote! {
-        /// One-shot entry-extent cache: filled by `encoded_length`, reused by
-        /// the last var-data accessor. `Cell` keeps `&self` getters and makes
-        /// the entry `Send` + `!Sync`.
+        /// One-shot entry-extent cache: filled by iteration's bounds-only
+        /// `iter_extent` or by `encoded_length`, reused by the last var-data
+        /// accessor, which checks its own maximum. `Cell` keeps `&self`
+        /// getters and makes the entry `Send` + `!Sync`.
         tail_end: core::cell::Cell<Option<usize>>,
     };
 
@@ -1514,7 +1482,8 @@ pub(crate) fn generate_group_decoder(
         let ng_snake_ident = syn::Ident::new(&ng_snake, proc_macro2::Span::call_site());
         let ng_idx_lit = syn::LitInt::new(&ng_idx.to_string(), proc_macro2::Span::call_site());
 
-        let tail_ng_fn = quote::format_ident!("tail_offset_{}", ng_idx);
+        // Locating the nested group only passes over earlier tails: bounds only.
+        let tail_ng_call = super::tail_cache::tail_offset_call(ng_idx, &quote::quote! { false });
         let ng_snake_str = ng_snake.clone();
         let version_check = if ng.since_version > 0 {
             let since_lit = syn::LitInt::new(
@@ -1588,7 +1557,7 @@ pub(crate) fn generate_group_decoder(
             pub fn #ng_snake_ident(&self) -> Result<#ng_decoder_ident<'a>, sbe_rt::DecodeError> {
                 #version_check
                 #cached_first_tail
-                let offset = self.#tail_ng_fn()?;
+                let offset = self.#tail_ng_call?;
                 #trusted_ng_wrap
                 #ng_decoder_ident::wrap(self.buf, offset, self.acting_version)
             }
@@ -1622,23 +1591,11 @@ pub(crate) fn generate_group_decoder(
             syn::LitInt::new(&prefix_size.to_string(), proc_macro2::Span::call_site());
         let vd_snake = to_snake_case(&vd.name);
         let vd_snake_ident = syn::Ident::new(&vd_snake, proc_macro2::Span::call_site());
-        let tail_nvd_fn = quote::format_ident!("tail_offset_{}", nvd_idx);
+        // Locating the field only passes over earlier tails: bounds only. The
+        // field's own length is checked against its maximum on every path.
+        let tail_nvd_call = super::tail_cache::tail_offset_call(nvd_idx, &quote::quote! { false });
         let vd_snake_str = vd_snake.clone();
-        let max_check = if let Some(max) = vd.max_length {
-            let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
-            quote::quote! {
-                if wire_length > #max_lit as u64 {
-                    sbe_rt::cold();
-                    return Err(sbe_rt::DecodeError::InvalidVarDataLength {
-                        field: stringify!(#vd_snake_ident),
-                        length: wire_length,
-                        max_length: #max_lit as u64,
-                    });
-                }
-            }
-        } else {
-            proc_macro2::TokenStream::new()
-        };
+        let max_lit = super::runtime::var_data_max_lit(vd.max_length);
         let version_check = if vd.since_version > 0 {
             let since_lit = syn::LitInt::new(
                 &vd.since_version.to_string(),
@@ -1664,13 +1621,16 @@ pub(crate) fn generate_group_decoder(
             let warm_entry_end = quote::quote! { self.tail_end.get() };
             let cached_first_tail = if nvd_idx == 0 {
                 quote::quote! {
-                    // `Iterator::next` cached the complete validated entry
-                    // extent, including this prefix and payload.
+                    // `Iterator::next` cached the complete bounds-validated
+                    // entry extent, including this prefix and payload. Its
+                    // walk checks bounds only, so this read checks the maximum.
                     if let Some(end) = #warm_entry_end {
                         let data_offset =
                             self.offset + self.acting_block_length + #prefix_size_lit;
-                        let wire_length = end.saturating_sub(data_offset) as u64;
-                        #max_check
+                        sbe_rt::check_var_data_max::<#max_lit>(
+                            stringify!(#vd_snake_ident),
+                            end.saturating_sub(data_offset) as u64,
+                        )?;
                         return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
                     }
                 }
@@ -1678,8 +1638,9 @@ pub(crate) fn generate_group_decoder(
                 quote::quote! {}
             };
             // Last tail component: a warm cache (filled by the iterator's
-            // encoded_length) gives the slice end directly — no second
-            // length-header read, bounds already validated.
+            // `iter_extent` or by `encoded_length`) gives the slice end
+            // directly — no second length-header read, bounds already
+            // validated; the maximum is checked here.
             let nvd_cache_hit_last = quote::quote! {
                 if let Some(end) = self.tail_end.get() {
                     let data_offset = offset.checked_add(#prefix_size_lit).ok_or(
@@ -1689,10 +1650,13 @@ pub(crate) fn generate_group_decoder(
                             available: self.buf.len().saturating_sub(offset),
                         },
                     )?;
-                    let wire_length = end.saturating_sub(data_offset) as u64;
-                    #max_check
+                    // The extent walk checked bounds only.
+                    sbe_rt::check_var_data_max::<#max_lit>(
+                        stringify!(#vd_snake_ident),
+                        end.saturating_sub(data_offset) as u64,
+                    )?;
                     // SAFETY: a warm `tail_end` proves this entry's extent was
-                    // validated when the iterator computed it.
+                    // bounds-validated when the iterator computed it.
                     return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
                 }
             };
@@ -1702,13 +1666,12 @@ pub(crate) fn generate_group_decoder(
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     #version_check
                     #cached_first_tail
-                    let offset = self.#tail_nvd_fn()?;
+                    let offset = self.#tail_nvd_call?;
                     #nvd_cache_hit_last
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
-                    #max_check
-                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                         stringify!(#vd_snake_ident),
                         offset,
                         #prefix_size_lit,
@@ -1728,13 +1691,12 @@ pub(crate) fn generate_group_decoder(
                 #[inline]
                 pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     #version_check
-                    let offset = self.#tail_nvd_fn()?;
+                    let offset = self.#tail_nvd_call?;
                     #nvd_cache_hit_mid
                     let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
-                    #max_check
-                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds(
+                    let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
                         stringify!(#vd_snake_ident),
                         offset,
                         #prefix_size_lit,
@@ -1762,15 +1724,10 @@ pub(crate) fn generate_group_decoder(
 
     // encoded_length, skip — tail shape is a compile-time constant;
     // emit only the live path (no dead branch in the generated source).
-    let tail_total_fn = quote::format_ident!("tail_offset_{}", total_tail);
-    let entry_len_cache_hit = quote::quote! {
-        if let Some(end) = self.tail_end.get() {
-            return Ok(end - self.offset);
-        }
-    };
-    // Filled here, by the iterator call that computes the entry extent in
-    // order to advance to the next entry.
-    let entry_len_cache_publish = quote::quote! { self.tail_end.set(Some(end)); };
+    let strict_total = super::tail_cache::tail_offset_call(total_tail, &quote::quote! { true });
+    let lax_total = super::tail_cache::tail_offset_call(total_tail, &quote::quote! { false });
+    let forwarded_total =
+        super::tail_cache::tail_offset_call(total_tail, &quote::quote! { CHECK_MAX });
     if total_tail == 0 {
         entry_body.extend(quote::quote! {
             #mu
@@ -1790,18 +1747,49 @@ pub(crate) fn generate_group_decoder(
                 }
                 Ok(offset + block_len)
             }
+            /// [`Self::skip`] for a parent's tail walk; a fixed entry has no
+            /// var-data, so `CHECK_MAX` changes nothing.
+            #[inline]
+            pub(crate) const fn skip_with<const CHECK_MAX: bool>(buf: &'a [u8], offset: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+                Self::skip(buf, offset, block_len, acting_version)
+            }
         });
     } else {
         entry_body.extend(quote::quote! {
+            /// Walks every tail and rejects a var-data length above its
+            /// schema maximum anywhere in the entry, whatever iteration
+            /// cached.
             #[inline]
             pub fn encoded_length(&self) -> Result<usize, sbe_rt::DecodeError> {
-                #entry_len_cache_hit
-                let end = self.#tail_total_fn()?;
-                #entry_len_cache_publish
+                let end = self.#strict_total?;
+                self.tail_end.set(Some(end));
+                Ok(end - self.offset)
+            }
+            /// The extent iteration advances by: bounds only, cached in
+            /// `tail_end` for the last tail's getter, which checks its own
+            /// maximum.
+            #[inline]
+            pub(crate) fn iter_extent(&self) -> Result<usize, sbe_rt::DecodeError> {
+                if let Some(end) = self.tail_end.get() {
+                    return Ok(end - self.offset);
+                }
+                let end = self.#lax_total?;
+                self.tail_end.set(Some(end));
                 Ok(end - self.offset)
             }
             #[inline]
             pub fn skip(
+                buf: &'a [u8],
+                offset: usize,
+                block_len: usize,
+                acting_version: u16,
+            ) -> Result<usize, sbe_rt::DecodeError> {
+                Self::skip_with::<true>(buf, offset, block_len, acting_version)
+            }
+            /// [`Self::skip`] that rejects an over-max var-data length only
+            /// with `CHECK_MAX`; a parent's tail walk forwards its own.
+            #[inline]
+            pub(crate) fn skip_with<const CHECK_MAX: bool>(
                 buf: &'a [u8],
                 offset: usize,
                 block_len: usize,
@@ -1818,7 +1806,7 @@ pub(crate) fn generate_group_decoder(
                 // SAFETY: fixed block length proven above; tail_total validates
                 // nested groups and var-data extents before returning the end.
                 let entry = unsafe { Self::wrap(buf, offset, block_len, acting_version) };
-                entry.#tail_total_fn()
+                entry.#forwarded_total
             }
         });
     }

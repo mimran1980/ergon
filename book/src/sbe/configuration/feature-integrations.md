@@ -1,7 +1,7 @@
-# Feature Integrations
+# Feature integrations
 
-Optional Cargo features. Enable them on **both** `[build-dependencies]` and
-`[dependencies]` — the generator decides what to emit from its own feature set.
+Optional Cargo features. Enable them on both `[build-dependencies]` and
+`[dependencies]`; the generator decides what to emit from its own feature set.
 
 | Feature | Best for |
 |---------|----------|

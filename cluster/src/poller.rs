@@ -1,74 +1,72 @@
-//! `EgressPoller` — single-fragment poller used during the connect
-//! handshake. Captures the next `SessionEvent`, `Challenge`, or
-//! `NewLeaderEvent` so the caller can react.
+//! A single-fragment poller for the connect handshake. It captures the next
+//! `SessionEvent`, `Challenge` or `NewLeaderEvent` so the caller can react.
 
 use crate::ClusterError;
 use crate::codecs::session::{EventCode, MessageHeader};
 
-/// One captured egress event from a poll.
+/// An egress event captured by one poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressEvent {
-    /// A `SessionEvent` — connect result / state change.
+    /// A `SessionEvent`: the connect result or a state change.
     SessionEvent {
-        /// Echo of the connect request correlation id.
+        /// The connect request's correlation id, echoed back.
         correlation_id: i64,
-        /// Cluster-assigned session id.
+        /// The cluster-assigned session id.
         cluster_session_id: i64,
-        /// Current leadership term.
+        /// The current leadership term.
         leadership_term_id: i64,
-        /// Current leader member id.
+        /// The current leader's member id.
         leader_member_id: i32,
-        /// Status code (OK, ERROR, REDIRECT, `AUTH_REJECTED`).
+        /// The status code (OK, ERROR, REDIRECT, `AUTH_REJECTED`).
         code: EventCode,
-        /// Human-readable detail string from the cluster.
+        /// The cluster's detail text.
         detail: String,
-        /// Leader heartbeat advertised by the cluster, when the event carries one.
+        /// The leader heartbeat the cluster advertised, when the event has one.
         leader_heartbeat_timeout_ns: Option<i64>,
     },
-    /// An auth challenge.
+    /// An authentication challenge.
     Challenge {
-        /// Echo of the connect request correlation id.
+        /// The connect request's correlation id, echoed back.
         correlation_id: i64,
-        /// Cluster-assigned session id.
+        /// The cluster-assigned session id.
         cluster_session_id: i64,
-        /// Encoded challenge data to pass to the credential supplier.
+        /// The challenge bytes for the credentials supplier.
         encoded_challenge: Vec<u8>,
     },
     /// A new leader was elected.
     NewLeader {
-        /// Cluster-assigned session id.
+        /// The cluster-assigned session id.
         cluster_session_id: i64,
-        /// New leadership term.
+        /// The new leadership term.
         leadership_term_id: i64,
-        /// New leader member id.
+        /// The new leader's member id.
         leader_member_id: i32,
-        /// Member-endpoint map string for the new leader.
+        /// The new leader's member-endpoint map.
         ingress_endpoints: String,
     },
-    /// An unrecognised / non-connect-phase message.
+    /// A message the handshake does not use.
     Other {
-        /// The unknown SBE template id.
+        /// The SBE template id.
         template_id: u16,
     },
 }
 
-/// Parse a single egress fragment via the canonical `Fragment::decode` path.
+/// Parses one egress fragment through `Fragment::decode`, which is
+/// crate-private and so not linked here.
 ///
-/// (`Fragment` is crate-private, so it is named here rather than linked.)
-///
-/// Text fields (`detail`, `ingress_endpoints`) are validated as UTF-8 via
-/// the generated `_as_str()` accessors. Invalid text returns
-/// [`ClusterError::ProtocolError`] (with a UTF-8/detail reason in the message)
-/// rather than a lossy sentinel — the wire trust seam fails closed.
+/// The generated `_as_str()` accessors validate the text fields (`detail`,
+/// `ingress_endpoints`) as UTF-8. Invalid text returns
+/// [`ClusterError::ProtocolError`] rather than a lossy value, so wire input
+/// fails closed.
 pub fn parse_event(data: &[u8]) -> Result<EgressEvent, ClusterError> {
     use crate::fragment::Fragment;
 
-    // Peeked once and reused: both the unknown-template path and the
-    // not-projected path below must report the real template id.
+    // Both the unknown-template path and the not-projected path below report
+    // the real template id.
     let template_id = MessageHeader::peek_template_id(data).unwrap_or(0);
 
     let Some(fragment) = Fragment::decode(data)? else {
-        // Not an error — the cluster may send templates outside our schema.
+        // The cluster may send templates outside our schema.
         return Ok(EgressEvent::Other { template_id });
     };
 
@@ -110,25 +108,24 @@ pub fn parse_event(data: &[u8]) -> Result<EgressEvent, ClusterError> {
             leader_member_id,
             ingress_endpoints: ingress_endpoints.to_string(),
         },
-        // Decoded, but the connection state machine has no projection for
-        // them. Listed explicitly, not `_`: a new `Fragment` variant must
-        // fail to compile here rather than silently decay to `Other`.
+        // Decoded, but the handshake has no use for them. Listed instead of
+        // `_` so a new `Fragment` variant fails to compile here rather than
+        // silently becoming `Other`.
         Fragment::Message { .. } | Fragment::AdminResponse { .. } => EgressEvent::Other { template_id },
     })
 }
 
-/// Resolve a single member's endpoint from a Java endpoints map.
+/// Finds one member's endpoint in a Java endpoints map.
 ///
-/// `NewLeaderEvent.ingress_endpoints` lists ALL members in id order
-/// (`"0=host:port,1=host:port,2=host:port"`); the new leader is identified
-/// by `leader_member_id`, NOT by position. Picking the first entry (as a
-/// redirect-style parse would) reconnects to the dead leader.
+/// `NewLeaderEvent.ingress_endpoints` lists every member in id order
+/// (`"0=host:port,1=host:port,2=host:port"`). The new leader is the one with
+/// `leader_member_id`, not the first entry: a redirect-style parse of the first
+/// entry would reconnect to the dead leader.
 ///
-/// Parses through the fail-closed [`crate::endpoints::parse_ingress_endpoints`]
-/// path. A malformed map (missing `=`, non-numeric id, empty endpoint, empty
-/// map, duplicate id) is a distinct failure from a well-formed map that
-/// simply lacks the requested leader: `Err` for the former, `Ok(None)` for
-/// the latter, `Ok(Some(endpoint))` on success.
+/// The map goes through [`crate::endpoints::parse_ingress_endpoints`], which
+/// rejects bad input. A malformed map (missing `=`, non-numeric id, empty
+/// endpoint, empty map, duplicate id) is `Err`. A well-formed map without the
+/// requested leader is `Ok(None)`, and a match is `Ok(Some(endpoint))`.
 pub fn parse_leader_endpoint(endpoints: &str, leader_member_id: i32) -> Result<Option<String>, ClusterError> {
     let parsed = crate::endpoints::parse_ingress_endpoints(endpoints)?;
     Ok(parsed
@@ -165,8 +162,7 @@ mod tests {
 
     #[test]
     fn test_parse_event_short_header_is_error() {
-        // Fail-closed: frames shorter than the 8-byte SBE header are protocol errors,
-        // not silent "no event" — matches Fragment::decode.
+        // A frame shorter than the 8-byte SBE header is a protocol error, not "no event".
         let err = parse_event(&[0u8; 4]).expect_err("short header");
         assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
         let msg = err.to_string();
@@ -228,6 +224,21 @@ mod tests {
             }
             other => panic!("expected Other for unknown template, got {other:?}"),
         }
+        Ok(())
+    }
+
+    /// Java `EgressPollerTest.shouldIgnoreUnknownMessageSchema`: a frame of
+    /// another schema during connect is not an error.
+    #[test]
+    fn test_parse_event_another_schema_is_other() -> Result<(), Box<dyn std::error::Error>> {
+        let mut frame = encode_session_event(b"ok", EventCode::OK)?;
+        frame[4..6].copy_from_slice(&999u16.to_le_bytes());
+        assert_eq!(
+            parse_event(&frame)?,
+            EgressEvent::Other {
+                template_id: SessionEventEncoder::TEMPLATE_ID
+            }
+        );
         Ok(())
     }
 
@@ -298,7 +309,7 @@ mod tests {
         // Drop the last body byte so the full fixed extent is incomplete.
         let short = &buf[..buf.len().saturating_sub(1)];
         if short.len() < 8 {
-            return; // encoder length edge — header path still covered elsewhere
+            return; // too short for a header, which another test covers
         }
         let err = parse_event(short).expect_err("short session message");
         assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
@@ -307,9 +318,9 @@ mod tests {
     #[test]
     fn test_parse_event_known_unprojected_template_keeps_template_id() -> Result<(), Box<dyn std::error::Error>> {
         // A well-formed application message decodes to `Fragment::Message`,
-        // which the connection state machine has no projection for. It must
-        // still report its real template id — regression: the arm previously
-        // hardcoded 0, so callers could not tell which frame arrived.
+        // which the handshake has no use for. It must still report its real
+        // template id. The arm once hardcoded 0, so callers could not tell
+        // which frame arrived.
         let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH];
         SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
             .leadership_term_id(1)
@@ -339,17 +350,16 @@ mod tests {
 
     #[test]
     fn test_parse_leader_endpoint_missing_member() -> Result<(), Box<dyn std::error::Error>> {
-        // A well-formed map that simply lacks the requested member is
-        // `Ok(None)` — distinct from a malformed map, which is `Err`.
+        // A well-formed map that lacks the requested member is `Ok(None)`, unlike
+        // a malformed map, which is `Err`.
         assert_eq!(parse_leader_endpoint("0=localhost:9012", 5)?, None);
         Ok(())
     }
 
     #[test]
     fn test_parse_leader_endpoint_malformed_map_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
-        // Fail-closed: any malformed entry rejects the whole map (validated
-        // ingress parser), even when a well-formed leader entry is present.
-        // An empty map is malformed too — there is no member to resolve.
+        // One malformed entry rejects the whole map, even beside a well-formed
+        // leader entry. An empty map is malformed too: it has no member to resolve.
         for eps in [
             "garbage,1=localhost:9112,not-an-id=x,2",
             "1",

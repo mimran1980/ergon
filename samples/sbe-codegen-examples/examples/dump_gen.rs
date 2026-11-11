@@ -1,6 +1,6 @@
 //! Dump the full generated source for the car schema to stdout.
 //!
-//! Useful for inspecting exactly what the generator produces — every struct,
+//! Useful for inspecting exactly what the generator produces: every struct,
 //! impl, trait, and method. Pipe to a file or `less` for browsing:
 //!
 //! ```sh
