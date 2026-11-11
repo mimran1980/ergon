@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Throwaway kind cluster. Installs the public ergon-shared-cpus chart 0.1.3
+# Throwaway kind cluster. Installs the public ergon-shared-cpus chart 0.1.4
 # with the hot-pod check's host mounts, applies the latency-pod admission
 # policy from this repo, runs one pod that gets the shared CPU, and shows two
 # refusals: a hot pod (the kind node has no isolcpus) and an exec probe.
@@ -174,7 +174,7 @@ wait_containerd || fail "containerd did not stay up on ${node}; see $LOG"
 
 install_chart() {
   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-    --version 0.1.3 \
+    --version 0.1.4 \
     --namespace ergon-system --create-namespace \
     --set-string config.sharedCpus=0 \
     --set 'config.namespaces={trading}' \
@@ -184,7 +184,7 @@ install_chart() {
     >>"$LOG" 2>&1
 }
 
-say "helm install oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.3"
+say "helm install oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.4"
 if ! install_chart; then
   say "helm install failed; checking containerd and retrying once"
   wait_containerd || fail "containerd did not stay up on ${node}; see $LOG"

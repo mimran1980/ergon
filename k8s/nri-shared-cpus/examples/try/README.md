@@ -1,7 +1,7 @@
 # Try the public chart
 
 One throwaway kind cluster. It installs
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3` with the
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4` with the
 hot-pod check's host mounts, applies the hot-pod admission policy, and
 prints what the plugin did.
 
@@ -70,4 +70,4 @@ from this tree and does not pull the public chart.
 
 ## Status
 
-Run end to end on kind v0.33.0 (Docker Desktop, 10 CPUs, arm64) against chart 0.1.3 on 2026-11-05: PASS.
+Run end to end on kind v0.33.0 (Docker Desktop, 10 CPUs, arm64) against chart 0.1.4 on 2026-11-11: PASS.

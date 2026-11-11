@@ -30,7 +30,7 @@ merged with its drop-in directory when `kubeletConfigDir` is set.
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.3 \
+  --version 0.1.4 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -46,7 +46,7 @@ kubelet with `--config-dir` on that directory:
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.3 \
+  --version 0.1.4 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -85,8 +85,7 @@ shared CPUs are missing from `cpuset.cpus.effective`. It is Ready again only
 once the plugin has re-widened the cpuset. On the node, alert on
 `ergon_shared_cpus_rewidened_total{event="sync"} > 0`, not on `increase()`:
 the counter is per plugin process and the re-widen usually lands before the
-new plugin pod's first scrape. `--ready-addr` is not
-in 0.1.3: it ships in the next release, or build `ergon-cpus` from source.
+new plugin pod's first scrape.
 
 Every value: `values.yaml` (`helm show values`). Node setup, pod shape,
 admission, failure modes and limits:

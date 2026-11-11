@@ -172,7 +172,7 @@ fractional sidecar can run on the reserved CPUs. `strict-cpu-reservation:
 when nothing but the system (and threads you pin there yourself) may use
 them: it breaks anything that needs the shared pool by default, such as a
 fractional sidecar in a latency pod or a helper thread left on the shared pool. The
-shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`)
+shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4`)
 lends shared CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
 default, so leave `strict-cpu-reservation` off while using it.
 

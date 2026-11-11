@@ -11,8 +11,8 @@ Each is a mechanism; none has a measured latency effect. Real-time
 scheduling (`SCHED_FIFO`) is not built ([evidence: mixed](hft.md#sched_fifo)).
 
 Status: the grants ship in the public image
-`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`. Install it with the chart
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`
+`ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`. Install it with the chart
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4`
 ([Shared CPUs](shared-cpus.md#use-the-public-chart)). On EKS AL2023 a pod
 labelled `ergon.io/latency: hot` needs `kubeletConfigDir`, which lets the
 plugin read nodeadm's kubelet drop-in; the EKS install line is on that page. This page's admission

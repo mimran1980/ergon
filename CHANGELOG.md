@@ -4,6 +4,8 @@
 
 ## [0.1.39] — 2026-11-11
 
+The `ergon-shared-cpus` image and chart are published as 0.1.4.
+
 ### Added
 
 - `ergon-cpus --ready-addr HOST:PORT` serves a placement readiness endpoint

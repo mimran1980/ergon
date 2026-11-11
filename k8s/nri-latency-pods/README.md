@@ -9,7 +9,7 @@ Latency-pod extensions for Kubernetes. One directory, three kinds of thing:
 | admission | things a policy should refuse or strip | `admission/` here (ValidatingAdmissionPolicy) |
 
 The grants are in the published `ergon-shared-cpus` image
-(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`). This directory is not a
+(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`). This directory is not a
 second image. Its admission YAML and node units stay in the repo. Experimental.
 On EKS the plugin's install is verified (`k8s/nri-shared-cpus/RELEASE.md`); the five
 grants' latency effect has not been measured there.
@@ -268,7 +268,7 @@ test/e2e.sh
 
    ```sh
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-     --version 0.1.3 \
+     --version 0.1.4 \
      --namespace ergon-system --create-namespace \
      --set-string config.sharedCpus=0 \
      --set 'config.namespaces={trading}' \
@@ -286,7 +286,7 @@ test/e2e.sh
    it as the kubelet does. Without `kubeletConfigDir` every hot pod is refused on AL2023 and unlabelled pods still get the
    grants.
 
-   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3` (the chart's
+   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4` (the chart's
    `appVersion`). The chart writes
    `seccomp.ioUring` and `ptp` as `"off"`. A node that grants those writes them
    into the ConfigMap; the keys are in `k8s/nri-shared-cpus/README.md`.

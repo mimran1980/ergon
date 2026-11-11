@@ -59,7 +59,7 @@ the generated length API before you write; the rule table is
 
 | Piece | What it does | When to use it |
 |---|---|---|
-| `k8s/nri-shared-cpus` | Gives a pod its exclusive CPUs and the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core. | A pod that spins on exclusive CPUs. Chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`, image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`. Prepare the node first ([chapter](deploy/shared-cpus.md)). |
+| `k8s/nri-shared-cpus` | Gives a pod its exclusive CPUs and the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core. | A pod that spins on exclusive CPUs. Chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4`, image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`. Prepare the node first ([chapter](deploy/shared-cpus.md)). |
 | `k8s/nri-latency-pods` | Node tuning and the hot-pod admission policy: no exec probes, no always-restart sidecars. The grants live in the shared-cpus image. | After the chart. Apply the admission YAML, then label hot pods `ergon.io/latency: hot` ([chapter](deploy/latency-pods.md)). |
 
 Start with `ergo-sbe`. Add another row only for a need you have.

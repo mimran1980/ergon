@@ -5,12 +5,12 @@ description: >-
   Give a Kubernetes pod its exclusive CPUs and the node's shared housekeeping
   CPUs. Containerd NRI plugin and kubelet device plugin in one daemon.
 type: application
-# OCI chart 0.1.3. EKS verified at 0.1.2; 0.1.3 adds env exports only.
+# OCI chart 0.1.4. EKS verified at 0.1.2; CPU placement unchanged since.
 # Latency is not measured.
-version: 0.1.3
-# Default image tag. Image 0.1.3 adds the dpdk.ergon.io NIC pair and the
-# Aeron hugepage env.
-appVersion: "0.1.3"
+version: 0.1.4
+# Default image tag. Image 0.1.4 adds ergon-cpus --ready-addr and drops the
+# SCHED_FIFO grant.
+appVersion: "0.1.4"
 home: https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus
 sources:
   - https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus

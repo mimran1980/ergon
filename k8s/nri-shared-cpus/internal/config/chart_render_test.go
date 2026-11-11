@@ -168,13 +168,13 @@ func TestHelmChartRender(t *testing.T) {
 	if cfg.Shared.List() != "4" || cfg.DevRoot != "/host/dev" || cfg.SeccompProfilePath != DefaultSeccompProfilePath {
 		t.Fatalf("defaults did not reach the parser: %+v", cfg)
 	}
-	if !strings.Contains(def, "ghcr.io/mimran1980/ergon-shared-cpus:0.1.3") {
-		t.Fatal("default image must be the chart appVersion tag 0.1.3 (the dpdk.ergon.io and Aeron hugepage env are new in that image)")
+	if !strings.Contains(def, "ghcr.io/mimran1980/ergon-shared-cpus:0.1.4") {
+		t.Fatal("default image must be the chart appVersion tag 0.1.4 (the image the chart was published with)")
 	}
 	if strings.Contains(def, "@sha256:") {
 		t.Fatal("default render must not pin a digest")
 	}
-	t.Log("default image is the appVersion tag 0.1.3")
+	t.Log("default image is the appVersion tag 0.1.4")
 	objs := objects(t, def)
 	if kinds(objs)["ValidatingAdmissionPolicy"] != 0 || kinds(objs)["PriorityClass"] != 0 {
 		t.Fatal("default admission.create=false must not render the policy or PriorityClasses")
@@ -199,10 +199,10 @@ func TestHelmChartRender(t *testing.T) {
 		t.Fatal("empty layoutRevision must not annotate the pod")
 	}
 	assertDefaultHostContract(t, def)
-	if !strings.Contains(def, "helm.sh/chart: ergon-shared-cpus-0.1.3") {
-		t.Fatal("chart version must be 0.1.3 (default image 0.1.3)")
+	if !strings.Contains(def, "helm.sh/chart: ergon-shared-cpus-0.1.4") {
+		t.Fatal("chart version must be 0.1.4 (default image 0.1.4)")
 	}
-	t.Log("chart 0.1.3")
+	t.Log("chart 0.1.4")
 
 	// A ConfigMap-only change must not alter the DaemonSet pod template.
 	// A values file, not --set: Helm splits a comma in 0,1 into two keys.
@@ -253,7 +253,7 @@ hostContract:
 	if !strings.Contains(full, "ghcr.io/mimran1980/ergon-shared-cpus@"+digest) {
 		t.Fatal("digest render must be repository@digest")
 	}
-	if strings.Contains(full, "ergon-shared-cpus:ignored") || strings.Contains(full, "ergon-shared-cpus:0.1.3") {
+	if strings.Contains(full, "ergon-shared-cpus:ignored") || strings.Contains(full, "ergon-shared-cpus:0.1.4") {
 		t.Fatal("digest render must not keep a tag")
 	}
 	t.Log("repository@digest")
