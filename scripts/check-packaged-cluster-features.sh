@@ -30,6 +30,12 @@ done
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
+# The unpacked crate builds outside this repo, where rust-toolchain.toml does
+# not apply; keep the pinned toolchain instead of rustup's default.
+if command -v rustup >/dev/null 2>&1; then
+    RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-$(rustup show active-toolchain | cut -d' ' -f1)}"
+    export RUSTUP_TOOLCHAIN
+fi
 
 pkg_args=(-p "$package")
 meta_args=(--format-version 1 --no-deps)

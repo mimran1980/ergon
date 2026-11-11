@@ -386,8 +386,10 @@ fn the_cluster_closes_a_session_that_sends_no_keep_alives() -> Result<(), Box<dy
         .ingress_channel(cluster.ingress_channel.clone())?
         .egress_channel("aeron:udp?endpoint=localhost:0")?
         .message_timeout(Duration::from_secs(10))?;
-    let mut client = AeronCluster::connect(&builder, &driver.dir)?;
+    // Timed from before connect: the cluster starts the session timer when it
+    // opens the session, which is before connect() returns.
     let connected = Instant::now();
+    let mut client = AeronCluster::connect(&builder, &driver.dir)?;
     let mut events = SessionEvents::default();
     while client.state() != ergo_aeron_cluster::SessionState::Closed {
         client.poll(&mut events, 10)?;
