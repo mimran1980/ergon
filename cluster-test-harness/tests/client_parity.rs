@@ -494,6 +494,8 @@ fn controlled_poll_egress_actions_and_panic_on_java_cluster() -> Result<(), Box<
     }
 
     impl ControlledEgressListener for ScriptedControlled {
+        // The panic is the behaviour under test: the poll must catch it.
+        #[allow(clippy::panic)]
         fn on_message(
             &mut self,
             cluster_session_id: i64,
