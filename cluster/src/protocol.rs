@@ -21,6 +21,25 @@ pub const LEADER_HEARTBEAT_TIMEOUT_DEFAULT_NS: u64 = 10_000_000_000;
 /// Java `AeronCluster.Configuration.CLIENT_NAME_DEFAULT`.
 pub const DEFAULT_CLIENT_NAME: &str = "cluster-client";
 
+/// Maximum byte length of the sanitized `SessionEvent` detail kept on
+/// [`ClusterError::AuthRejected`].
+pub const MAX_REJECTION_DETAIL_BYTES: usize = 256;
+
+const TRUNCATION_SUFFIX: &str = "...";
+
+/// Strip Unicode control characters from a peer-supplied rejection detail and
+/// cap it at [`MAX_REJECTION_DETAIL_BYTES`] bytes on a UTF-8 character
+/// boundary, appending `"..."` when truncated.
+fn sanitize_rejection_detail(raw: &str) -> String {
+    let mut cleaned: String = raw.chars().filter(|c| !c.is_control()).collect();
+    if cleaned.len() > MAX_REJECTION_DETAIL_BYTES {
+        let keep = cleaned.floor_char_boundary(MAX_REJECTION_DETAIL_BYTES - TRUNCATION_SUFFIX.len());
+        cleaned.truncate(keep);
+        cleaned.push_str(TRUNCATION_SUFFIX);
+    }
+    cleaned
+}
+
 /// The new-leader timeout in milliseconds once connect has an OK.
 ///
 /// A caller-supplied timeout wins. Otherwise the timeout is twice the leader
@@ -117,7 +136,7 @@ pub enum HandshakeEvent {
         image_session_id: Option<i32>,
     },
     /// The cluster rejected the credentials.
-    AuthRejected,
+    AuthRejected { detail: String },
     /// Follow the leader at `endpoint`.
     Redirect { endpoint: String },
     /// Answer this challenge, then wait for an OK carrying the new correlation.
@@ -157,7 +176,9 @@ pub fn classify_handshake(
                     leader_heartbeat_timeout_ns,
                     image_session_id,
                 }),
-                EventCode::AUTHENTICATIONREJECTED => Ok(HandshakeEvent::AuthRejected),
+                EventCode::AUTHENTICATIONREJECTED => Ok(HandshakeEvent::AuthRejected {
+                    detail: sanitize_rejection_detail(&detail),
+                }),
                 // A version mismatch or the session limit: Java's client
                 // throws at once rather than wait out the message timeout.
                 EventCode::ERROR => Err(ClusterError::ConnectFailed {
@@ -297,6 +318,60 @@ mod tests {
             leader_heartbeat_timeout_ns: Some(10_000_000_000),
         };
         assert!(matches!(classify_handshake(event, 2, None)?, HandshakeEvent::Ignore));
+        Ok(())
+    }
+
+    #[test]
+    fn auth_rejection_for_this_attempt_carries_its_detail() -> Result<(), Box<dyn std::error::Error>> {
+        let event = session_event(2, EventCode::AUTHENTICATIONREJECTED, "session failed authentication");
+        let HandshakeEvent::AuthRejected { detail } = classify_handshake(event, 2, None)? else {
+            return Err("expected AuthRejected".into());
+        };
+        assert_eq!(detail, "session failed authentication");
+        let other = session_event(1, EventCode::AUTHENTICATIONREJECTED, "session failed authentication");
+        assert!(matches!(classify_handshake(other, 2, None)?, HandshakeEvent::Ignore));
+        Ok(())
+    }
+
+    #[test]
+    fn auth_rejection_detail_is_bounded_and_stripped_of_control_characters() -> Result<(), Box<dyn std::error::Error>> {
+        let with_controls = "rejected:\x00\n\r\t\x1b[31m\x7f\u{0085}invalid credentials";
+        let event = session_event(2, EventCode::AUTHENTICATIONREJECTED, with_controls);
+        let HandshakeEvent::AuthRejected { detail } = classify_handshake(event, 2, None)? else {
+            return Err("expected AuthRejected".into());
+        };
+        assert_eq!(detail, "rejected:[31minvalid credentials");
+        assert!(!detail.chars().any(char::is_control), "{detail:?}");
+
+        let exact_cap = "a".repeat(256);
+        let event = session_event(2, EventCode::AUTHENTICATIONREJECTED, &exact_cap);
+        let HandshakeEvent::AuthRejected { detail } = classify_handshake(event, 2, None)? else {
+            return Err("expected AuthRejected".into());
+        };
+        assert_eq!(detail.len(), 256);
+        assert_eq!(detail, exact_cap);
+
+        let over_long = "b".repeat(400);
+        let event = session_event(2, EventCode::AUTHENTICATIONREJECTED, &over_long);
+        let HandshakeEvent::AuthRejected { detail } = classify_handshake(event, 2, None)? else {
+            return Err("expected AuthRejected".into());
+        };
+        assert_eq!(detail.len(), 256);
+        assert!(detail.ends_with("..."), "{detail}");
+        assert!(detail[..253].chars().all(|c| c == 'b'));
+
+        // Multi-byte UTF-8: 63 × 4-byte emoji (252 bytes) + 2-byte 'é' (254 bytes) + 4-byte emoji (258 bytes)
+        // must truncate cleanly on a char boundary within 256 bytes and append "...".
+        let mut multibyte = "🦀".repeat(63);
+        multibyte.push('é');
+        multibyte.push('🦀');
+        let event = session_event(2, EventCode::AUTHENTICATIONREJECTED, &multibyte);
+        let HandshakeEvent::AuthRejected { detail } = classify_handshake(event, 2, None)? else {
+            return Err("expected AuthRejected".into());
+        };
+        assert!(detail.len() <= 256, "len = {}", detail.len());
+        assert!(detail.ends_with("..."), "{detail}");
+        assert_eq!(detail, format!("{}...", "🦀".repeat(63)));
         Ok(())
     }
 }

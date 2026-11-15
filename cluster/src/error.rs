@@ -143,8 +143,12 @@ pub enum ClusterError {
         reason: String,
     },
     /// The cluster rejected authentication.
-    #[error("authentication rejected")]
-    AuthRejected,
+    #[error("authentication rejected: {detail}")]
+    AuthRejected {
+        /// What the authenticator or cluster sent with the rejection, bounded
+        /// and stripped of control characters.
+        detail: String,
+    },
     /// A step timed out.
     #[error("timeout in phase '{phase}' after {after_ms}ms")]
     Timeout {
@@ -460,5 +464,16 @@ mod tests {
         let msg = PublicationFailure::TooManyParts.to_string();
         assert!(!msg.contains("-100"), "{msg}");
         assert!(msg.contains("part"), "{msg}");
+    }
+
+    #[test]
+    fn auth_rejected_display_includes_detail() {
+        let err = ClusterError::AuthRejected {
+            detail: "session failed authentication".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "authentication rejected: session failed authentication"
+        );
     }
 }

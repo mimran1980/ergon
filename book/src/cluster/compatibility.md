@@ -35,7 +35,7 @@ The client handles these documented transitions:
 | Redirect during connect | Follow `leader_endpoints` to the new leader |
 | New ingress publication (redirect or new leader) | Keep every unicast ingress channel setting but the endpoint, and re-add IPC and multicast channels unchanged, so the message limits do not change |
 | Auth challenge | Pass to `CredentialsSupplier`, send `ChallengeResponse` |
-| Auth rejection | `ClusterError::AuthRejected` |
+| Auth rejection | `ClusterError::AuthRejected` with the cluster's detail, at once |
 | `SessionEvent(ERROR)` answering the connect (session limit, client version) | `ClusterError::ConnectFailed` with the cluster's detail, at once |
 | Connect request | Sent once; a challenge response or a redirect sends a new one |
 | `close()` | `SessionCloseRequest` while connected (up to three offers under back pressure), then `Closed` |

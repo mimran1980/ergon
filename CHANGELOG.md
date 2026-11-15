@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking: `ergo-aeron-cluster` `ClusterError::AuthRejected` is now a struct
+  variant `{ detail: String }` carrying the cluster's rejection detail from
+  `SessionEvent(AUTHENTICATION_REJECTED)` (stripped of control characters and
+  capped at 256 bytes), and fails the connect immediately.
+
 ## [0.1.39] — 2026-11-11
 
 The `ergon-shared-cpus` image and chart are published as 0.1.4.

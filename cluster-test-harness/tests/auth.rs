@@ -12,7 +12,7 @@ mod common;
 use std::borrow::Cow;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
@@ -59,11 +59,16 @@ impl CredentialsSupplier for Scripted {
     }
 }
 
-/// A connect's outcome: the client or its error, and the challenges seen.
-/// The client's driver lives as long as this.
+/// Connect timeout for the authenticator tests; rejections must fail well
+/// inside half of this.
+const AUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A connect's outcome: the client or its error, the challenges seen, the
+/// connect duration, and the driver guard.
 type Attempt = (
     Result<AeronCluster, ClusterError>,
     Vec<Vec<u8>>,
+    Duration,
     common::OwnDriver,
 );
 
@@ -81,13 +86,15 @@ fn connect_with(
         .ingress_channel(cluster.ingress_channel.clone())?
         .egress_channel("aeron:udp?endpoint=localhost:0")?
         .credentials(Arc::new(supplier))
-        .message_timeout(Duration::from_secs(10))?;
+        .message_timeout(AUTH_CONNECT_TIMEOUT)?;
+    let started = Instant::now();
     let client = AeronCluster::connect(&builder, &driver.dir);
+    let elapsed = started.elapsed();
     let seen = challenges
         .lock()
         .map_err(|_| "challenge log poisoned")?
         .clone();
-    Ok((client, seen, driver))
+    Ok((client, seen, elapsed, driver))
 }
 
 /// The session the authenticator accepted serves a round trip.
@@ -109,7 +116,7 @@ fn assert_serves(client: Result<AeronCluster, ClusterError>) -> Result<(), Box<d
 #[serial]
 fn empty_credentials_are_accepted_without_a_challenge() -> Result<(), Box<dyn Error>> {
     let cluster = TestCluster::single_node_auth()?;
-    let (client, challenges, _driver) = connect_with(&cluster, b"", b"", "auth-empty")?;
+    let (client, challenges, _elapsed, _driver) = connect_with(&cluster, b"", b"", "auth-empty")?;
     assert_eq!(challenges, Vec::<Vec<u8>>::new());
     assert_serves(client)
 }
@@ -119,7 +126,8 @@ fn empty_credentials_are_accepted_without_a_challenge() -> Result<(), Box<dyn Er
 #[serial]
 fn credentials_on_the_connect_request_are_accepted() -> Result<(), Box<dyn Error>> {
     let cluster = TestCluster::single_node_auth()?;
-    let (client, challenges, _driver) = connect_with(&cluster, b"admin:admin", b"", "auth-creds")?;
+    let (client, challenges, _elapsed, _driver) =
+        connect_with(&cluster, b"admin:admin", b"", "auth-creds")?;
     assert_eq!(challenges, Vec::<Vec<u8>>::new());
     assert_serves(client)
 }
@@ -129,7 +137,7 @@ fn credentials_on_the_connect_request_are_accepted() -> Result<(), Box<dyn Error
 #[serial]
 fn a_challenge_answered_correctly_is_accepted() -> Result<(), Box<dyn Error>> {
     let cluster = TestCluster::single_node_auth()?;
-    let (client, challenges, _driver) =
+    let (client, challenges, _elapsed, _driver) =
         connect_with(&cluster, b"challenge-me", b"answer", "auth-challenge")?;
     assert_eq!(challenges, [b"server-challenge".to_vec()]);
     assert_serves(client)
@@ -140,12 +148,20 @@ fn a_challenge_answered_correctly_is_accepted() -> Result<(), Box<dyn Error>> {
 #[serial]
 fn wrong_credentials_are_rejected() -> Result<(), Box<dyn Error>> {
     let cluster = TestCluster::single_node_auth()?;
-    let (client, challenges, _driver) = connect_with(&cluster, b"admin:wrong", b"", "auth-reject")?;
+    let (client, challenges, elapsed, _driver) =
+        connect_with(&cluster, b"admin:wrong", b"", "auth-reject")?;
     assert_eq!(challenges, Vec::<Vec<u8>>::new());
+    let Err(ClusterError::AuthRejected { detail }) = client else {
+        return Err(format!(
+            "expected AuthRejected, got {:?}",
+            client.map(|c| c.cluster_session_id())
+        )
+        .into());
+    };
+    assert_eq!(detail, "session failed authentication");
     assert!(
-        matches!(client, Err(ClusterError::AuthRejected)),
-        "expected AuthRejected, got {:?}",
-        client.map(|c| c.cluster_session_id())
+        elapsed < AUTH_CONNECT_TIMEOUT / 2,
+        "rejection took {elapsed:?}, expected less than half of {AUTH_CONNECT_TIMEOUT:?}"
     );
     Ok(())
 }
@@ -155,13 +171,20 @@ fn wrong_credentials_are_rejected() -> Result<(), Box<dyn Error>> {
 #[serial]
 fn a_wrong_challenge_answer_is_rejected() -> Result<(), Box<dyn Error>> {
     let cluster = TestCluster::single_node_auth()?;
-    let (client, challenges, _driver) =
+    let (client, challenges, elapsed, _driver) =
         connect_with(&cluster, b"challenge-me", b"wrong", "auth-reject-challenge")?;
     assert_eq!(challenges, [b"server-challenge".to_vec()]);
+    let Err(ClusterError::AuthRejected { detail }) = client else {
+        return Err(format!(
+            "expected AuthRejected, got {:?}",
+            client.map(|c| c.cluster_session_id())
+        )
+        .into());
+    };
+    assert_eq!(detail, "session failed authentication");
     assert!(
-        matches!(client, Err(ClusterError::AuthRejected)),
-        "expected AuthRejected, got {:?}",
-        client.map(|c| c.cluster_session_id())
+        elapsed < AUTH_CONNECT_TIMEOUT / 2,
+        "challenge rejection took {elapsed:?}, expected less than half of {AUTH_CONNECT_TIMEOUT:?}"
     );
     Ok(())
 }

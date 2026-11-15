@@ -721,7 +721,7 @@ impl AeronCluster {
             {
                 match protocol::classify_handshake(event, correlation_id, image_session_id)? {
                     event @ HandshakeEvent::Established { .. } => established = Some(event),
-                    HandshakeEvent::AuthRejected => return Err(ClusterError::AuthRejected),
+                    HandshakeEvent::AuthRejected { detail } => return Err(ClusterError::AuthRejected { detail }),
                     HandshakeEvent::Redirect { endpoint } => {
                         if active_endpoint.as_deref() != Some(endpoint.as_str()) {
                             ingress = None;
@@ -826,7 +826,7 @@ impl AeronCluster {
                         self.last_keep_alive = Instant::now();
                         return Ok(());
                     }
-                    HandshakeEvent::AuthRejected => return Err(ClusterError::AuthRejected),
+                    HandshakeEvent::AuthRejected { detail } => return Err(ClusterError::AuthRejected { detail }),
                     HandshakeEvent::Redirect { endpoint } => {
                         self.reconnect_ingress(builder, &endpoint)?;
                         attempt.on_redirect();
@@ -1860,7 +1860,7 @@ impl AsyncClusterConnect {
                     self.step = ConnectStep::Done;
                     return Ok(false);
                 }
-                HandshakeEvent::AuthRejected => return Err(ClusterError::AuthRejected),
+                HandshakeEvent::AuthRejected { detail } => return Err(ClusterError::AuthRejected { detail }),
                 HandshakeEvent::Redirect { endpoint } => self.follow_redirect(&endpoint)?,
                 HandshakeEvent::Challenge {
                     cluster_session_id,

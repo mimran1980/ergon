@@ -3,7 +3,7 @@ use ergo_aeron_cluster::ClusterError;
 
 fn classify(err: ClusterError) -> &'static str {
     match err {
-        ClusterError::AuthRejected => "auth",
+        ClusterError::AuthRejected { .. } => "auth",
         ClusterError::NotConnected => "not-connected",
         // Required: ClusterError is #[non_exhaustive] and may grow variants.
         _ => "other",
@@ -11,5 +11,5 @@ fn classify(err: ClusterError) -> &'static str {
 }
 
 fn main() {
-    let _ = classify(ClusterError::AuthRejected);
+    let _ = classify(ClusterError::AuthRejected { detail: String::new() });
 }
