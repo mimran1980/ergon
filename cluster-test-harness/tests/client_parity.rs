@@ -12,8 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ergo_aeron_cluster::cluster_codec_types::EventCode;
-use ergo_aeron_cluster::egress::EgressListener;
-use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
+use ergo_aeron_cluster::egress::{ControlledAction, ControlledEgressListener, EgressListener};
+use ergo_aeron_cluster::{AeronCluster, ClusterError, SessionBuilder, SessionState};
 use serial_test::serial;
 
 use common::{Capture, await_echo, launch_own_driver};
@@ -481,5 +481,314 @@ fn three_node_ingress_fanout_round_trip() -> Result<(), Box<dyn std::error::Erro
         Duration::from_secs(10),
     )?;
     client.close()?;
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn controlled_poll_egress_actions_and_panic_on_java_cluster() -> Result<(), Box<dyn Error>> {
+    struct ScriptedControlled {
+        actions: std::collections::VecDeque<ControlledAction>,
+        panic_on_next: bool,
+        seen: Vec<(i64, i64, Vec<u8>)>,
+    }
+
+    impl ControlledEgressListener for ScriptedControlled {
+        fn on_message(
+            &mut self,
+            cluster_session_id: i64,
+            timestamp: i64,
+            buffer: &[u8],
+        ) -> ControlledAction {
+            if self.panic_on_next {
+                self.panic_on_next = false;
+                panic!("controlled listener boom");
+            }
+            self.seen
+                .push((cluster_session_id, timestamp, buffer.to_vec()));
+            self.actions
+                .pop_front()
+                .unwrap_or(ControlledAction::Continue)
+        }
+    }
+
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
+    let driver = launch_own_driver("controlled-poll-java")?;
+    let builder = SessionBuilder::default()
+        .ingress_channel(cluster.ingress_channel.clone())?
+        .egress_channel("aeron:udp?endpoint=localhost:0")?
+        .message_timeout(Duration::from_secs(10))?;
+    let mut client = AeronCluster::connect(&builder, &driver.dir)?;
+    let pos_initial = client
+        .egress_position()
+        .ok_or("missing bound egress image")?;
+
+    // 1. Abort leaves the fragment unconsumed at the same position; Commit on the next
+    //    poll redelivers the identical fragment and advances the position once.
+    client.offer(b"abort-then-commit")?;
+    let mut listener = ScriptedControlled {
+        actions: std::collections::VecDeque::from([
+            ControlledAction::Abort,
+            ControlledAction::Commit,
+        ]),
+        panic_on_next: false,
+        seen: Vec::new(),
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while listener.seen.is_empty() {
+        let count = client.controlled_poll_egress(&mut listener, 10)?;
+        assert_eq!(count, 0, "Abort must report 0 consumed fragments");
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for first controlled delivery".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    let pos_after_abort = client
+        .egress_position()
+        .ok_or("missing bound egress image")?;
+    assert_eq!(
+        pos_after_abort, pos_initial,
+        "Abort must not advance egress subscriber position"
+    );
+    assert_eq!(listener.seen.len(), 1);
+    assert_eq!(listener.seen[0].2, b"abort-then-commit");
+
+    let count = client.controlled_poll_egress(&mut listener, 10)?;
+    assert_eq!(count, 1, "Commit must consume the redelivered fragment");
+    assert_eq!(listener.seen.len(), 2);
+    assert_eq!(
+        listener.seen[0], listener.seen[1],
+        "Abort must redeliver the identical fragment (session_id, timestamp, payload)"
+    );
+    let pos_after_commit = client
+        .egress_position()
+        .ok_or("missing bound egress image")?;
+    assert!(
+        pos_after_commit > pos_after_abort,
+        "Commit must advance egress position ({pos_after_commit} <= {pos_after_abort})"
+    );
+    assert_eq!(
+        client.controlled_poll_egress(&mut listener, 10)?,
+        0,
+        "Commit must advance once without redelivering"
+    );
+
+    // 2. Break stops after one fragment even when more are queued; Continue consumes the rest.
+    client.offer(b"break-first")?;
+    client.offer(b"continue-second")?;
+    // Wait until the first fragment is in the egress buffer by peeking with Abort, then
+    // give the second echo a brief window to land behind it in the same term buffer.
+    listener.seen.clear();
+    listener.actions = std::collections::VecDeque::from([ControlledAction::Abort]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while listener.seen.is_empty() {
+        client.controlled_poll_egress(&mut listener, 10)?;
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for break-first".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    thread::sleep(Duration::from_millis(50));
+
+    listener.seen.clear();
+    listener.actions =
+        std::collections::VecDeque::from([ControlledAction::Break, ControlledAction::Continue]);
+    let broken = client.controlled_poll_egress(&mut listener, 10)?;
+    assert_eq!(broken, 1, "Break must stop after consuming 1 fragment");
+    assert_eq!(listener.seen.len(), 1);
+    assert_eq!(listener.seen[0].2, b"break-first");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while listener.seen.len() < 2 {
+        client.controlled_poll_egress(&mut listener, 10)?;
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for continue-second".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(listener.seen[1].2, b"continue-second");
+
+    // 3. A panicking listener returns ClusterError::ListenerPanicked and leaves the client usable.
+    client.offer(b"trigger-panic")?;
+    listener.seen.clear();
+    listener.panic_on_next = true;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let panic_err = loop {
+        match client.controlled_poll_egress(&mut listener, 10) {
+            Err(err) => break err,
+            Ok(0) => {
+                if Instant::now() >= deadline {
+                    return Err("timed out waiting for panicking fragment".into());
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(n) => return Err(format!("expected panic error, got Ok({n})").into()),
+        }
+    };
+    assert!(
+        matches!(
+            panic_err,
+            ClusterError::ListenerPanicked {
+                context: "controlled egress dispatch"
+            }
+        ),
+        "expected ListenerPanicked, got {panic_err:?}"
+    );
+    assert_eq!(client.state(), SessionState::Connected);
+
+    client.offer(b"usable-after-panic")?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while listener.seen.is_empty() {
+        client.controlled_poll_egress(&mut listener, 10)?;
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for usable-after-panic".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(listener.seen[0].2, b"usable-after-panic");
+
+    client.close()?;
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn controlled_poll_egress_delivers_lifecycle_and_extension_events() -> Result<(), Box<dyn Error>> {
+    use ergo_aeron_cluster::cluster_codec_types::{
+        AdminRequestType, AdminResponseCode, AdminResponseEncoder, AdminResponseFixedFields,
+    };
+
+    #[derive(Default)]
+    struct LifecycleControlled {
+        events: Vec<(EventCode, String)>,
+        leaders: Vec<(i64, i32, String)>,
+        admins: Vec<(i64, AdminRequestType, AdminResponseCode, String, Vec<u8>)>,
+        extensions: Vec<(u16, u16)>,
+    }
+
+    impl ControlledEgressListener for LifecycleControlled {
+        fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledAction {
+            ControlledAction::Continue
+        }
+        fn on_session_event(
+            &mut self,
+            _: i64,
+            _: i64,
+            _: i64,
+            _: i32,
+            code: EventCode,
+            detail: &str,
+        ) {
+            self.events.push((code, detail.to_owned()));
+        }
+        fn on_new_leader(
+            &mut self,
+            _: i64,
+            leadership_term_id: i64,
+            leader_member_id: i32,
+            ingress_endpoints: &str,
+        ) {
+            self.leaders.push((
+                leadership_term_id,
+                leader_member_id,
+                ingress_endpoints.to_owned(),
+            ));
+        }
+        fn on_admin_response(
+            &mut self,
+            _: i64,
+            correlation_id: i64,
+            request_type: AdminRequestType,
+            response_code: AdminResponseCode,
+            message: &str,
+            payload: &[u8],
+        ) {
+            self.admins.push((
+                correlation_id,
+                request_type,
+                response_code,
+                message.to_owned(),
+                payload.to_vec(),
+            ));
+        }
+        fn on_extension_message(
+            &mut self,
+            _: u16,
+            template_id: u16,
+            schema_id: u16,
+            _: u16,
+            _: &[u8],
+        ) -> ControlledAction {
+            self.extensions.push((schema_id, template_id));
+            ControlledAction::Continue
+        }
+    }
+
+    let client_driver = launch_own_driver("controlled-lifecycle")?;
+    let cluster = FakeCluster::launch()?;
+    let (mut client, egress) =
+        cluster.connect(fake_builder(Duration::from_secs(10))?, &client_driver.dir)?;
+
+    let mut admin_buf =
+        vec![0u8; AdminResponseEncoder::compute_encoded_length_with_message_header(4, 2)];
+    let _ = AdminResponseEncoder::wrap_and_apply_header(&mut admin_buf, 0)
+        .fixed(&AdminResponseFixedFields {
+            cluster_session_id: fake::CLUSTER_SESSION_ID,
+            correlation_id: 77,
+            request_type: AdminRequestType::SNAPSHOT,
+            response_code: AdminResponseCode::OK,
+        })
+        .message(b"done")?
+        .payload(&[0xaa, 0xbb])?;
+
+    offer(&egress, &session_event(EventCode::OK, 0, "notice", 10)?)?;
+    offer(&egress, &admin_buf)?;
+    offer(
+        &egress,
+        &foreign_schema(session_event(EventCode::OK, 0, "", 11)?),
+    )?;
+    offer(&egress, &fake::new_leader_event(2, 1, fake::ENDPOINTS)?)?;
+
+    let mut listener = LifecycleControlled::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while listener.leaders.is_empty()
+        || listener.events.is_empty()
+        || listener.admins.is_empty()
+        || listener.extensions.is_empty()
+    {
+        client.controlled_poll_egress(&mut listener, 10)?;
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for controlled lifecycle events".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert_eq!(listener.events, vec![(EventCode::OK, "notice".to_owned())]);
+    assert_eq!(
+        listener.admins,
+        vec![(
+            77,
+            AdminRequestType::SNAPSHOT,
+            AdminResponseCode::OK,
+            "done".to_owned(),
+            vec![0xaa, 0xbb]
+        )]
+    );
+    assert_eq!(listener.extensions, vec![(999, 2)]);
+    assert_eq!(listener.leaders, vec![(2, 1, fake::ENDPOINTS.to_owned())]);
+
+    offer(&egress, &session_event(EventCode::CLOSED, 1, "closed", 12)?)?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while client.state() != SessionState::Closed {
+        client.controlled_poll_egress(&mut listener, 10)?;
+        if Instant::now() >= deadline {
+            return Err("timed out waiting for SessionEvent(CLOSED)".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        listener.events.last(),
+        Some(&(EventCode::CLOSED, "closed".to_owned()))
+    );
     Ok(())
 }

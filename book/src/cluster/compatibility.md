@@ -67,6 +67,7 @@ fails if its filter drops one).
 | Null, simple and empty credentials; a challenge answered correctly; wrong credentials and a wrong challenge answer rejected with `ClusterError::AuthRejected` | `auth.rs` |
 | Cluster closes a session that sends no keep-alives; keep-alives hold one open | `client_parity.rs` |
 | One connect request per connect; a connect error fails the connect at once; session limit | `client_parity.rs` |
+| `controlled_poll_egress` (`Abort`, `Break`, `Commit`, `Continue`, lifecycle events, listener panic recovery) | `client_parity.rs` |
 | Admin snapshot request answered on `on_admin_response` | `admin_snapshot.rs` |
 
 Not covered by the harness: expiry of the async connect timeout

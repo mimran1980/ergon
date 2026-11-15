@@ -1,7 +1,9 @@
-//! Egress dispatch: decoded messages from the cluster go to an [`EgressListener`].
+//! Egress dispatch: decoded messages from the cluster go to an [`EgressListener`]
+//! or a [`ControlledEgressListener`].
 //!
-//! [`crate::AeronCluster::poll`] decodes each reassembled fragment once,
-//! drops what belongs to another session and calls the listener.
+//! [`crate::AeronCluster::poll`] and
+//! [`crate::AeronCluster::controlled_poll_egress`] decode each reassembled
+//! fragment once, drop what belongs to another session and call the listener.
 
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, EventCode};
 use crate::error::ClusterError;
@@ -138,6 +140,199 @@ impl EgressListener for NullListener {
     fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
 }
 
+/// Action returned by [`ControlledEgressListener`] callbacks during
+/// [`crate::AeronCluster::controlled_poll_egress`], matching Aeron's
+/// `ControlledFragmentHandler.Action`.
+#[must_use = "the controlled poll action decides whether Aeron commits, continues, breaks or aborts the fragment"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ControlledAction {
+    /// Do not advance position for the current fragment and stop polling
+    /// immediately. The fragment will be redelivered on the next poll.
+    Abort,
+    /// Consume the current fragment, commit position up to the end of this
+    /// fragment, and stop polling immediately.
+    Break,
+    /// Commit position to the end of the current fragment and continue
+    /// polling.
+    Commit,
+    /// Continue polling and defer position commit to the end of the poll call.
+    Continue,
+}
+
+impl ControlledAction {
+    #[inline]
+    pub(crate) const fn to_aeron(self) -> rusteron_client::bindings::aeron_controlled_fragment_handler_action_t {
+        use rusteron_client::bindings::aeron_controlled_fragment_handler_action_t as Action;
+        match self {
+            Self::Abort => Action::AERON_ACTION_ABORT,
+            Self::Break => Action::AERON_ACTION_BREAK,
+            Self::Commit => Action::AERON_ACTION_COMMIT,
+            Self::Continue => Action::AERON_ACTION_CONTINUE,
+        }
+    }
+}
+
+/// Callbacks for messages from the cluster, passed to
+/// [`crate::AeronCluster::controlled_poll_egress`], matching Java's
+/// `ControlledEgressListener` and `ControlledEgressListenerExtension`.
+///
+/// Only [`Self::on_message`] is required. It and [`Self::on_extension_message`]
+/// return a [`ControlledAction`] (`Abort`, `Break`, `Commit`, or `Continue`)
+/// that controls how Aeron advances the subscriber position on the egress
+/// subscription. Session lifecycle events (`on_session_event`, `on_challenge`,
+/// `on_admin_response`) advance with [`ControlledAction::Continue`], and
+/// `on_new_leader` advances with [`ControlledAction::Commit`], matching Java's
+/// `AeronCluster.onControlledFragment`.
+///
+/// Only this session's messages reach the listener; an event carrying another
+/// `cluster_session_id` is skipped with [`ControlledAction::Continue`]. Text
+/// fields are validated before they reach a callback. A decode error or a
+/// listener panic stops the current poll and returns a [`ClusterError`]
+/// ([`ClusterError::ListenerPanicked`] on panic) while leaving the client
+/// usable in its current session state.
+///
+/// # Examples
+///
+/// ```rust
+/// use ergo_aeron_cluster::{ControlledAction, ControlledEgressListener};
+///
+/// #[derive(Default)]
+/// struct BatchConsumer {
+///     ready: bool,
+///     messages: Vec<Vec<u8>>,
+/// }
+///
+/// impl ControlledEgressListener for BatchConsumer {
+///     fn on_message(
+///         &mut self,
+///         _cluster_session_id: i64,
+///         _timestamp: i64,
+///         buffer: &[u8],
+///     ) -> ControlledAction {
+///         if !self.ready {
+///             return ControlledAction::Abort;
+///         }
+///         self.messages.push(buffer.to_vec());
+///         ControlledAction::Commit
+///     }
+/// }
+///
+/// let mut consumer = BatchConsumer::default();
+/// assert_eq!(consumer.on_message(1, 0, b"hello"), ControlledAction::Abort);
+/// consumer.ready = true;
+/// assert_eq!(consumer.on_message(1, 0, b"hello"), ControlledAction::Commit);
+/// assert_eq!(consumer.messages, vec![b"hello".to_vec()]);
+/// ```
+pub trait ControlledEgressListener {
+    /// An application message from the clustered service. `buffer` is the raw
+    /// payload after the `SessionMessageHeader`, without SBE framing.
+    fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]) -> ControlledAction;
+
+    /// Like [`Self::on_message`], plus the Aeron header's reserved value.
+    ///
+    /// The default calls [`Self::on_message`] and drops `reserved_value`.
+    /// Override it when the clustered service stamps a send timestamp.
+    fn on_message_with_reserved_value(
+        &mut self,
+        cluster_session_id: i64,
+        timestamp: i64,
+        buffer: &[u8],
+        reserved_value: i64,
+    ) -> ControlledAction {
+        let _ = reserved_value;
+        self.on_message(cluster_session_id, timestamp, buffer)
+    }
+
+    /// A frame this client does not decode (unknown template or schema).
+    ///
+    /// `buffer` is the payload after the 8-byte SBE header. The default
+    /// ignores it and returns [`ControlledAction::Continue`].
+    fn on_extension_message(
+        &mut self,
+        acting_block_length: u16,
+        template_id: u16,
+        schema_id: u16,
+        acting_version: u16,
+        buffer: &[u8],
+    ) -> ControlledAction {
+        let _ = (acting_block_length, template_id, schema_id, acting_version, buffer);
+        ControlledAction::Continue
+    }
+
+    /// A session lifecycle event from the cluster. `detail` is validated UTF-8
+    /// text. The default ignores it.
+    fn on_session_event(
+        &mut self,
+        correlation_id: i64,
+        cluster_session_id: i64,
+        leadership_term_id: i64,
+        leader_member_id: i32,
+        code: EventCode,
+        detail: &str,
+    ) {
+        let _ = (
+            correlation_id,
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            code,
+            detail,
+        );
+    }
+
+    /// A new leader was elected. `ingress_endpoints` is a comma-separated list
+    /// of `member_id=host:port` pairs. The client reconnects itself, and the
+    /// default ignores the event.
+    fn on_new_leader(
+        &mut self,
+        cluster_session_id: i64,
+        leadership_term_id: i64,
+        leader_member_id: i32,
+        ingress_endpoints: &str,
+    ) {
+        let _ = (
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            ingress_endpoints,
+        );
+    }
+
+    /// An authentication challenge: the opaque bytes of the `Challenge`
+    /// message. The default ignores it.
+    fn on_challenge(&mut self, correlation_id: i64, cluster_session_id: i64, encoded_challenge: &[u8]) {
+        let _ = (correlation_id, cluster_session_id, encoded_challenge);
+    }
+
+    /// The response to an admin request such as a snapshot. `message` is
+    /// validated UTF-8 and `payload` is the raw bytes after it. The default
+    /// ignores it.
+    fn on_admin_response(
+        &mut self,
+        cluster_session_id: i64,
+        correlation_id: i64,
+        request_type: AdminRequestType,
+        response_code: AdminResponseCode,
+        message: &str,
+        payload: &[u8],
+    ) {
+        let _ = (
+            cluster_session_id,
+            correlation_id,
+            request_type,
+            response_code,
+            message,
+            payload,
+        );
+    }
+}
+
+impl ControlledEgressListener for NullListener {
+    fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledAction {
+        ControlledAction::Continue
+    }
+}
+
 /// Decodes `data` and delivers it to `listener` when it belongs to `session_id`.
 #[cfg(test)]
 pub(crate) fn deliver<L: EgressListener>(
@@ -245,6 +440,137 @@ fn call<L: EgressListener>(listener: &mut L, frag: Fragment<'_>, reserved_value:
             message,
             payload,
         ),
+    }
+}
+
+/// Decodes `data` and delivers it to a controlled `listener` when it belongs to `session_id`.
+#[cfg(test)]
+pub(crate) fn deliver_controlled<L: ControlledEgressListener>(
+    listener: &mut L,
+    session_id: i64,
+    data: &[u8],
+    reserved_value: i64,
+) -> Result<ControlledAction, ClusterError> {
+    match Fragment::decode(data)? {
+        Some(frag) => dispatch_controlled(listener, session_id, frag, reserved_value),
+        None => dispatch_controlled_extension(listener, data),
+    }
+}
+
+/// Delivers a decoded fragment to a controlled `listener` unless it carries
+/// another session's id. A listener panic becomes
+/// [`ClusterError::ListenerPanicked`].
+#[inline]
+pub(crate) fn dispatch_controlled<L: ControlledEgressListener>(
+    listener: &mut L,
+    session_id: i64,
+    frag: Fragment<'_>,
+    reserved_value: i64,
+) -> Result<ControlledAction, ClusterError> {
+    if frag.cluster_session_id() != session_id {
+        return Ok(ControlledAction::Continue);
+    }
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        call_controlled(listener, frag, reserved_value)
+    }))
+    .map_err(|_| ClusterError::ListenerPanicked {
+        context: "controlled egress dispatch",
+    })
+}
+
+/// A frame of an unknown template or schema for a controlled listener.
+/// Returns [`ControlledAction::Continue`] when `data` has no SBE header.
+pub(crate) fn dispatch_controlled_extension<L: ControlledEgressListener>(
+    listener: &mut L,
+    data: &[u8],
+) -> Result<ControlledAction, ClusterError> {
+    let Some(view) = crate::fragment::extension_view(data) else {
+        return Ok(ControlledAction::Continue);
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        listener.on_extension_message(
+            view.acting_block_length,
+            view.template_id,
+            view.schema_id,
+            view.acting_version,
+            view.payload,
+        )
+    }))
+    .map_err(|_| ClusterError::ListenerPanicked {
+        context: "controlled egress extension",
+    })
+}
+
+fn call_controlled<L: ControlledEgressListener>(
+    listener: &mut L,
+    frag: Fragment<'_>,
+    reserved_value: i64,
+) -> ControlledAction {
+    match frag {
+        Fragment::Message {
+            cluster_session_id,
+            timestamp,
+            payload,
+        } => listener.on_message_with_reserved_value(cluster_session_id, timestamp, payload, reserved_value),
+        Fragment::SessionEvent {
+            correlation_id,
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            code,
+            detail,
+            leader_heartbeat_timeout_ns: _,
+        } => {
+            listener.on_session_event(
+                correlation_id,
+                cluster_session_id,
+                leadership_term_id,
+                leader_member_id,
+                code,
+                detail,
+            );
+            ControlledAction::Continue
+        }
+        Fragment::NewLeader {
+            cluster_session_id,
+            leadership_term_id,
+            leader_member_id,
+            ingress_endpoints,
+        } => {
+            listener.on_new_leader(
+                cluster_session_id,
+                leadership_term_id,
+                leader_member_id,
+                ingress_endpoints,
+            );
+            ControlledAction::Commit
+        }
+        Fragment::Challenge {
+            correlation_id,
+            cluster_session_id,
+            encoded_challenge,
+        } => {
+            listener.on_challenge(correlation_id, cluster_session_id, encoded_challenge);
+            ControlledAction::Continue
+        }
+        Fragment::AdminResponse {
+            cluster_session_id,
+            correlation_id,
+            request_type,
+            response_code,
+            message,
+            payload,
+        } => {
+            listener.on_admin_response(
+                cluster_session_id,
+                correlation_id,
+                request_type,
+                response_code,
+                message,
+                payload,
+            );
+            ControlledAction::Continue
+        }
     }
 }
 
@@ -630,6 +956,238 @@ mod tests {
         #[test]
         fn arbitrary_bytes_do_not_panic(data in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512)) {
             let _ = deliver(&mut NullListener, 42, &data, 0);
+            let _ = deliver_controlled(&mut NullListener, 42, &data, 0);
         }
+    }
+
+    #[test]
+    fn controlled_listener_returns_each_action_and_filters_foreign_sessions() -> Result<(), Box<dyn std::error::Error>>
+    {
+        struct Scripted {
+            next: ControlledAction,
+            seen: Vec<(i64, i64, Vec<u8>, i64)>,
+        }
+        impl ControlledEgressListener for Scripted {
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledAction {
+                self.next
+            }
+            fn on_message_with_reserved_value(
+                &mut self,
+                cluster_session_id: i64,
+                timestamp: i64,
+                buffer: &[u8],
+                reserved_value: i64,
+            ) -> ControlledAction {
+                self.seen
+                    .push((cluster_session_id, timestamp, buffer.to_vec(), reserved_value));
+                self.next
+            }
+        }
+        for action in [
+            ControlledAction::Abort,
+            ControlledAction::Break,
+            ControlledAction::Commit,
+            ControlledAction::Continue,
+        ] {
+            let mut listener = Scripted {
+                next: action,
+                seen: Vec::new(),
+            };
+            let returned = deliver_controlled(&mut listener, 42, &message(42, b"payload"), 77)?;
+            assert_eq!(returned, action);
+            assert_eq!(listener.seen, vec![(42, 100, b"payload".to_vec(), 77)]);
+        }
+
+        // Foreign session message is ignored and returns Continue even if listener would Abort.
+        let mut listener = Scripted {
+            next: ControlledAction::Abort,
+            seen: Vec::new(),
+        };
+        let returned = deliver_controlled(&mut listener, 42, &message(99, b"foreign"), 0)?;
+        assert_eq!(returned, ControlledAction::Continue);
+        assert_eq!(listener.seen, []);
+        Ok(())
+    }
+
+    #[derive(Default)]
+    struct LifecycleRec {
+        events: Vec<(i64, EventCode, String)>,
+        leaders: Vec<(i64, i32, String)>,
+        challenges: Vec<(i64, Vec<u8>)>,
+        admins: Vec<(i64, AdminRequestType, AdminResponseCode, String, Vec<u8>)>,
+        extensions: Vec<(u16, u16, Vec<u8>)>,
+    }
+
+    impl ControlledEgressListener for LifecycleRec {
+        fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledAction {
+            ControlledAction::Continue
+        }
+        fn on_session_event(
+            &mut self,
+            correlation_id: i64,
+            _cluster_session_id: i64,
+            _leadership_term_id: i64,
+            _leader_member_id: i32,
+            code: EventCode,
+            detail: &str,
+        ) {
+            self.events.push((correlation_id, code, detail.to_owned()));
+        }
+        fn on_new_leader(
+            &mut self,
+            _cluster_session_id: i64,
+            leadership_term_id: i64,
+            leader_member_id: i32,
+            ingress_endpoints: &str,
+        ) {
+            self.leaders
+                .push((leadership_term_id, leader_member_id, ingress_endpoints.to_owned()));
+        }
+        fn on_challenge(&mut self, correlation_id: i64, _cluster_session_id: i64, encoded_challenge: &[u8]) {
+            self.challenges.push((correlation_id, encoded_challenge.to_vec()));
+        }
+        fn on_admin_response(
+            &mut self,
+            _cluster_session_id: i64,
+            correlation_id: i64,
+            request_type: AdminRequestType,
+            response_code: AdminResponseCode,
+            message: &str,
+            payload: &[u8],
+        ) {
+            self.admins.push((
+                correlation_id,
+                request_type,
+                response_code,
+                message.to_owned(),
+                payload.to_vec(),
+            ));
+        }
+        fn on_extension_message(
+            &mut self,
+            _acting_block_length: u16,
+            template_id: u16,
+            schema_id: u16,
+            _acting_version: u16,
+            buffer: &[u8],
+        ) -> ControlledAction {
+            self.extensions.push((schema_id, template_id, buffer.to_vec()));
+            ControlledAction::Break
+        }
+    }
+
+    #[test]
+    fn controlled_listener_dispatches_lifecycle_and_extension_events() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::codecs::session::{
+            AdminResponseEncoder, AdminResponseFixedFields, ChallengeEncoder, ChallengeFixedFields,
+            NewLeaderEventEncoder, NewLeaderEventFixedFields,
+        };
+
+        let mut listener = LifecycleRec::default();
+
+        // SessionEvent -> Continue
+        let ev = session_event(42)?;
+        assert_eq!(
+            deliver_controlled(&mut listener, 42, &ev, 0)?,
+            ControlledAction::Continue
+        );
+        assert_eq!(listener.events, vec![(1, EventCode::OK, "ok".to_owned())]);
+
+        // NewLeaderEvent -> Commit (matching Java AeronCluster.onControlledFragment)
+        let endpoints = b"0=localhost:9000";
+        let mut nl_buf = vec![0u8; NewLeaderEventEncoder::compute_encoded_length_with_message_header(endpoints.len())];
+        let _ = NewLeaderEventEncoder::wrap_and_apply_header(&mut nl_buf, 0)
+            .fixed(&NewLeaderEventFixedFields {
+                leadership_term_id: 9,
+                cluster_session_id: 42,
+                leader_member_id: 2,
+            })
+            .ingress_endpoints(endpoints)?;
+        assert_eq!(
+            deliver_controlled(&mut listener, 42, &nl_buf, 0)?,
+            ControlledAction::Commit
+        );
+        assert_eq!(listener.leaders, vec![(9, 2, "0=localhost:9000".to_owned())]);
+
+        // Challenge -> Continue
+        let chal = b"nonce";
+        let mut ch_buf = vec![0u8; ChallengeEncoder::compute_encoded_length_with_message_header(chal.len())];
+        let _ = ChallengeEncoder::wrap_and_apply_header(&mut ch_buf, 0)
+            .fixed(&ChallengeFixedFields {
+                correlation_id: 11,
+                cluster_session_id: 42,
+            })
+            .encoded_challenge(chal)?;
+        assert_eq!(
+            deliver_controlled(&mut listener, 42, &ch_buf, 0)?,
+            ControlledAction::Continue
+        );
+        assert_eq!(listener.challenges, vec![(11, b"nonce".to_vec())]);
+
+        // AdminResponse -> Continue
+        let mut ar_buf = vec![0u8; AdminResponseEncoder::compute_encoded_length_with_message_header(2, 3)];
+        let _ = AdminResponseEncoder::wrap_and_apply_header(&mut ar_buf, 0)
+            .fixed(&AdminResponseFixedFields {
+                cluster_session_id: 42,
+                correlation_id: 13,
+                request_type: AdminRequestType::SNAPSHOT,
+                response_code: AdminResponseCode::OK,
+            })
+            .message(b"ok")?
+            .payload(&[7, 8, 9])?;
+        assert_eq!(
+            deliver_controlled(&mut listener, 42, &ar_buf, 0)?,
+            ControlledAction::Continue
+        );
+        assert_eq!(
+            listener.admins,
+            vec![(
+                13,
+                AdminRequestType::SNAPSHOT,
+                AdminResponseCode::OK,
+                "ok".to_owned(),
+                vec![7, 8, 9]
+            )]
+        );
+
+        // Extension frame -> returns listener's ControlledAction (Break)
+        let mut ext = message(42, b"ext");
+        ext[4..6].copy_from_slice(&999u16.to_le_bytes());
+        assert_eq!(deliver_controlled(&mut listener, 42, &ext, 0)?, ControlledAction::Break);
+        assert_eq!(listener.extensions.len(), 1);
+        assert_eq!(listener.extensions[0].0, 999);
+        assert_eq!(listener.extensions[0].1, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn controlled_listener_panic_is_caught_as_listener_panicked() {
+        struct Panicking;
+        impl ControlledEgressListener for Panicking {
+            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledAction {
+                panic!("controlled message boom");
+            }
+            fn on_extension_message(&mut self, _: u16, _: u16, _: u16, _: u16, _: &[u8]) -> ControlledAction {
+                panic!("controlled extension boom");
+            }
+        }
+        let mut listener = Panicking;
+        let err = deliver_controlled(&mut listener, 42, &message(42, b"x"), 0).unwrap_err();
+        assert!(matches!(
+            err,
+            ClusterError::ListenerPanicked {
+                context: "controlled egress dispatch"
+            }
+        ));
+
+        let mut ext = message(42, b"ext");
+        ext[4..6].copy_from_slice(&999u16.to_le_bytes());
+        let err = deliver_controlled(&mut listener, 42, &ext, 0).unwrap_err();
+        assert!(matches!(
+            err,
+            ClusterError::ListenerPanicked {
+                context: "controlled egress extension"
+            }
+        ));
     }
 }

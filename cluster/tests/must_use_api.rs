@@ -98,6 +98,7 @@ fn mutating_transition_methods_stay_unannotated() {
     for sig in [
         "pub fn close(&mut self)",
         "pub fn poll<L: EgressListener>(&mut self",
+        "pub fn controlled_poll_egress<L: ControlledEgressListener>(",
         "pub fn poll(&mut self)",
         "pub fn finish(self)",
     ] {
@@ -108,4 +109,17 @@ fn mutating_transition_methods_stay_unannotated() {
             "{sig} is a mutating transition and must stay unannotated; found preceding text: {before}"
         );
     }
+}
+
+#[test]
+fn controlled_action_has_must_use_attribute() {
+    let src = include_str!("../src/egress.rs");
+    let pos = src
+        .find("pub enum ControlledAction")
+        .expect("ControlledAction not found");
+    let before = &src[pos.saturating_sub(240)..pos];
+    assert!(
+        before.contains("#[must_use"),
+        "ControlledAction must carry #[must_use]; found preceding text: {before}"
+    );
 }

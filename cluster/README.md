@@ -141,6 +141,11 @@ fn run(client: &mut AeronCluster) -> Result<(), ClusterError> {
 | `on_challenge`, `on_admin_response` | ignore | observe auth challenges, snapshot replies |
 | `on_extension_message` | ignore | read frames of another template or schema |
 
+For per-fragment flow control, implement `ControlledEgressListener` and call
+`AeronCluster::controlled_poll_egress`: `on_message` and `on_extension_message`
+return a `ControlledAction` (`Abort`, `Break`, `Commit`, or `Continue`) matching
+Aeron's `ControlledFragmentHandler.Action`.
+
 A payload slice is valid only inside the callback: copy what you keep.
 
 Protocol errors, listener panics, keep-alive failures, publication failures, and

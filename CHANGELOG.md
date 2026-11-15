@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ergo-aeron-cluster` `AeronCluster::controlled_poll_egress`,
+  `AeronCluster::egress_position`, `ControlledEgressListener`, and
+  `ControlledAction` (`Abort`, `Break`, `Commit`, `Continue`), matching Java's
+  `AeronCluster.controlledPollEgress` and `ControlledEgressAdapter`.
+
 ### Changed
 
 - Breaking: `ergo-aeron-cluster` `ClusterError::AuthRejected` is now a struct

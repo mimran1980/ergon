@@ -143,7 +143,7 @@ pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim, ConnectStep};
 pub use config::SessionBuilder;
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier, StaticCredentials};
 pub use decorator::IngressSessionDecorator;
-pub use egress::{EgressListener, NullListener};
+pub use egress::{ControlledAction, ControlledEgressListener, EgressListener, NullListener};
 pub use endpoints::{IngressEndpoint, parse_ingress_endpoints};
 pub use error::{AeronErrorSource, ClusterError, ClusterEvent, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
