@@ -57,7 +57,7 @@ pub fn offer(
 }
 
 pub fn session_id(publication: &AeronExclusivePublication) -> Result<i32, Box<dyn Error>> {
-    Ok(publication.get_constants()?.session_id)
+    Ok(publication.get_constants()?.session_id())
 }
 
 pub fn session_event(

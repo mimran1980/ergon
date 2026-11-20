@@ -304,12 +304,14 @@ impl SessionBuilder {
 
     /// The ingress channel as a `CStr`, once one has been set.
     #[inline]
+    #[must_use]
     pub fn ingress_channel_c_str(&self) -> Option<&CStr> {
         self.ingress_c.as_deref()
     }
 
     /// The egress channel as a `CStr`, once one has been set.
     #[inline]
+    #[must_use]
     pub fn egress_channel_c_str(&self) -> Option<&CStr> {
         self.egress_c.as_deref()
     }

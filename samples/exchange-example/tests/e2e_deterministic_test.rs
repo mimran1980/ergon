@@ -114,7 +114,7 @@ fn run_roundtrip(symbol: &str, bids: u16, asks: u16, seq: u64) {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while !expect.received && std::time::Instant::now() < deadline {
         let fragments = assembler
-            .poll(&sub, &mut expect, verify_counts, 10)
+            .poll(&sub, |buf, hdr| verify_counts(&mut expect, buf, hdr), 10)
             .expect("poll");
         if fragments == 0 {
             std::thread::sleep(Duration::from_millis(1));

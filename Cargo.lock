@@ -1510,9 +1510,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rusteron-client"
-version = "0.2.18"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "772814be79c844c301be4d0d034038492669a4e0b075e88d33283e2e38ad7ed9"
+checksum = "a6c4bb18656f9ecb19950c1afcfba450d8fe176d3bd0a9c293a1936a7c9a0901"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1526,12 +1526,13 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.2.18"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f3917d7c4c5e811432e408aba1e7e6405735565ade473a0880bc4d6e9bb6b65"
+checksum = "5020e2b3f22969bc08aad0cf353bd078f9f6affe7c18c91e2b5b5f39b7fc2eed"
 dependencies = [
  "itertools 0.15.0",
  "log",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -1540,9 +1541,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.2.18"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04f558373151bbd909a8379f76c1d4816b5e34240126b426cab90af6700e4460"
+checksum = "af9683352eb2052382989bcd31a6d613463362027cfd10739c23eb7eff8d5c07"
 dependencies = [
  "bindgen",
  "cmake",

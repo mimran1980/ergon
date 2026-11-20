@@ -51,7 +51,7 @@ others 200. Source: run `clockbench-aws-20261016`.
 ## Aeron's clocks
 
 Aeron keeps its own clocks (`aeron_clock.c:91-136` in the Aeron tree
-shipped with rusteron-client 0.2.18). The driver's agents read a cached
+shipped with rusteron-client 0.3.0). The driver's agents read a cached
 copy (`aeron_clock_cache_t`).
 
 | Aeron API | Linux source | returns |

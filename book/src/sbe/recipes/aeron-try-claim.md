@@ -41,7 +41,7 @@ where both are foreign, wrap the claim in a newtype):
 ```rust,ignore
 use rusteron_client::{AeronCError, AeronClaim};
 
-impl messages::sbe_rt::Claim for AeronClaim {
+impl messages::sbe_rt::Claim for AeronClaim<'_> {
     type Error = AeronCError;
     fn frame_mut(&mut self) -> &mut [u8] {
         self.data()

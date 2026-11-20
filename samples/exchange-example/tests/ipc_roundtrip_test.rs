@@ -137,7 +137,11 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
 
     while !received && std::time::Instant::now() < deadline {
         let fragments = assembler
-            .poll(&subscription, &mut received, handle_fragment, 10)
+            .poll(
+                &subscription,
+                |buf, hdr| handle_fragment(&mut received, buf, hdr),
+                10,
+            )
             .expect("poll");
         if fragments == 0 {
             std::thread::sleep(Duration::from_millis(1));
@@ -147,7 +151,6 @@ fn direct_claim_app_message_roundtrip() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-// fn pointer: it can't capture, so state flows through the ctx param
 fn handle_fragment(received: &mut bool, buf: &[u8], _hdr: &rusteron_client::AeronHeader) {
     use exchange_example::normalized_app::{AnyMessage, AppMessageDecoder, Source};
 

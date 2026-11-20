@@ -88,6 +88,8 @@ impl PublicationFailure {
             AeronOfferError::MaxPositionExceeded => Self::MaxPositionExceeded,
             AeronOfferError::TooManyParts => Self::TooManyParts,
             AeronOfferError::Error(c) => Self::Other(i64::from(c.code)),
+            // A variant added after rusteron 0.3: report Aeron's generic publication error.
+            _ => Self::Other(i64::from(rusteron_client::bindings::AERON_PUBLICATION_ERROR)),
         }
     }
 

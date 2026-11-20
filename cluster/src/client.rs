@@ -66,7 +66,7 @@ fn publication_limits(publication: &AeronExclusivePublication) -> Result<(usize,
     let constants = publication
         .get_constants()
         .map_err(|e| ClusterError::aeron("ingress_constants", e))?;
-    Ok((constants.max_message_length, constants.max_payload_length))
+    Ok((constants.max_message_length(), constants.max_payload_length()))
 }
 
 /// The egress image a session is bound to: the one that delivered its
@@ -226,6 +226,50 @@ fn dispatch_controlled<L: ControlledEgressListener>(
             ControlledAction::Break.to_aeron()
         }
     }
+}
+
+/// Moves the session state as [`protocol::ingress_failure_state`] decides for
+/// one publication failure. Takes the fields, not the client, so a claim that
+/// borrows the ingress publication can still record its failure.
+fn apply_ingress_failure(
+    state: &mut SessionState,
+    pending_ingress: &mut Option<PendingIngress>,
+    awaiting_leader_since: &mut Option<Instant>,
+    failure: PublicationFailure,
+) {
+    let next = protocol::ingress_failure_state(*state, failure);
+    if next == *state {
+        return;
+    }
+    match next {
+        // Java closes the publication and lets the next poll close the
+        // session, because a full publication cannot carry a close request.
+        SessionState::PendingClose => {
+            *state = SessionState::PendingClose;
+            *pending_ingress = None;
+        }
+        SessionState::AwaitingNewLeader => {
+            *state = SessionState::AwaitingNewLeader;
+            *awaiting_leader_since = Some(Instant::now());
+        }
+        _ => {}
+    }
+}
+
+/// Applies a `ClusterError::Publication` to the session state (Java
+/// `trackIngressPublicationResult`). Takes the fields, not the client, because
+/// a failed claim's result still borrows the ingress publication.
+#[cold]
+fn track_ingress_error(
+    state: &mut SessionState,
+    pending_ingress: &mut Option<PendingIngress>,
+    awaiting_leader_since: &mut Option<Instant>,
+    err: ClusterError,
+) -> ClusterError {
+    if let ClusterError::Publication { failure, .. } = &err {
+        apply_ingress_failure(state, pending_ingress, awaiting_leader_since, *failure);
+    }
+    err
 }
 
 /// Java `AeronCluster.SEND_ATTEMPTS`.
@@ -957,13 +1001,10 @@ impl AeronCluster {
         }
         // Fast path: claim when header and payload fit in one fragment.
         if total <= self.max_payload_length {
-            return match self.try_claim(payload.len()) {
-                Ok(mut claim) => {
-                    claim.payload_mut().copy_from_slice(payload);
-                    claim.commit().map_err(|e| self.track_publication_error(e))
-                }
-                Err(e) => Err(e),
-            };
+            let mut claim = self.try_claim(payload.len())?;
+            claim.payload_mut().copy_from_slice(payload);
+            let committed = claim.commit();
+            return committed.map_err(|e| self.track_publication_error(e));
         }
         // Fallback: offer header and payload as two slices, with no allocation
         // and no payload copy. Aeron fragments the message.
@@ -1096,33 +1137,24 @@ impl AeronCluster {
     /// Moves the session state as [`protocol::ingress_failure_state`] decides for one publication failure.
     #[cold]
     fn note_ingress_failure(&mut self, failure: PublicationFailure) {
-        let next = protocol::ingress_failure_state(self.state, failure);
-        if next == self.state {
-            return;
-        }
-        match next {
-            // Java closes the publication and lets the next poll close the
-            // session, because a full publication cannot carry a close request.
-            SessionState::PendingClose => {
-                self.state = SessionState::PendingClose;
-                self.pending_ingress = None;
-            }
-            SessionState::AwaitingNewLeader => {
-                self.state = SessionState::AwaitingNewLeader;
-                self.awaiting_leader_since = Some(Instant::now());
-            }
-            _ => {}
-        }
+        apply_ingress_failure(
+            &mut self.state,
+            &mut self.pending_ingress,
+            &mut self.awaiting_leader_since,
+            failure,
+        );
     }
 
     /// Applies a `ClusterError::Publication` from `offer` or `try_claim` to the
     /// session state (Java `trackIngressPublicationResult`).
     #[cold]
     fn track_publication_error(&mut self, err: ClusterError) -> ClusterError {
-        if let ClusterError::Publication { failure, .. } = &err {
-            self.note_ingress_failure(*failure);
-        }
-        err
+        track_ingress_error(
+            &mut self.state,
+            &mut self.pending_ingress,
+            &mut self.awaiting_leader_since,
+            err,
+        )
     }
 
     /// Sends an `AdminRequest` such as a snapshot on the ingress publication.
@@ -1140,10 +1172,17 @@ impl AeronCluster {
             return Err(ClusterError::NotConnected);
         }
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
-        let mut claim = self
-            .ingress
-            .try_claim_owned(len)
-            .map_err(|error| self.track_publication_error(ClusterError::from_offer_error("admin_request", error)))?;
+        let mut claim = match self.ingress.try_claim_owned(len) {
+            Ok(claim) => claim,
+            Err(error) => {
+                return Err(track_ingress_error(
+                    &mut self.state,
+                    &mut self.pending_ingress,
+                    &mut self.awaiting_leader_since,
+                    ClusterError::from_offer_error("admin_request", error),
+                ));
+            }
+        };
         if claim.data().len() < len {
             std::hint::cold_path();
             return Err(ClusterError::BufferTooSmall {
@@ -1244,7 +1283,11 @@ impl AeronCluster {
         };
         let n = self
             .regular_assembler
-            .poll(&self.egress, &mut ctx, dispatch_regular::<L>, fragment_limit)
+            .poll(
+                &self.egress,
+                |data, hdr| dispatch_regular(&mut ctx, data, hdr),
+                fragment_limit,
+            )
             .map_err(|e| ClusterError::aeron("poll", e))?;
         self.apply_polled(session_closed, new_leader, decode_err)?;
         Ok(n)
@@ -1320,7 +1363,11 @@ impl AeronCluster {
         };
         let n = self
             .controlled_assembler
-            .poll(&self.egress, &mut ctx, dispatch_controlled::<L>, fragment_limit)
+            .poll(
+                &self.egress,
+                |data, hdr| dispatch_controlled(&mut ctx, data, hdr),
+                fragment_limit,
+            )
             .map_err(|e| ClusterError::aeron("controlled_poll_egress", e))?;
         self.apply_polled(session_closed, new_leader, decode_err)?;
         Ok(usize::try_from(n).unwrap_or(0))
@@ -1628,7 +1675,7 @@ impl AeronCluster {
     ///     Ok(())
     /// }
     /// ```
-    pub fn try_claim(&mut self, payload_len: usize) -> Result<ClusterClaim, ClusterError> {
+    pub fn try_claim(&mut self, payload_len: usize) -> Result<ClusterClaim<'_>, ClusterError> {
         if self.state != SessionState::Connected {
             std::hint::cold_path();
             return Err(ClusterError::NotConnected);
@@ -1650,10 +1697,17 @@ impl AeronCluster {
                 maximum,
             });
         }
-        let mut claim = self
-            .ingress
-            .try_claim_owned(total)
-            .map_err(|e| self.track_publication_error(ClusterError::from_offer_error("try_claim", e)))?;
+        let mut claim = match self.ingress.try_claim_owned(total) {
+            Ok(claim) => claim,
+            Err(error) => {
+                return Err(track_ingress_error(
+                    &mut self.state,
+                    &mut self.pending_ingress,
+                    &mut self.awaiting_leader_since,
+                    ClusterError::from_offer_error("try_claim", error),
+                ));
+            }
+        };
 
         if claim.data().len() < MSG_HDR_TOTAL {
             std::hint::cold_path();
@@ -1714,12 +1768,12 @@ pub(crate) fn apply_state_transition(
 /// `payload_mut()`, the bytes after the 32-byte `SessionMessageHeader`, then
 /// calls `commit()`.
 #[must_use = "call commit() to publish or abort() to discard the claim"]
-pub struct ClusterClaim {
-    claim: AeronClaim,
+pub struct ClusterClaim<'a> {
+    claim: AeronClaim<'a>,
     payload_len: usize,
 }
 
-impl ClusterClaim {
+impl ClusterClaim<'_> {
     /// The writable payload region after the `SessionMessageHeader`.
     #[inline]
     pub fn payload_mut(&mut self) -> &mut [u8] {

@@ -11,6 +11,18 @@
 
 ### Changed
 
+- Breaking: rusteron 0.3.0 throughout, from 0.2.18, and the `aeron` submodule,
+  pin and jars at Aeron 1.54.2, from 1.54.0 (Aeron's Gradle is now 9.9.1).
+  `ergo-aeron-cluster` re-exports rusteron 0.3's `Aeron`, `AeronContext` and
+  publication and subscription types, so callers follow rusteron's
+  0.2-to-0.3 migration: `close()` consumes the handle, `AeronSubscription` is
+  not `Clone`, and thread traits follow Aeron C per type. The vendored cluster
+  schemas stay at Aeron 1.54.0's v17 (1.54.2's v18 only adds an optional
+  `termBaseLogPosition` to `ClusterActionRequest` and `SnapshotMarker`, which
+  a client never sends or reads).
+- Breaking: `AeronCluster::try_claim` returns `ClusterClaim<'_>`, which
+  borrows the client until it is committed, aborted or dropped, as rusteron
+  0.3's `AeronClaim<'_>` borrows its publication.
 - Breaking: `ergo-aeron-cluster` `ClusterError::AuthRejected` is now a struct
   variant `{ detail: String }` carrying the cluster's rejection detail from
   `SessionEvent(AUTHENTICATION_REJECTED)` (stripped of control characters and

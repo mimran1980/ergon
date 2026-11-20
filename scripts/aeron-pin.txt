@@ -4,4 +4,4 @@
 # version with the Aeron in each rusteron crate and, when aeron/ is checked
 # out, its version.txt and built jars. Bump it together with the gitlink and
 # rusteron.
-1.54.0 454da1e4e6c7edf3dd6d34878512d3243384992a
+1.54.2 481d4271ad5d52db1ae080bfb29d6259f10566fb
