@@ -1,15 +1,15 @@
 # AWS and Azure hosts, x86 and Graviton
 
 How to apply each node setting on a VM or a Kubernetes node. Which settings
-have evidence, and the figures: [Kubernetes HFT tuning](hft.md).
+have evidence: [Kubernetes HFT tuning](hft.md).
 
 Terms: [deployment glossary](overview.md#glossary).
 
 ## Instances
 
-| platform | measured on | notes |
+| platform | instance types | notes |
 |---|---|---|
-| AWS x86 | `c7i.xlarge`, `c7i.2xlarge`, `c7i.4xlarge`, `c7i.metal-24xl` | metal costs 6 times a `c7i.4xlarge` ([cost](benchmarks.md#cost-per-hour)). A `c7i.4xlarge` has 8 cores with SMT off |
+| AWS x86 | `c7i.xlarge`, `c7i.2xlarge`, `c7i.4xlarge`, `c7i.metal-24xl` | a `c7i.4xlarge` has 8 cores with SMT off |
 | AWS Graviton | `c8g.xlarge`, `c8g.2xlarge` (Graviton4), `c9g.xlarge`, `c9g.2xlarge` (Graviton5) | no SMT: a vCPU is a core |
 | Azure x86 | `Standard_D8s_v6`, `D8ds_v6`, `D16s_v6` (Xeon Platinum 8573C), accelerated networking (MANA) | |
 
@@ -27,7 +27,7 @@ every CPU but housekeeping. `<busy>` is the busy CPUs, `<hk>` housekeeping:
 isolcpus=managed_irq,domain,<busy> nohz_full=<busy> rcu_nocbs=<busy> irqaffinity=<hk>
 ```
 
-**Effect:** [isolation](hft.md#isolation). Kernel reference:
+**Effect:** [settings](hft.md#settings). Kernel reference:
 [kernel-parameters](https://docs.kernel.org/admin-guide/kernel-parameters.html),
 [NO_HZ](https://docs.kernel.org/timers/no_hz.html). On x86 isolate whole
 cores (SMT off, so one CPU is one core).
@@ -57,9 +57,9 @@ interrupt: less CPU, more latency
 
 | setting | how | evidence |
 |---|---|---|
-| every movable interrupt on housekeeping, `irqbalance` stopped | `/proc/irq/*/smp_affinity_list`, `/proc/irq/default_smp_affinity`; `systemctl disable --now irqbalance` | [interrupt placement](hft.md#interrupt-placement) |
+| every movable interrupt on housekeeping, `irqbalance` stopped | `/proc/irq/*/smp_affinity_list`, `/proc/irq/default_smp_affinity`; `systemctl disable --now irqbalance` | not measured here |
 | NIC queue interrupts pinned again after every NIC reset | ENA puts each queue's interrupt back on CPU *i* when the interface comes up (reset, `ethtool -G`/`-L`, a NIC handed back by a kernel-bypass driver). Re-pin on each link event | as above |
-| ENA moderation off | `ethtool -C <if> adaptive-rx off rx-usecs 0`; ENA turns adaptive moderation back on when the interface comes up, so re-apply it with the pins | [moderation](hft.md#interrupt-moderation), x86 polling backend only |
+| ENA moderation off | `ethtool -C <if> adaptive-rx off rx-usecs 0`; ENA turns adaptive moderation back on when the interface comes up, so re-apply it with the pins | not measured here |
 | receive ring | `ethtool -G <if> rx 4096` | not measured here |
 | global busy polling | `net.core.busy_read`, `busy_poll` | it reaches every socket read on the host: leave unset and busy-poll per socket (`SO_BUSY_POLL`). Aeron's media driver: [hft](hft.md#settings) |
 
@@ -71,8 +71,8 @@ interrupts does.
 
 | host | setting | evidence |
 |---|---|---|
-| x86 VM | leave it | capping at C1 was mixed: [C-states](hft.md#c-states) |
-| x86 metal | leave it | `c7i.metal-24xl`, round 4: idle not separated; at 288 B 1 M msgs/s at least one rep of each capped arm had a p50 above 4 ms (DPDK transport benchmarks, "Measured but no setting recommended") |
+| x86 VM | cap only the IRQ CPU (ergon-tune T20) | not measured here |
+| x86 metal | cap only the IRQ CPU (ergon-tune T20) | not measured here |
 | Graviton | nothing to set | the OS has no C-states to pick: an idle core waits for an interrupt (`WFI`) |
 
 ## Memory
@@ -103,14 +103,8 @@ One physical core per role. SMT is off on x86 latency nodes
 | media driver sender | one CPU | one CPU |
 | media driver receiver | one CPU | one CPU |
 
-- **`SHARED_NETWORK`** (sender and receiver on one thread) saves a core and
-  costs latency: DPDK transport on Graviton G1, 1,344 B bursts, p50 522
-  against 234 µs, max 886 against 745 µs ([DPDK configuration: threads and
-  cores](../md-dpdk/configuration.md#threads-and-cores)).
-- **`io_uring` SQPOLL:** its kernel thread on a CPU of its own beat the
-  loop's SMT sibling at 10 and 100 connections; at 1 the result is mixed
-  ([SMT sibling](hft.md#smt-sibling)). With SMT off, give it another CPU of
-  the pod's own.
+- **`io_uring` SQPOLL:** its kernel thread spins, so give it a CPU of the
+  pod's own, not the loop's SMT sibling (not measured here).
 - **Name one CPU per core.** `thread_siblings_list` still lists the offline
   twin; use the lowest id of each core. AWS numbers x86 siblings N and
   N + cores, Azure adjacently (0–1, 2–3).

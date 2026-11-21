@@ -404,10 +404,7 @@ fn driver_of(
     }
 }
 
-const N1_EVIDENCE: &str = "lab run flags-aws-20261015T070339Z (c1/c2-base, -nodim, \
-     -nocoalesce, with loop counters; pre-empting worker kworker/2:1): AWS c7i, recv-busy, \
-     two 8-minute reps each; lab run flags-aws-20261019T175248Z's receiver settings (on with \
-     rx-usecs 20 as found, back on after a reset); Linux \
+const N1_EVIDENCE: &str = "Linux \
      drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_up enables adaptive moderation); \
      aws-graviton-getting-started perfrunbook (adaptive-rx off for latency-sensitive work)";
 
@@ -441,25 +438,20 @@ pub fn n1_adaptive_rx<E: Ethtool>(
             ..
         }) => {
             let platform = if Platform::detect(host).is_graviton() {
-                " On Graviton it is not A/B'd here; AWS's Graviton performance runbook says to \
-                 turn it off for latency-sensitive work."
+                " AWS's Graviton performance runbook says to turn it off for latency-sensitive \
+                 work."
             } else {
-                " Its cost with an interrupt-driven socket is not measured here."
+                ""
             };
             Finding::found(
                 id,
                 sev,
                 N1_EVIDENCE,
                 format!(
-                    "{interface}: adaptive RX interrupt moderation is on: on AWS c7i a kernel \
-                     worker pre-empted a busy-polling loop 8,841–8,906 times in 8 minutes (about 18 a \
-                     second), and 0 times with it off. Off, the WebSocket round trip's p99.99 was \
-                     72–76 against 117–119 µs (max 354–970 against 259–1,024 µs); the HTTP round \
-                     trip's p99.99 was 83–116 against 77–119 µs (max 202–981 against 433–446 µs); \
-                     market data's p99 rose to 9.3–12.9 from 6.5 µs (max 25–29 against 34 µs). \
-                     With rx-usecs 0 as well: WebSocket p99.99 78–80 µs (max 233–344), HTTP 74–81 µs \
-                     (max 202–227), market-data p99 7.9–8.6 µs (max 34–41). One run, two reps \
-                     each.{platform} Fix: `ethtool -C {interface} adaptive-rx off rx-usecs 0`; ENA \
+                    "{interface}: adaptive RX interrupt moderation is on: the driver re-tunes \
+                     the interrupt delay from a kernel worker on the CPU that polls the queue, \
+                     which for a busy-polling loop is the loop's own CPU (not measured \
+                     here).{platform} Fix: `ethtool -C {interface} adaptive-rx off rx-usecs 0`; ENA \
                      turns adaptive moderation back on at every reset, so apply it again after one \
                      (when carrier_changes moves)"
                 ),
@@ -496,8 +488,7 @@ pub fn n1_adaptive_rx<E: Ethtool>(
     }
 }
 
-const N2_EVIDENCE: &str = "Linux Documentation/networking/napi.rst; the lab sets them only with busy \
-     polling; not measured here";
+const N2_EVIDENCE: &str = "Linux Documentation/networking/napi.rst; not measured here";
 
 /// One sysfs NAPI setting: absent (an older kernel) is 0.
 fn napi_setting(host: &Host, interface: &str, name: &str) -> Result<u64, ReadError> {

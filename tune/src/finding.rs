@@ -51,7 +51,7 @@ pub struct Finding {
     pub severity: Severity,
     /// Finding, ok or unknown.
     pub status: Status,
-    /// What was found, its measured effect and the exact fix (for a
+    /// What was found, its effect and the exact fix (for a
     /// finding); what was checked (ok); what could not be told (unknown).
     pub message: String,
     /// Where the evidence for the effect is (a write-up and its section,

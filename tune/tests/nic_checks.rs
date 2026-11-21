@@ -84,13 +84,8 @@ fn n1_warns_while_ena_adaptive_moderation_is_on() -> R {
         "{}",
         v.message
     );
-    assert!(v.message.contains("about 18 a second"), "{}", v.message);
-    assert!(
-        v.message.contains("p99.99 was 72–76 against 117–119 µs"),
-        "{}",
-        v.message
-    );
-    assert!(v.message.contains("is not measured"), "{}", v.message);
+    assert!(v.message.contains("the loop's own CPU"), "{}", v.message);
+    assert!(v.message.contains("not measured here"), "{}", v.message);
     // The c7i 100 k/s moderation pair (p50 106 → 71 µs) was withdrawn: those
     // figures came from an idle, single-rep run with moderation on. It must not
     // come back into a live finding.

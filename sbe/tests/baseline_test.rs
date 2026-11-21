@@ -2255,7 +2255,7 @@ fn sbemessage_trait_provides_constants() -> Result<(), Box<dyn std::error::Error
 fn binance_spot_schema_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let schema_path = Paths::sbe_tool_test_resource("binance_spot_3_5.xml");
     let (_schema, src) = generate(&schema_path, "binance_spot");
-    syn::parse_file(&src).expect("Binance spot schema must generate valid Rust");
+    syn::parse_file(&src).expect("the spot exchange schema must generate valid Rust");
     assert!(src.contains("pub mod prelude"));
     Ok(())
 }

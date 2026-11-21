@@ -8,7 +8,7 @@ They live in `k8s/nri-latency-pods` (node setup and the admission policy) and
 an isolated cpuset partition, an io_uring seccomp profile, an admission
 policy against exec probes and sidecars, and device grants (the NIC's PHC).
 Each is a mechanism; none has a measured latency effect. Real-time
-scheduling (`SCHED_FIFO`) is not built ([evidence: mixed](hft.md#sched_fifo)).
+scheduling (`SCHED_FIFO`) is not built ([why](#deliberately-not-built)).
 
 Status: the grants ship in the public image
 `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`. Install it with the chart
@@ -57,9 +57,7 @@ with several nodes and no NIC node. A binding is never dropped in silence.
 The five grants on one pod. Everything stays inside the pod's own cpuset:
 exclusive CPUs from the kubelet's static CPU manager, shared CPUs from
 `ergon.io/shared-millicpus`. Helpers go on the shared CPUs; SQPOLL takes an
-exclusive CPU of the pod's own ([SMT sibling](hft.md#smt-sibling)). On the
-shared CPU it measured p99 10 ms once that CPU was busy
-([SQPOLL placement](shared-cpus.md#sqpoll-placement)).
+exclusive CPU of the pod's own, never a shared CPU: it spins.
 
 ```mermaid
 flowchart TD
@@ -92,9 +90,9 @@ first touch of a page. Latency effect not measured here.
 **A DPDK NIC pair** (`dpdk.ergon.io/<ctr>: "ena-pair"`, off by default).
 It needs a NIC device plugin, not shipped here, that puts
 `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` in the container's env;
-this opt-in copies them into `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP`
-(the two shortest real-NIC lines `ergon_tune::DpdkNicPair` builds) plus
-`ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. An app that
+this opt-in copies them into the env keys listed in
+`k8s/nri-latency-pods/README.md`, among them `ERGON_DPDK_PCI`,
+`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. An app that
 reads the pair itself does not need it. A missing, empty or
 unparsable value refuses the pod and names the key. Nothing here scans
 sysfs, runs `dpdk-devbind`, reads the node's default route (that is the
@@ -137,8 +135,8 @@ reads every write back; a write that does not stick fails the create.
 ### 3. io_uring
 
 `RuntimeDefault` blocks io_uring (containerd issue 9320). Aeron's C media
-driver does **not** use io_uring; the grant is for applications that do,
-such as an `io_uring` SQPOLL network loop. It is a clone
+driver does **not** use io_uring; the grant is for applications that do.
+It is a clone
 of the pod's own seccomp profile with the `io_uring_*` calls allowed,
 never `Unconfined`, which the plugin refuses.
 
@@ -161,19 +159,19 @@ from outside the container.
 ### 5. Devices
 
 The NIC's PHC (`/dev/ptp*`) for clock work, and on x86
-`/dev/cpu_dma_latency` so a pod can cap C-states. The cap's measured effect
-is mixed ([C-states](hft.md#c-states)), and a spinning core never idles, so
-treat the grant as access, not a latency win. On arm64 the plugin ignores
+`/dev/cpu_dma_latency` so a pod can cap C-states. The cap's effect is not
+measured here, and a spinning core never idles, so treat the grant as
+access, not a latency win. On arm64 the plugin ignores
 the `cpuqos` annotation (`k8s/nri-latency-pods/README.md`, item 5).
 
 ## Deliberately not built
 
 | item | why |
 |---|---|
-| real-time scheduling (`SCHED_FIFO`) | its one A/B was mixed, and under it the loop's `nohz_full` CPU took timer interrupts again ([SCHED_FIFO](hft.md#sched_fifo)). RT throttling (`kernel.sched_rt_runtime_us`, 950,000 of 1,000,000 µs by default, [sched-rt-group](https://docs.kernel.org/scheduler/sched-rt-group.html)) can take the CPU away. `ergon-tune` T7 warns on a real-time policy |
+| real-time scheduling (`SCHED_FIFO`) | not measured here. RT throttling (`kernel.sched_rt_runtime_us`, 950,000 of 1,000,000 µs by default, [sched-rt-group](https://docs.kernel.org/scheduler/sched-rt-group.html)) can take the CPU away. `ergon-tune` T7 warns on a real-time policy |
 | SR-IOV VF per pod | Nitro guests have one ENA per ENI; there are no in-guest VFs |
 | a netns-sysctl writer pretending the knobs are per-netns | `busy_poll`/`busy_read` are global; `gro_flush_timeout` and `napi_defer_hard_irqs` are per-netdev sysfs; `rmem_max` is not writable in a non-init netns. The node sets them (`node-checks.md`) |
-| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the **shared** CPUs | IRQs on a CPU that also runs other work are not measured here; IRQs on a core of their own are ([interrupt placement](hft.md#interrupt-placement)). The kept-CPU default stays |
+| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the **shared** CPUs | IRQs on a CPU that also runs other work are not measured here. The kept-CPU default stays |
 
 `RTPRIO` is granted as a **limit only** on the latency-pods path. That
 plugin never changes a scheduler policy, and the e2e asserts PID 1 stays

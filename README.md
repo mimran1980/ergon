@@ -61,11 +61,6 @@ AL2023; a helper's wake-up wait on the shared CPU is measured there.
 Unpublished support: `sbe/benchmarks`, `cluster-test-harness` and the sample
 crates in [`samples/`](samples/README.md).
 
-The book also covers
-[network I/O](https://mimran1980.github.io/ergon/io/overview.html),
-[the DPDK transport](https://mimran1980.github.io/ergon/md-dpdk/overview.html)
-and [transports](https://mimran1980.github.io/ergon/transports/choose.html).
-
 Start with `ergo-sbe`. Add another crate only for a need you have. Which one
 does what, and how to call it: the
 [book introduction](https://mimran1980.github.io/ergon/).
@@ -99,7 +94,8 @@ Every check and what CI runs: [CONTRIBUTING.md](CONTRIBUTING.md).
 - [Book](https://mimran1980.github.io/ergon/): guides for every crate and
   deployment
 - API: [ergo-sbe](https://docs.rs/ergo-sbe/),
-  [ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/)
+  [ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/),
+  [ergon-tune](https://docs.rs/ergon-tune/)
 - [CHANGELOG.md](CHANGELOG.md), [SECURITY.md](SECURITY.md)
 
 Apache-2.0.

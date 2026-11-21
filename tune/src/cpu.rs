@@ -148,8 +148,7 @@ pub fn housekeeping(host: &Host, busy: &CpuSet) -> String {
     spare(host, busy).map_or_else(|| "<housekeeping CPUs>".to_owned(), |s| s.to_string())
 }
 
-const T1_EVIDENCE: &str = "lab runs flags-aws-20261014T163114Z (noise and interrupts tables) \
-     and flags-aws-20261015T045527Z: AWS c7i, one 120 s gap-spinner sample per boot profile; Linux \
+const T1_EVIDENCE: &str = "Linux \
      Documentation/timers/no_hz.rst and admin-guide/kernel-parameters.txt (isolcpus, nohz_full, \
      rcu_nocbs, irqaffinity)";
 
@@ -192,9 +191,8 @@ impl T1<'_> {
         };
         for cpu in self.spinning.difference(isolated).iter() {
             out.push(Self::finding(format!(
-                "{} is not isolated: the scheduler balances other tasks onto it. On AWS c7i, `isolcpus` \
-                 took a gap-spinner's gaps over 20 µs from 120 and 162 a minute to 4 and 0.5 (longest \
-                 gap 147 → 52 µs and 150 → 30 µs; two runs, one 120 s sample per boot). Fix: {}",
+                "{} is not isolated: the scheduler balances other tasks onto it, and \
+                 each one pauses the loop. Fix: {}",
                 self.cpus.describe(cpu),
                 self.boot
             )));
@@ -228,11 +226,8 @@ impl T1<'_> {
         for cpu in missing.iter() {
             out.push(Self::finding(format!(
                 "{} is not nohz_full: {kernel}its scheduler tick keeps firing, CONFIG_HZ times a \
-                 second. On AWS c7i a gap-spinner's CPU took 1,002 local-timer interrupts a second \
-                 without nohz_full and 0 with it, and had 60,120 and 60,130 gaps over 5 µs a minute \
-                 on the stock boot, 60,063 and 60,046 with isolcpus alone, 50 and 21 with nohz_full \
-                 too (longest gap 147/150, 52/30 and 134/30 µs; two runs, one 120 s sample per \
-                 boot). Fix: {fix}",
+                 second, and each local-timer interrupt pauses the loop; isolcpus alone leaves \
+                 it on. Fix: {fix}",
                 self.cpus.describe(cpu)
             )));
         }
@@ -355,9 +350,7 @@ pub fn t1_isolation(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     out
 }
 
-const T7_EVIDENCE: &str = "lab run flags-aws-20261015T070339Z (c1-rt, c2-rt: HTTP, \
-     WebSocket and interrupts tables): AWS c7i, two 8-minute \
-     reps; Linux Documentation/scheduler/sched-rt-group.rst";
+const T7_EVIDENCE: &str = "Linux Documentation/scheduler/sched-rt-group.rst; not measured here";
 
 /// T7: `thread`, in `role`, is not under `SCHED_FIFO` or `SCHED_RR`. The
 /// media driver checks its process before the agents start.
@@ -385,11 +378,8 @@ pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
                 sev,
                 T7_EVIDENCE,
                 format!(
-                    "{who} runs {}: its CPU's tick stays on (AWS c7i: 533–947 local-timer \
-                     interrupts a second against 11–23), and RT throttling can take the CPU \
-                     away{throttle}. The latency A/B was inconclusive: two 8-minute reps moved \
-                     p99.99 by +1 to −45 µs and the max by −444 to +536 µs, while the two HTTP \
-                     baselines alone differed by 42 µs at p99.99. Fix: run it SCHED_OTHER on an isolated CPU \
+                    "{who} runs {}: RT throttling can take the CPU away{throttle}; its latency \
+                     effect is not measured here. Fix: run it SCHED_OTHER on an isolated CPU \
                      (`chrt --other -p 0 <tid>`)",
                     p.name()
                 ),
@@ -406,10 +396,8 @@ pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
     }
 }
 
-const T8_EVIDENCE: &str = "lab run flags-aws-20261015T122127Z (lab-uring-sqpoll-c* \
-     against lab-uring-sqpoll-sib-c*): an io_uring SQPOLL thread on the loop's \
-     sibling, AWS c7i, three rounds; other sibling loads and two threads on one CPU not \
-     measured here";
+const T8_EVIDENCE: &str = "SMT siblings share one core's execution units; a busy sibling and two \
+     threads on one CPU are not measured here";
 
 /// What T8 has seen so far.
 struct T8<'a> {
@@ -469,7 +457,7 @@ impl T8<'_> {
                 Severity::Warn,
                 format!(
                     "{} and {} are hyperthreads of one core: two busy threads share its execution \
-                     units; the lab gives each its own core. Fix: pin them to separate cores",
+                     units. Fix: pin them to separate cores",
                     self.cpus.describe(pair.0),
                     self.cpus.describe(pair.1)
                 ),
@@ -479,7 +467,7 @@ impl T8<'_> {
                 Severity::Info,
                 format!(
                     "{me} shares its core with {them}: what runs there takes the core's execution \
-                     units from it (measured only for an io_uring SQPOLL thread there: T10). Fix: \
+                     units from it (not measured here). Fix: \
                      keep CPU {s} idle, or give it a core of its own"
                 ),
             );
@@ -490,8 +478,8 @@ impl T8<'_> {
                     Severity::Info,
                     format!(
                         "{me} shares its core with CPU {s}, which is not isolated: other tasks run \
-                         there and take the core's execution units from it (measured only for \
-                         an io_uring SQPOLL thread there: T10). Fix: isolate CPU {s} and leave it \
+                         there and take the core's execution units from it (not measured \
+                         here). Fix: isolate CPU {s} and leave it \
                          idle"
                     ),
                 ),
@@ -572,9 +560,7 @@ fn sqpoll_with_loop(cpus: &HotSet, a: u32, b: u32) -> bool {
         || (rb.contains(&Role::Loop) && ra.contains(&Role::SqPoll) && !ra.contains(&Role::Loop))
 }
 
-const T10_EVIDENCE: &str = "lab run flags-aws-20261015T122127Z (arrival → decoded, three \
-     rounds); \
-     AWS instance-optimize-cpu and instance-specify-cpu-options (CpuOptions ThreadsPerCore); \
+const T10_EVIDENCE: &str = "AWS instance-optimize-cpu and instance-specify-cpu-options (CpuOptions ThreadsPerCore); \
      kernel-parameters.txt (nosmt); ABI/testing/sysfs-devices-system-cpu (smt/active, smt/control); \
      Azure compute-optimized Fasv6/Falsv6/Famsv6 and general-purpose Dpsv6/Dplsv6 (no SMT)";
 
@@ -650,12 +636,8 @@ pub fn t10_smt_on(host: &Host) -> Finding {
             sev,
             T10_EVIDENCE,
             "SMT is on: on x86 a Kubernetes `cpu: 2` is one physical core, not two, and a busy \
-             sibling slows the loop. Measured for an io_uring SQPOLL thread on the loop's sibling \
-             against a core of its own (AWS c7i, arrival → decoded, p50 / p99 / max over three \
-             rounds): 1 connection 4.0–4.3 / 7.0–11.7 / 35–46 µs against 3.5–3.8 / 8.4–12.9 / \
-             32–118; 10 connections 7.5–8.4 / 29–33 / 96–349 against 5.2–6.0 / 20–24 / 77–109; \
-             100 connections 7.5–7.8 / 32–34 / 95–112 against 5.0–5.3 / 21–22 / 76–301. Other \
-             sibling loads are not measured. Turn SMT off on the NODE. EKS/EC2: launch template \
+             sibling slows the loop: the two share the core's execution units (not measured \
+             here). Turn SMT off on the NODE. EKS/EC2: launch template \
              `\"CpuOptions\": {\"CoreCount\": <the type's cores>, \"ThreadsPerCore\": 1}` (not \
              possible on bare metal, or on T2, C7a, M7a, R7a, Apple silicon Mac \
              or Graviton). Self-managed: \

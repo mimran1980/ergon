@@ -7,7 +7,7 @@
 //!
 //! # Documentation
 //!
-//! - [The ergo-sbe book](https://mimran1980.github.io/ergon/): the cluster client guide
+//! - [The ergon book](https://mimran1980.github.io/ergon/): the cluster client guide
 //! - [Overview](https://mimran1980.github.io/ergon/cluster/overview.html),
 //!   [SessionBuilder](https://mimran1980.github.io/ergon/cluster/session-builder.html),
 //!   [Egress listeners](https://mimran1980.github.io/ergon/cluster/egress-listeners.html) and

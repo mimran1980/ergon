@@ -24,18 +24,6 @@ x86 and x86_64. On every other target, Graviton and macOS included, it
 reads `SystemTime`, a wall clock that can go back (minstant-0.1.7
 `src/lib.rs:71-82`).
 
-**Read cost**, ns per read: median batch (slowest batch); each batch is the
-mean of 10,000 back-to-back reads, so the slowest single read is not
-recorded. AWS, isolated CPU, 2026-10-16 runs; c9g is a 50-batch run, the
-others 200. Source: run `clockbench-aws-20261016`.
-
-| read | c7i.2xlarge | c8g.xlarge | c9g.2xlarge |
-|---|---|---|---|
-| quanta `Clock::now()` as ns | 15.99 (16.95) | 12.50 (12.89) | 10.92 (11.23) |
-| `std::time::Instant::now()` | 24.85 (25.99) | 31.69 (33.35) | 21.29 (21.68) |
-| `SystemTime::now()` as ns | 28.49 (29.72) | 39.66 (40.58) | 28.51 (28.92) |
-| `minstant::Instant::now()` | 14.55 (15.44) | 39.64 (42.22) | 28.16 (28.50) |
-
 ## Rules
 
 - Do not subtract two `CLOCK_REALTIME` stamps for a duration: chrony or an

@@ -18,7 +18,7 @@ not as an unqualified "implements every SBE edge case".
 
 ## Full documentation
 
-The [ergo-sbe book](https://mimran1980.github.io/ergon/) is the full
+The [ergon book](https://mimran1980.github.io/ergon/) is the full
 guide for ergo-sbe (also linked from this crate on
 [docs.rs](https://docs.rs/ergo-sbe/)):
 

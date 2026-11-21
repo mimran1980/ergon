@@ -15,14 +15,12 @@ use crate::net::{Nic, nic_irqs};
 
 /// The deepest exit latency (µs) T20 accepts on a CPU that takes a data
 /// NIC's interrupts: C1's. On `intel_idle` C1E (2 µs) is the first state
-/// past it, and the first one the lab's cap disabled.
+/// past it.
 pub const T20_MAX_EXIT_LATENCY_US: u64 = 1;
 
 const CPUIDLE: &str = "/sys/devices/system/cpu/cpuidle";
 
-const T20_EVIDENCE: &str = "DPDK transport benchmarks, \"c7i: the IRQ CPU's idle depth\" (lab session \
-     aws-20261028-092158: AWS c7i.4xlarge, intel_idle, kernel 7.2, mio TCP round trips at 10k \
-     msg/s, 3 reps, each point's cpuidle usage read before and after); Linux \
+const T20_EVIDENCE: &str = "the IRQ CPU's idle depth; not measured here; Linux \
      Documentation/admin-guide/pm/cpuidle.rst (state<N>/disable, pm_qos_resume_latency_us, \
      /dev/cpu_dma_latency) and intel_idle.rst (max_cstate)";
 
@@ -320,11 +318,8 @@ fn one_cpu(
                     T20_EVIDENCE,
                     format!(
                         "{who} may sleep in {states} ({driver}): an interrupt that finds it there \
-                         waits for the wake before its handler and softirq run. On AWS c7i \
-                         (intel_idle, Sapphire Rapids) interrupt-driven TCP round trips at 10k \
-                         msg/s had p50 43–160 µs and p99 315–559 µs with every state enabled \
-                         (the IRQ CPU in C6, exit 190 µs, for 4–28 s of each 60 s point), and \
-                         p50 37–39 µs, p99 44–49 µs capped at C1 (3 reps). {fix}"
+                         waits for the wake, up to the state's exit latency, before its handler \
+                         and softirq run. {fix}"
                     ),
                 )
             } else {
@@ -352,9 +347,7 @@ fn one_cpu(
             T20_EVIDENCE,
             format!(
                 "{who} sleeps at most in {name} (acpi_idle): nothing deeper to cap. Under a \
-                 hypervisor C1 is a halt the hypervisor wakes; on AWS c7a (acpi_idle) the lab saw \
-                 no wake-up penalty (idle ping round trip min 101–114 µs, against 223–258 µs on \
-                 c7i with intel_idle uncapped). Polling only removes the halt as well, at a \
+                 hypervisor C1 is a halt the hypervisor wakes. Polling only removes the halt as well, at a \
                  whole core's power: `echo 1 > \
                  /sys/devices/system/cpu/cpu{cpu}/cpuidle/state{index}/disable`"
             ),

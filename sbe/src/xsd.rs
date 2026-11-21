@@ -28,7 +28,7 @@
 //! (`characterEncoding` on `<data>`, `unit` on `<type>`, `jsonValue` on
 //! `<validValue>` / `<choice>`, `package` on `<types>`) are permitted, as are
 //! all namespaced attributes (`xsi:*`, `xi:*`, and vendor namespaces such as
-//! Binance's `mbx:*`). Rejecting those would fail real-world schemas.
+//! an exchange's `mbx:*`). Rejecting those would fail real-world schemas.
 
 use miette::Diagnostic;
 use thiserror::Error;

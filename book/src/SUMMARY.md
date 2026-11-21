@@ -2,7 +2,7 @@
 
 [Introduction](./introduction.md)
 
-# Light path
+# ergo-sbe: start here
 
 - [Getting started](./sbe/getting-started.md)
   - [Depend on the generator](./sbe/getting-started/depend.md)
@@ -21,12 +21,7 @@
   - [Trust boundaries](./sbe/feature-tour/trust-boundaries.md)
   - [Domain objects (DTOs)](./sbe/feature-tour/domain-objects.md)
   - [Multi-template dispatch](./sbe/feature-tour/multi-template.md)
-- [Cluster client](./cluster/overview.md)
-- [Host checks](./tune/overview.md)
-- [Shared CPUs for helper threads (`k8s/nri-shared-cpus`)](./deploy/shared-cpus.md)
-- [Latency pods](./deploy/latency-pods.md)
-
-# ergo-sbe, in detail
+# ergo-sbe: in depth
 
 - [Core concepts](./sbe/core-concepts.md)
   - [Trust boundary](./sbe/core-concepts/trust-boundary.md)
@@ -53,74 +48,38 @@
   - [Feature matrix](./sbe/design-notes/feature-matrix.md)
 - [Benchmarks](./sbe/benchmarks.md)
   - [Methodology](./sbe/benchmarks/methodology.md)
-
-# Samples
-
-- [Teaching path](./samples/overview.md)
+- [Samples: teaching path](./samples/overview.md)
   - [SBE feature tour](./samples/sbe-feature-tour.md)
   - [L3 order book](./samples/l3-book.md)
   - [Exchange example](./samples/exchange-example.md)
   - [Codegen as a library](./samples/codegen-library.md)
-  - [Cluster tutorial](./samples/cluster-tutorial.md)
-  - [Cluster HA order book](./samples/cluster-ha-orderbook.md)
-  - [Cluster RFQ](./samples/cluster-rfq.md)
-- [Build patterns](./samples/build-patterns.md)
-- [Buffer sizing guide](./samples/buffer-sizing.md)
+  - [Build patterns](./samples/build-patterns.md)
+  - [Buffer sizing guide](./samples/buffer-sizing.md)
 
-<!-- generated:begin samples -->
+# ergo-aeron-cluster: start here
 
-- [Kubernetes quickstart](./samples/k8s-quickstart.md)
-- [Low-latency Kubernetes](./samples/low-latency-k8s.md)
+- [Cluster client](./cluster/overview.md)
+- [Cluster tutorial](./samples/cluster-tutorial.md)
 
-<!-- generated:end samples -->
-
-# ergo-aeron-cluster
+# ergo-aeron-cluster: in depth
 
 - [SessionBuilder](./cluster/session-builder.md)
 - [Egress listeners](./cluster/egress-listeners.md)
 - [Chained message decoding](./cluster/chained-decoding.md)
 - [Compatibility](./cluster/compatibility.md)
+- [Cluster HA order book](./samples/cluster-ha-orderbook.md)
+- [Cluster RFQ](./samples/cluster-rfq.md)
 
-<!-- generated:begin ergon-io -->
+# ergon-tune
 
-# ergon-io
+- [Host checks](./tune/overview.md)
 
-- [Busy-spin network I/O](./io/overview.md)
-  - [Backends and configuration](./io/backends.md)
-  - [WebSocket](./io/websocket.md)
-  - [HTTP client](./io/http-client.md)
-    - [HTTP/2](./io/http2.md)
-  - [Framed TCP](./io/framed-tcp.md)
-  - [UDP](./io/udp.md)
-  - [Request/response](./io/request-response.md)
-  - [Rate limits and errors](./io/rate-limits.md)
-  - [Kubernetes](./io/kubernetes.md)
+# Kubernetes: start here
 
-<!-- generated:end ergon-io -->
+- [Shared CPUs for helper threads (`k8s/nri-shared-cpus`)](./deploy/shared-cpus.md)
+- [Latency pods](./deploy/latency-pods.md)
 
-<!-- generated:begin ergon-md-dpdk -->
-
-# ergon-md-dpdk (experimental)
-
-- [DPDK transport: proof of concept](./md-dpdk/overview.md)
-  - [Configuration](./md-dpdk/configuration.md)
-
-<!-- generated:end ergon-md-dpdk -->
-
-<!-- generated:begin transports -->
-
-# Transports
-
-- [Which transport when](./transports/choose.md)
-- [Aeron client](./transports/aeron-client.md)
-  - [Note: many streams](./transports/aeron-many-streams.md)
-  - [MDC and MDS](./transports/mdc-mds.md)
-- [Transport latency comparison](./transports/comparison.md)
-- [Latency findings at a glance](./findings.md)
-
-<!-- generated:end transports -->
-
-# Deployment
+# Kubernetes: in depth
 
 - [Low-latency hosts](./deploy/overview.md)
   - [Busy-spin loop](./deploy/busy-spin-loop.md)
@@ -128,7 +87,6 @@
   - [AWS and Azure, x86 and Graviton](./deploy/hosts.md)
   - [Clocks](./deploy/clocks.md)
   - [Kubernetes](./deploy/kubernetes.md)
-  - [Benchmarks: x86 and Graviton](./deploy/benchmarks.md)
   - [Java for Archive and Cluster](./deploy/java.md)
   - [Troubleshooting](./deploy/troubleshooting.md)
 

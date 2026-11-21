@@ -24,9 +24,8 @@ is one containerd NRI approach; choose whichever fits your cluster.
 | chart digest | `sha256:65f0defe4aae8a895f71fc1ac197f07a924f056bfce2740e22e0fbd960f374c0` |
 | platforms | `linux/amd64`, `linux/arm64` |
 | checked | `helm template` of the OCI chart renders image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4` with `--kubelet-config`. `--version` on amd64 and arm64: `ergon-shared-cpus 0.1.4 7a7ae3826b166a128a9af7cff1b70fa935bdfafa nri=v0.12.3`. The kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-11-11) |
-| verified on EKS | AL2023 `c8g.xlarge`, Kubernetes 1.36, containerd 2.3.5, the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 and 0.1.4 leave CPU placement unchanged, not re-run on EKS), built by the lab and pushed to the run's ECR (the GHCR image itself not pulled there): NRI socket, nodeadm TOML merge, kubelet drop-in merge, `/opt` writable, `system-node-critical` outside `kube-system` ([RELEASE.md](RELEASE.md)) |
+| verified on EKS | AL2023 `c8g.xlarge`, Kubernetes 1.36, containerd 2.3.5, the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 and 0.1.4 leave CPU placement unchanged, not re-run on EKS), built from that source and pushed to the run's ECR (the GHCR image itself not pulled there): NRI socket, nodeadm TOML merge, kubelet drop-in merge, `/opt` writable, `system-node-critical` outside `kube-system` ([RELEASE.md](RELEASE.md)) |
 | measured | one Azure Cobalt VM, helpers on the shared CPU, with the [node settings](#quiet-isolated-cpus): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps of 60 s, 0 involuntary switches; 3.5 to 5.5 µs is the hypervisor's floor. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
-| measured on EKS | a helper's 1 ms wake-up on the shared CPU: p50 2.6 µs late with the hook's 1 ns slack (52.6 µs with 50 µs), max 77 µs with that CPU at 100 %; idle maxima 2.4 to 3.4 ms, unexplained. The pin: p50 5.3 µs, max 50 µs, once a thread ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
 | not measured | how often node events reach isolated CPUs in production ([BENCHMARKS.md](BENCHMARKS.md#remaining-risk-node-events)) |
 | release gate | [`RELEASE.md`](RELEASE.md) |
 
@@ -83,7 +82,7 @@ admission policy, not another image:
      --set hostContract.proc.enabled=true
    ```
 
-   <a id="eks-al2023"></a>**EKS AL2023** (verified on EKS 1.36 with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR). nodeadm writes the base
+   <a id="eks-al2023"></a>**EKS AL2023** (verified on EKS 1.36 with the same plugin and chart source as published 0.1.2 (`85098f8b`), built from that source and pushed to the run's ECR). nodeadm writes the base
    `/etc/kubernetes/kubelet/config.json`, puts the `NodeConfig` kubelet
    settings in `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and
    starts the kubelet with `--config-dir` on that directory. The plugin

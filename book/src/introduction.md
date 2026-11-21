@@ -12,26 +12,21 @@ to use one of them.
 exact versions and read the changelog before upgrading. Exit criteria:
 [Road to 1.0](project/road-to-1.0.md).
 
-## Light path
+## How to read this book
 
-This page is the light path. It is enough to see what the software is, which
-crate to open, and where to go next. The route below stops at an overview.
-The [detail chapters](#detail-chapters) stay separate and are linked by name;
-they are not folded into this page.
+The sidebar has one part per module. A module with deep pages has two parts,
+**start here** (the light pages) and **in depth**. Stop after the light pages
+and go to the next module, or carry on into the deep pages. Each module's
+samples sit in its own part, and the [detail chapters](#detail-chapters) are
+linked by name.
 
-1. **Write one message.** [Depend on the generator](sbe/getting-started/depend.md),
-   then [encode and decode](sbe/getting-started/encode-decode.md). The
-   [feature tour](sbe/feature-tour.md) is the worked overview. The sketch
-   further down this page is the same API.
-2. **Open a cluster client, only if you need one.** Read the
-   [client overview](cluster/overview.md) and stop there until you are
-   building a session. The client is experimental.
-3. **Check a latency host.** [Host checks](tune/overview.md) name what is
-   wrong. The call changes nothing.
-4. **Kubernetes, only if you deploy there.** Three separate chapters, not
-   one merged guide: [shared CPUs](deploy/shared-cpus.md),
-   [latency pods](deploy/latency-pods.md), and the
-   [Kubernetes quickstart](samples/k8s-quickstart.md).
+| Module (sidebar part) | Light pages | Deep pages | For |
+|---|---|---|---|
+| ergo-sbe | [Getting started](sbe/getting-started.md), [feature tour](sbe/feature-tour.md) | [Core concepts](sbe/core-concepts.md), [configuration](sbe/configuration.md), [recipes](sbe/recipes.md), [design notes](sbe/design-notes.md), [benchmarks](sbe/benchmarks.md), [samples](samples/overview.md) (including [build patterns](samples/build-patterns.md) and the [buffer sizing guide](samples/buffer-sizing.md)) | Anyone with an SBE schema who wants Rust codecs |
+| ergo-aeron-cluster | [Cluster client](cluster/overview.md), [cluster tutorial](samples/cluster-tutorial.md) | [SessionBuilder](cluster/session-builder.md), [egress](cluster/egress-listeners.md), [chained decoding](cluster/chained-decoding.md), [compatibility](cluster/compatibility.md), [HA order book](samples/cluster-ha-orderbook.md), [RFQ](samples/cluster-rfq.md) | Anyone who needs an Aeron Cluster client (experimental) |
+| ergon-tune | [Host checks](tune/overview.md) | None: one page | Anyone starting a process on a latency host |
+| Kubernetes and deployment | [Shared CPUs](deploy/shared-cpus.md), [latency pods](deploy/latency-pods.md) | [Low-latency hosts](deploy/overview.md) and its pages | Anyone deploying a busy-spin pod |
+| Project | [Contributing](project/contributing.md), [Road to 1.0](project/road-to-1.0.md) | [Verification and release](project/verification.md), [performance](project/performance.md), [AI assistance](project/ai-assistance.md) | Contributors and reviewers |
 
 ```mermaid
 flowchart LR
@@ -79,7 +74,7 @@ Mapping a wire field to an application type (`with_conversion` or
 
 ## Detail chapters
 
-Read these when the light path is not enough. Each topic is written in full
+Read these when the light pages are not enough. Each topic is written in full
 on the page named here.
 
 | Topic | Chapter |
@@ -90,7 +85,7 @@ on the page named here.
 | `with_conversion` versus `with_domain_type` | [with_conversion vs with_domain_type](sbe/configuration/conversion-vs-domain.md) |
 | Wire order as named stages | [Wire order](sbe/core-concepts/wire-order-stages.md) |
 | Cluster session, egress, chained decode, compatibility | [SessionBuilder](cluster/session-builder.md), [egress](cluster/egress-listeners.md), [chained decoding](cluster/chained-decoding.md), [compatibility](cluster/compatibility.md) |
-| Node tuning, clocks, shared CPUs, latency pods | [HFT tuning](deploy/hft.md), [clocks](deploy/clocks.md), [shared CPUs](deploy/shared-cpus.md), [latency pods](deploy/latency-pods.md). These stay separate chapters. |
+| Node tuning and clocks | [HFT tuning](deploy/hft.md), [clocks](deploy/clocks.md) |
 
 ## Use the animations
 

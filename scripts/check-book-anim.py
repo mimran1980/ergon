@@ -18,9 +18,6 @@ Fails when:
   drops it to <body>, so the next arrow key changes chapter; use aria-disabled);
 * the runtime (anim.js, anim.css) is missing or not registered in book.toml.
 
-Generated pages are scanned like any other, so a page exported into this book
-with an embed fails here until its module comes with it.
-
 Usage: check-book-anim.py [BOOK_DIR]   (default: book/)
 """
 import pathlib

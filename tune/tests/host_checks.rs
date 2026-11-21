@@ -78,7 +78,7 @@ fn t1_warns_separately_for_isolation_nohz_and_default_affinity_on_an_untuned_hos
         domain.message
     );
     assert!(
-        domain.message.contains("120 and 162 a minute to 4 and 0.5"),
+        domain.message.contains("balances other tasks onto it"),
         "{}",
         domain.message
     );
@@ -87,11 +87,20 @@ fn t1_warns_separately_for_isolation_nohz_and_default_affinity_on_an_untuned_hos
         .iter()
         .find(|f| f.message.contains("not nohz_full"))
         .ok_or("nohz")?;
-    assert!(nohz.message.contains("1,002"), "{}", nohz.message);
-    assert!(nohz.message.contains("60,120"), "{}", nohz.message);
+    assert!(
+        nohz.message
+            .contains("each local-timer interrupt pauses the loop"),
+        "{}",
+        nohz.message
+    );
+    assert!(
+        nohz.message.contains("isolcpus alone leaves it on"),
+        "{}",
+        nohz.message
+    );
     assert!(nohz.message.contains(fix), "{}", nohz.message);
     // The tick rate is the kernel's CONFIG_HZ (250 on Debian), not always
-    // 1,000: the 1,003/s is AWS's kernel.
+    // 1,000.
     assert!(nohz.message.contains("CONFIG_HZ"), "{}", nohz.message);
     assert!(
         !nohz.message.contains("about 1,000 times"),
@@ -289,7 +298,11 @@ fn t2_warns_for_each_irq_that_may_fire_on_a_hot_cpu() -> R {
     assert_eq!(q2.severity, Severity::Warn);
     assert!(q2.message.contains("ens5-Tx-Rx-2"), "{}", q2.message);
     assert!(q2.message.contains("CPU 2 (loop)"), "{}", q2.message);
-    assert!(q2.message.contains("462–547 a"), "{}", q2.message);
+    assert!(
+        q2.message.contains("each interrupt pauses the loop"),
+        "{}",
+        q2.message
+    );
     assert!(
         q2.message
             .contains("echo 0-1,3-7 > /proc/irq/27/smp_affinity_list"),
@@ -742,7 +755,11 @@ fn t7_warns_for_fifo_and_round_robin() -> R {
         let v = t7_sched_policy(&f.host(), Thread::Current, Role::Loop);
         assert!(v.is_warning(), "{v:?}");
         assert!(v.message.contains(name), "{}", v.message);
-        assert!(v.message.contains("533–947 local-timer"), "{}", v.message);
+        assert!(
+            v.message.contains("RT throttling can take the CPU away"),
+            "{}",
+            v.message
+        );
         assert!(v.message.contains("950000"), "{}", v.message);
     }
     Ok(())
@@ -944,13 +961,10 @@ fn t10_warns_when_smt_is_on_and_names_every_way_to_turn_it_off() -> R {
         "require refusal must name T10: {refused}"
     );
     let m = &v.message;
-    // What it means in Kubernetes, with the measured numbers.
+    // What it means in Kubernetes, and why.
     assert!(m.contains("`cpu: 2` is one physical core"), "{m}");
     assert!(m.contains("a busy sibling slows the loop"), "{m}");
-    assert!(
-        m.contains("10 connections 7.5–8.4 / 29–33 / 96–349 against 5.2–6.0 / 20–24 / 77–109"),
-        "{m}"
-    );
+    assert!(m.contains("share the core's execution units"), "{m}");
     // EKS/EC2: the exact launch-template CpuOptions.
     assert!(
         m.contains("\"CpuOptions\": {\"CoreCount\": <the type's cores>, \"ThreadsPerCore\": 1}"),

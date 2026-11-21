@@ -14,7 +14,7 @@ protocol.
 
 ## Full documentation
 
-The [ergo-sbe book](https://mimran1980.github.io/ergon/) is the full
+The [ergon book](https://mimran1980.github.io/ergon/) is the full
 guide (also linked from this crate on
 [docs.rs](https://docs.rs/ergo-aeron-cluster/)):
 
@@ -32,7 +32,8 @@ The crate implements client-side operations:
 
 - synchronous and poll-driven connection;
 - ingress `offer` and explicit `try_claim`;
-- one egress poll (`AeronCluster::poll`) into one listener;
+- egress polling into one listener: `AeronCluster::poll`, or
+  `controlled_poll_egress` for per-fragment flow control;
 - authentication challenges and credentials;
 - keep-alives and close requests;
 - session events, administrative responses, and leader changes.

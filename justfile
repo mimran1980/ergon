@@ -48,7 +48,6 @@ policy:
         'bash scripts/tests/test-no-grep-q-pipefail.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
         'bash scripts/tests/test-book-content.sh' \
-        'bash scripts/tests/test-generated-book.sh' \
         'bash scripts/tests/test-book-anim.sh' \
         'bash scripts/tests/test-book-diagrams.sh' \
         'python3 -I scripts/tests/test-performance-page.py' \
@@ -113,7 +112,6 @@ preflight:
         'bash scripts/tests/test-no-grep-q-pipefail.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
         'bash scripts/tests/test-book-content.sh' \
-        'bash scripts/tests/test-generated-book.sh' \
         'bash scripts/tests/test-book-anim.sh' \
         'bash scripts/tests/test-book-diagrams.sh' \
         'python3 -I scripts/tests/test-performance-page.py' \
@@ -128,7 +126,6 @@ preflight:
         './scripts/check-repository-hygiene.sh' \
         './scripts/check-book-fences.sh' \
         './scripts/check-book-content.sh' \
-        './scripts/check-generated-book.py' \
         './scripts/check-book-anim.py' \
         './scripts/check-book-diagrams.sh' \
         'python3 -I scripts/generate-performance-page.py --check' \
@@ -216,10 +213,6 @@ release-check: test _release-check-extras
 # already ran: bench compilation (`--no-run`), ergo-sbe and cluster rustdoc
 # and check-publish-set (in `policy`) are in `test`.
 _release-check-extras: check-coverage check-generated-rustdoc
-    # Generated book pages (book/src, marked generated) must be unedited and
-    # match their manifest: refresh them before tagging (book/src/project/
-    # verification.md, "Release path").
-    ./scripts/check-generated-book.py
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
     ./scripts/check-book-anim.py

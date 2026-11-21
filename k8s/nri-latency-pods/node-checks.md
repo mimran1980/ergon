@@ -26,7 +26,7 @@ plugin and the pod can read them (the NIC's node and PHC name among them). The t
 | `rcu_nocbs` | every non-reserved CPU | RCU callbacks off the hot cores | `cat /sys/devices/system/cpu/rcu_nocbs 2>/dev/null` or `grep rcu_nocbs /proc/cmdline` |
 | `isolcpus=managed_irq` | every non-reserved CPU | no stray IRQ on the loop's core | `grep isolcpus /proc/cmdline` |
 | `irqaffinity` | the reserved CPUs | NIC IRQs on the kept CPU, never the loop's | `grep irqaffinity /proc/cmdline`; `grep eth0 /proc/interrupts` |
-| NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a core of their own, not the loop's ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)); IRQs on a shared CPU are not measured | `grep . /proc/irq/*/smp_affinity_list` |
+| NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a core of their own, not the loop's ([settings](https://mimran1980.github.io/ergon/deploy/hft.html#settings)); not measured here | `grep . /proc/irq/*/smp_affinity_list` |
 | `gro_flush_timeout`, `napi_defer_hard_irqs` | node unit writes `/sys/class/net/<dev>/…` | per-netdev sysfs, not a sysctl | `cat /sys/class/net/eth0/gro_flush_timeout` |
 | `/dev/ptp*` | present or not | a clock source only; ENA has no hardware packet stamps | `ls /dev/ptp*` |
 | chrony | running, synced | pods read the node's `CLOCK_REALTIME`; chrony on the node keeps it on the PHC ([Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html)) | `chronyc tracking` |

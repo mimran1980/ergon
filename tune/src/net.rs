@@ -273,8 +273,7 @@ pub fn nic_irqs(host: &Host, nic: &Nic) -> Result<Vec<NicIrq>, ReadError> {
     Ok(out)
 }
 
-const T2_EVIDENCE: &str = "lab run flags-aws-20261015T062428Z (c1/c2-base against \
-     c1/c2-irqlocal: noise and market data tables): AWS c7i, two reps; Linux \
+const T2_EVIDENCE: &str = "Linux \
      drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_setup_io_intr: queue i's IRQ on CPU i \
      modulo the online CPUs, set again at every ena_up)";
 
@@ -322,10 +321,8 @@ fn t2_irq(
             Severity::Warn,
             T2_EVIDENCE,
             format!(
-                "{} may fire on {}: its smp_affinity_list is {affinity}. On AWS c7i, NIC interrupts on \
-                 the loop's CPU raised a gap-spinner's gaps over 5 µs from 126–153 to 462–547 a \
-                 minute (longest gap 135–408 µs before, 41–74 µs after), and busy-polled market data's p99 / max from 7.9–8.1 / 36–48 µs to \
-                 20–26 / 74–99 µs (two reps).{reset} Fix: `echo {hk} > \
+                "{} may fire on {}: its smp_affinity_list is {affinity}. On the loop's CPU each \
+                 interrupt pauses the loop while its handler runs.{reset} Fix: `echo {hk} > \
                  /proc/irq/{}/smp_affinity_list`{repin}",
                 irq.label(),
                 cpus.describe_all(&hits),

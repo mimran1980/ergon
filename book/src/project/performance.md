@@ -133,8 +133,6 @@ One codec operation per sample, as the `latency_distribution` bench (`just bench
 |---|---|---|---|---|---|---|---|---|---|---|
 | codec, one operation per sample | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
 
-Round trips between hosts, per transport: [Transport latency comparison](../transports/comparison.md) and [Latency findings at a glance](../findings.md).
-
 ## Failover
 
 | scenario | failure detection | unavailable interval | time to valid book |

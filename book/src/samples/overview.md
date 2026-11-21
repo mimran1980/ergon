@@ -1,4 +1,4 @@
-# Teaching path
+# Samples: teaching path
 
 Standalone crates that exercise repository APIs. They are excluded from the
 workspace, set `publish = false`, and are not production reference
@@ -12,9 +12,9 @@ implementations. They move with experimental APIs on purpose.
 | 2a | [L3 order book](l3-book.md) | Nested/ragged books; `with_domain_type` only; build-dep only (`#[path]` into `src/generated/`) |
 | 2b | [Exchange example](exchange-example.md) | Multi-schema; `with_conversion` only; IPC + app `TryFromSbe` |
 | 3 | [Codegen as a library](codegen-library.md) | Generator as a library (no `build.rs`) |
-| Later | [Cluster tutorial](cluster-tutorial.md) | Connect, offer, poll, keep-alive, close |
-| Later | [Cluster HA orderbook](cluster-ha-orderbook.md) | Claim-based Cluster publishing of full L2 snapshots; epoch/sequence recovery across failover |
-| Later | [Cluster RFQ](cluster-rfq.md) | RFQ / auction codecs over Cluster |
+| Later | [Cluster tutorial](cluster-tutorial.md) (in the cluster part) | Connect, offer, poll, keep-alive, close |
+| Later | [Cluster HA orderbook](cluster-ha-orderbook.md) (cluster, in depth) | Claim-based Cluster publishing of full L2 snapshots; epoch/sequence recovery across failover |
+| Later | [Cluster RFQ](cluster-rfq.md) (cluster, in depth) | RFQ / auction codecs over Cluster |
 
 ```sh
 # 1: always start here

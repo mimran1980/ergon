@@ -10,18 +10,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 book_src=${BOOK_CONTENT_ROOT:-$root/book/src}
 rc=0
 
-# The API-pattern greps below guard hand-written examples. Generated pages
-# (verified by check-generated-book.py: header hash and manifest) inline code
-# that compiles and runs in the crate it comes from, so they are left out of
-# those greps; their links and includes are still checked.
-generated=$(python3 "$root/scripts/check-generated-book.py" --list "$(dirname "$book_src")" 2>/dev/null \
-    | sed "s#^book/src/#$book_src/#" || true)
-
 pattern_hits() {
-    grep -rn "$1" "$book_src/" --include='*.md' | grep -v 'check-book-content\|allowlist' \
-        | while IFS= read -r hit; do
-            grep -Fqx -- "${hit%%:*}" <<<"$generated" || printf '%s\n' "$hit"
-        done
+    grep -rn "$1" "$book_src/" --include='*.md' | grep -v 'check-book-content\|allowlist'
 }
 
 check_pattern() {

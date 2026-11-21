@@ -23,10 +23,10 @@
 //                                                      live tid (newTIDs counts all of them, so the early break
 //                                                      only fires when every thread has gone), then one getaffinity
 //   k8s/nri-shared-cpus/examples/pin.c:34              pin_isolated(i): index i of ERGON_ISOLATED_CPUS
-//   book/src/deploy/shared-cpus.md:194                 timer slack table, EKS c8g.xlarge, idle rows
+//   book/src/deploy/shared-cpus.md:205-213             timer slack: kernel default 50 µs, the hook's 1 ns
 // The 8-CPU node, the pods and their millicpus are illustrative; the selection
 // follows assign.go exactly. Costs are operation counts from the code, not
-// timings. Latency figures are the page's recorded EKS c8g.xlarge results.
+// timings. The panel shows the two slack settings, not measured latencies.
 Anim.register('shared-cpus-allocation', (stage, api) => {
   const el = api.el;
   const SHARED = [1, 2];
@@ -92,7 +92,7 @@ Anim.register('shared-cpus-allocation', (stage, api) => {
     const costY = stickyY + 28;
     const panelY = narrow ? costY + 34 : g.panelY;
     const H = narrow ? panelY + 194 : Math.max(costY + 26, panelY + 196);
-    svg = api.svg(g.W, H, 'Node CPUs, the shared-CPU load table and the timer-slack results');
+    svg = api.svg(g.W, H, 'Node CPUs, the shared-CPU load table and the timer slack');
     txt = {};
     txt.call = el('text', { x: 0, y: 14, 'font-size': g.callFont, class: 'ea-strong' }, svg, '');
     txt.sub = el('text', { x: 0, y: 29, 'font-size': g.subFont, class: 'ea-mono' }, svg, '');
@@ -160,24 +160,18 @@ Anim.register('shared-cpus-allocation', (stage, api) => {
   function buildPanel(x, y, w) {
     el('rect', { x, y, width: w, height: 190, rx: 4, class: 'ea-box', 'fill-opacity': 0.5 }, svg);
     const px = x + 8;
-    el('text', { x: px, y: y + 15, 'font-size': 10, class: 'ea-strong' }, svg, 'Timer slack, idle shared CPU');
-    el('text', { x: px, y: y + 28, 'font-size': 8.5, class: 'ea-muted' }, svg, 'EKS c8g.xlarge, 1 ms sleeps, µs late');
-    el('text', { x: px, y: y + 39, 'font-size': 8.5, class: 'ea-muted' }, svg, 'n 15,000 a cell; min not recorded');
-    const barMax = w - 70;
-    const scale = barMax / 60; // 60 µs full width
-    const block = (top, title, cls, p50, p99, p9999, max) => {
+    el('text', { x: px, y: y + 15, 'font-size': 10, class: 'ea-strong' }, svg, 'Timer slack on a sleeping helper');
+    el('text', { x: px, y: y + 28, 'font-size': 8.5, class: 'ea-muted' }, svg, 'added to every sleep and timeout');
+    el('text', { x: px, y: y + 39, 'font-size': 8.5, class: 'ea-muted' }, svg, 'latency effect not measured here');
+    const block = (top, title, cls, line) => {
       const frame = el('rect', { x: x + 3, y: top - 11, width: w - 6, height: 55, rx: 3, fill: 'none', stroke: 'none' }, svg);
       el('text', { x: px, y: top, 'font-size': 9, class: 'ea-strong' }, svg, title);
-      el('rect', { x: px, y: top + 5, width: Math.max(2, p50 * scale), height: 10, rx: 2, class: cls }, svg);
-      el('text', { x: px + Math.max(2, p50 * scale) + 4, y: top + 13.5, 'font-size': 8.5, class: 'ea-mono' }, svg, `p50 ${p50}`);
-      el('text', { x: px, y: top + 27, 'font-size': 8.5, class: 'ea-mono' }, svg, `p99 ${p99}  p99.99 ${p9999}`);
-      el('text', { x: px, y: top + 39, 'font-size': 8.5, class: 'ea-mono ea-strong' }, svg, `max ${max}`);
+      el('rect', { x: px, y: top + 5, width: 10, height: 10, rx: 2, class: cls }, svg);
+      el('text', { x: px + 16, y: top + 13.5, 'font-size': 8.5, class: 'ea-mono' }, svg, line);
       return frame;
     };
-    txt.slow = block(y + 60, '50 µs slack (kernel default)', 'ea-k5', 52.6, '56.8-57.8', '1,390-2,907', '2,447-3,265');
-    txt.fast = block(y + 118, '1 ns slack (the hook)', 'ea-k3', 2.6, '8.5', '1,343', '3,369');
-    el('text', { x: px, y: y + 175, 'font-size': 8, class: 'ea-muted' }, svg, 'Maxima unexplained: slack and CPU ruled out,');
-    el('text', { x: px, y: y + 184, 'font-size': 8, class: 'ea-muted' }, svg, 'node daemons on CPU 0 not.');
+    txt.slow = block(y + 60, '50 µs slack (kernel default)', 'ea-k5', 'every wake-up up to 50 µs late');
+    txt.fast = block(y + 118, '1 ns slack (the hook)', 'ea-k3', 'the kernel\'s floor');
   }
 
   function render(s) {
@@ -320,7 +314,7 @@ Anim.register('shared-cpus-allocation', (stage, api) => {
       ms: 9000, call: 'Why it wins here, and when it loses', excl: EXCL_BC, load: L_BC, sticky: 'B→{1,2}  C→{1}', panel: 2,
       sub: 'Wins: isolated loop CPUs, helpers on shared ones. Loses: M is no cap.',
       cost: 'counts are from the code, not timings; latency figures are the page\'s EKS run.',
-      caption: 'The loop keeps whole isolated CPUs while helpers share the housekeeping ones, and 1 ns slack cut a sleeping helper\'s p50 lateness from 52.6 to 2.6 µs. It loses on fairness: M is no cap (100 m used 0.99 of a core), and the 3.4 ms max stayed.',
+      caption: 'The loop keeps whole isolated CPUs while helpers share the housekeeping ones, and 1 ns slack takes the kernel\'s 50 µs default off every sleep. It loses on fairness: M is no cap (100 m used 0.99 of a core).',
     },
   ];
 

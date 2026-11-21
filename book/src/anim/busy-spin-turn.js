@@ -5,7 +5,7 @@
 //   book/src/deploy/busy-spin-loop.md:12  2. Aeron in: subscription.poll_fn(handler, FRAGMENT_LIMIT)
 //   book/src/deploy/busy-spin-loop.md:13  3. Aeron out: offer what the handlers queued; stop at the first retryable error
 //   book/src/deploy/busy-spin-loop.md:14  4. timers: one TSC read (quanta) and a compare
-//   book/src/deploy/busy-spin-loop.md:48-56  never in the loop: blocking calls, connect/TLS, allocation, host checks
+//   book/src/deploy/busy-spin-loop.md:44-52  never in the loop: blocking calls, connect/TLS, allocation, host checks
 //   samples/cluster-rfq/examples/rfq_client.rs:86  poll_fn(handler, limit) call shape (that loop is a
 //                                          handshake with sleeps, so it is cited for the call only)
 //   cluster/src/client.rs:881   offer: fast path try_claim, copy, commit (:903-:906), no heap; a refusal
@@ -14,9 +14,8 @@
 //   cluster/src/client.rs:1177  poll(listener, fragment_limit): never blocks, call every turn
 //   (not cluster/src/client.rs:1028 keep_alive_if_due: it reads Instant::now() and its send
 //    retries inline with spin_loop, so it is not shown as the timer step)
-// Recorded numbers: deploy/clocks.md:26-27 (median batch, slowest batch; single-read max not recorded),
-// deploy/busy-spin-loop.md:49 (connect/TLS), deploy/shared-cpus.md:7-11 (one Azure Cobalt VM, helpers off its CPU; max at the hypervisor floor),
-// findings.md:197 (recv-busy at 64 sockets, Graviton). Packet, fragment and tick counts are illustrative.
+// Recorded numbers: deploy/shared-cpus.md:7-11 (one Azure Cobalt VM, helpers off its CPU; max at the hypervisor floor).
+// Packet, fragment and tick counts are illustrative.
 // The animation shows ordering, not timings.
 Anim.register('busy-spin-turn', (stage, api) => {
   const el = api.el;
@@ -271,8 +270,8 @@ Anim.register('busy-spin-turn', (stage, api) => {
       ms: 6500, turn: 1, step: 4, head: 'Turn 1 · timers', call: 'clock.now() >= deadline ?',
       img: [['f4', 'on'], ['f5', 'on']], imgNote: '2 left for turn 2', out: [['m2', 'on'], ['m3', 'on']], outNote: 'carried over to turn 2',
       tmr: 'now 1,000 < 1,250: not due',
-      cost: [['touches', 'one TSC read and one compare'], ['recorded', 'c7i.2xlarge, median (slowest) batch: quanta Clock::now() 15.99 (16.95) ns, Instant::now() 24.85 (25.99) ns; single-read max not recorded']],
-      caption: 'Timers: one TSC read with quanta and a compare. Nothing is due, so the step costs the read: on c7i.2xlarge the median batch for quanta is 15.99 ns (slowest batch 16.95 ns) against 24.85 ns (25.99 ns) for Instant::now(); the slowest single read is not recorded. The turn ends and the next starts at once.',
+      cost: [['touches', 'one TSC read and one compare']],
+      caption: 'Timers: one TSC read with quanta and a compare. Nothing is due, so the step costs the read. The turn ends and the next starts at once.',
     },
     {
       ms: 5000, turn: 2, step: 1, head: 'Turn 2 · network I/O', call: 'poll the socket: would block',
@@ -302,16 +301,16 @@ Anim.register('busy-spin-turn', (stage, api) => {
     },
     {
       ms: 7500, head: 'Never in the loop', call: 'start-up, helper thread, housekeeping thread', side: true,
-      cost: [['why', 'each of these can stop the thread: a connect or TLS handshake is about 0.7 ms of CPU, an allocation can lock and fault']],
-      caption: 'What never enters the ring: allocation (reserve before the loop), blocking calls such as DNS, file I/O, locks and sleep, and connect or TLS handshakes at about 0.7 ms of CPU each (a helper thread), and host checks such as ThrottleWatch and FaultWatch (the housekeeping thread). Helpers run on a CPU other than the loop\'s: the node\'s shared CPU, or the pod\'s second CPU.',
+      cost: [['why', 'each of these can stop the thread: a connect or TLS handshake waits on the peer, an allocation can lock and fault']],
+      caption: 'What never enters the ring: allocation (reserve before the loop), blocking calls such as DNS, file I/O, locks and sleep, and connect or TLS handshakes (a helper thread), and host checks such as ThrottleWatch and FaultWatch (the housekeeping thread). Helpers run on a CPU other than the loop\'s: the node\'s shared CPU, or the pod\'s second CPU.',
     },
     {
       ms: 9000, head: 'Why it wins here, when it loses', call: 'bounded steps + carry-over = no spikes',
       cost: [
         ['wins', 'one Azure Cobalt VM, helpers off its CPU: p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs (the hypervisor floor)'],
-        ['loses', 'it burns a whole CPU even when idle; cpu: 1 puts helpers on the loop\'s CPU; plain recv-busy at 64 sockets (Graviton) costs about 0.6 µs a socket a poll'],
+        ['loses', 'it burns a whole CPU even when idle; cpu: 1 puts helpers on the loop\'s CPU'],
       ],
-      caption: 'Why it wins: every step is bounded and back-pressure carries over instead of waiting, so a turn stays short; on one Azure Cobalt VM with helpers off its CPU the loop measured p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, the max being the 3.5 to 5.5 µs floor of the hypervisor. When it loses: it burns a whole CPU, a cpu: 1 pod puts the helpers on its CPU, and polling many sources every turn adds up (about 0.6 µs a socket a poll at 64 sockets on Graviton).',
+      caption: 'Why it wins: every step is bounded and back-pressure carries over instead of waiting, so a turn stays short; on one Azure Cobalt VM with helpers off its CPU the loop measured p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, the max being the 3.5 to 5.5 µs floor of the hypervisor. When it loses: it burns a whole CPU, and a cpu: 1 pod puts the helpers on its CPU.',
     },
   ];
 

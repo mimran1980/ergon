@@ -6,10 +6,8 @@ use std::net::Ipv4Addr;
 
 use crate::finding::{Finding, Severity};
 
-const T24_EVIDENCE: &str = "the DPDK transport's device plugin (it injects \
-     RUSTERON_DPDK_{SENDER,RECEIVER}_{PCI,IPV4_CIDR,GATEWAY} with the \
-     rusteron.io/dpdk-ena-pair it allocates) and its start-up (the sender trio is \
-     required); book io/backends.md (the two shortest lines); not measured here";
+const T24_EVIDENCE: &str = "the NIC device plugin's env contract \
+     (RUSTERON_DPDK_{SENDER,RECEIVER}_{PCI,IPV4_CIDR,GATEWAY}); not measured here";
 
 /// The three sender values a granted pair always sets, in the order the
 /// checks below validate them: PCI address, IPv4 cidr, gateway.
@@ -31,14 +29,12 @@ const GATEWAY_BAD: &str = "is not an IPv4 address";
 /// consistent.
 ///
 /// `on_dpdk` is whether this process runs on DPDK: the media driver's
-/// `dpdk-ena` transport, or a DPDK network backend (`fstack-spin`,
-/// `smoltcp-spin`).
+/// DPDK transport, or a DPDK network backend.
 /// `env` looks a variable up (`|n| std::env::var(n).ok()` for this process).
 /// Off the pair, or with all three sender values unset, the check is ok and
 /// the message says the device plugin has not granted a pair, not a guessed
 /// address. An empty or unparsable value warns with the exact key. All
-/// three set and usable, the message carries the shortest `fstack-spin` and
-/// `smoltcp-spin` lines built from them.
+/// three set and usable, the message carries the copy lines built from them.
 ///
 /// The check reads only: it exports nothing, binds no NIC, sets no
 /// `AERON_DIR`, and never returns [`Status::Unknown`](crate::Status::Unknown),
@@ -53,7 +49,7 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
             id,
             sev,
             T24_EVIDENCE,
-            "this process is not a DPDK network backend and not a media driver with dpdk-ena, \
+            "this process is not a DPDK network backend and not a media driver on a DPDK transport, \
              so the NIC pair does not apply here"
                 .to_owned(),
         );
@@ -78,10 +74,9 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
                 sev,
                 T24_EVIDENCE,
                 format!(
-                    "the NIC pair is not usable: {problems}. Effect: no fstack-spin or \
-                     smoltcp-spin line can be copied from it. Fix: set every empty key and \
-                     correct every bad one from the pair the device plugin granted \
-                     (rusteron.io/dpdk-ena-pair); this check copies nothing, binds no NIC and \
+                    "the NIC pair is not usable: {problems}. Effect: no copy line can be built \
+                     from it. Fix: set every empty key and correct every bad one from the pair \
+                     the device plugin granted; this check copies nothing, binds no NIC and \
                      sets no AERON_DIR"
                 ),
             );
@@ -93,8 +88,7 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
         T24_EVIDENCE,
         format!(
             "the NIC pair is set; the two shortest lines built from it (copied, not guessed): \
-             {}; {}. A bare fstack-spin or smoltcp-spin takes the same values itself. This \
-             check copies nothing, binds no NIC and sets no AERON_DIR",
+             {}; {}. This check copies nothing, binds no NIC and sets no AERON_DIR",
             pair.fstack_line(),
             pair.smoltcp_line()
         ),
@@ -103,10 +97,8 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
 
 /// The NIC the ENA device plugin granted this container.
 ///
-/// `rusteron.io/dpdk-ena-pair` injects its sender PCI address, IPv4 address
-/// and prefix, and gateway as [`DpdkNicPair::ENV`]. A DPDK network backend
-/// (`fstack-spin`, `smoltcp-spin`) takes it when their configuration names no NIC; T24
-/// reports it. Copied from what the kubelet allocated, never guessed.
+/// The device plugin injects its sender PCI address, IPv4 address and
+/// prefix, and gateway as [`DpdkNicPair::ENV`]. T24 reports it. Copied from what the kubelet allocated, never guessed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DpdkNicPair {
     /// `RUSTERON_DPDK_SENDER_PCI`: `[domain:]bus:dev.func`, or a DPDK device

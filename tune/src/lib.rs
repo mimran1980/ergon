@@ -22,12 +22,12 @@
 //! | T16 | [`t16_instrumentation`] (info) | io, md |
 //! | T17 | [`t17_ksm`] | io, md |
 //! | T18 | [`t18_steal`] (info) | io, md |
-//! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
+//! | T19 | [`FaultWatch`] while running | io (the polling thread, every few seconds from housekeeping) |
 //! | T20 | [`t20_irq_idle`] | a node check (the CPU taking NIC interrupts) |
 //! | T21 | [`t21_tcp_autocorking`] | io (a warning: its connections send latency-sensitive TCP) |
 //! | T22 | [`t22_aeron_affinity_names`] | md |
 //! | T23 | [`t23_aeron_hugepage_env`] | md |
-//! | T24 | [`t24_dpdk_nic_pair`] | io (DPDK backends), md (dpdk-ena) |
+//! | T24 | [`t24_dpdk_nic_pair`] | io (DPDK backends), md (DPDK transport) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | a caller that names its NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -50,8 +50,7 @@
 //!   never waits and allocates only when a finding changes. T15 reads two
 //!   files per task on the host; [`FaultWatch::check`] reads one open file
 //!   and allocates only when it reports.
-//! - **Evidence**: each finding's `evidence` names its source: a
-//!   settings-matrix lab run (named by its run id), or the
+//! - **Evidence**: each finding's `evidence` names its source: the
 //!   kernel's, Kubernetes' or a vendor's documentation, marked "not
 //!   measured here".
 //! - **The switch**: every host-check warning line ends with how to silence

@@ -14,7 +14,7 @@
 //!
 //! # Documentation
 //!
-//! - **[ergo-sbe book](https://mimran1980.github.io/ergon/):** getting
+//! - **[ergon book](https://mimran1980.github.io/ergon/):** getting
 //!   started, a feature tour, core concepts, configuration, recipes, design
 //!   notes and the [samples](https://mimran1980.github.io/ergon/samples/overview.html).
 //! - [Getting started](https://mimran1980.github.io/ergon/sbe/getting-started.html) ·
@@ -111,8 +111,9 @@
 //! `from_le_bytes` / `to_le_bytes` at schema offsets, which costs nothing on a
 //! little-endian host. Decoding uses a zero-copy flyweight
 //! (`EngineDecoder { buf, pos }`). Do not transmute the buffer to a padded
-//! `#[repr(C)]` struct: SBE fields are packed and may be unaligned. The crate
-//! README section *Composite layout & little-endian* has the detail.
+//! `#[repr(C)]` struct: SBE fields are packed and may be unaligned. The book's
+//! [Composite layout and endianness](https://mimran1980.github.io/ergon/sbe/core-concepts/composite-layout.html)
+//! page has the detail.
 //!
 //! ## Encoding and buffer sizing
 //!

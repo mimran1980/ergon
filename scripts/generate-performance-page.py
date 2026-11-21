@@ -308,9 +308,6 @@ def page(artifacts, gaps, causes_file):
             [["codec, one operation per sample", NOT] + [NOT] * 9],
         ),
         "",
-        "Round trips between hosts, per transport: [Transport latency comparison](../transports/comparison.md)"
-        " and [Latency findings at a glance](../findings.md).",
-        "",
         "## Failover",
         "",
         table(

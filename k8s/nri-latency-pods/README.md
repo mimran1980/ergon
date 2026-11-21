@@ -90,20 +90,14 @@ device plugin (not shipped here) already injected into this container
 
 | env the app sees | value from the granted pair |
 |---|---|
-| `ERGON_IO_FSTACK` | `fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0` |
-| `ERGON_IO_SMOLTCP` | `port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0` |
+| `ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP` | the copy lines `ergon_tune::DpdkNicPair` builds from the pair |
 | `ERGON_DPDK_PCI` | `0000:00:06.0` |
 | `ERGON_DPDK_ADDR` | `10.0.1.20`, the address parsed out of the cidr |
 | `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
 
 An app that reads the three variables itself does not need this opt-in.
-The copies are for apps that log the lines or pass them on. A prefix other than 24 adds
-`fstack_prefix_len`, and a DPDK device name (test mode) becomes
-`fstack_vdev` and `eal=--vdev <name>`.
-
-The two lines are the shortest real-NIC lines, the same ones
-`ergon_tune::DpdkNicPair` builds, copied from the granted pair, never
-guessed. The pod is refused, naming the key,
+The copies are for apps that log the lines or pass them on. They are
+copied from the granted pair, never guessed. The pod is refused, naming the key,
 when the annotation is set and any of the three is missing, empty or does not
 parse. The plugin never scans sysfs, never runs `dpdk-devbind`, never takes a
 value from the node's default route (that is the management NIC), and sets no
@@ -204,10 +198,10 @@ scheduling policy.
 
 | item | why |
 |---|---|
-| real-time scheduling (`SCHED_FIFO`) | its one committed A/B (run `070339Z`, `rt` arm) is mixed, and under it the loop's `nohz_full` CPU took timer interrupts again ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#sched_fifo)). RT throttling can take the CPU away. This path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` |
+| real-time scheduling (`SCHED_FIFO`) | not measured here. RT throttling can take the CPU away. This path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` |
 | SR-IOV VF per pod | Nitro guests have one ENA per ENI, no in-guest VFs |
 | a netns-sysctl writer that pretends the knobs are per-netns | `busy_poll`/`busy_read` are global; `gro_flush_timeout` and `napi_defer_hard_irqs` are per-netdev sysfs; `rmem_max` is not writable per-netns. Node config instead (`node-checks.md`) |
-| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the SHARED CPUs | IRQs on a CPU that also runs other work are not measured from committed data; IRQs on a core of their own are ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)). The kept-CPU default stays |
+| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the SHARED CPUs | IRQs on a CPU that also runs other work are not measured here. The kept-CPU default stays |
 
 ## Contract summary
 
@@ -307,7 +301,7 @@ test/e2e.sh
 | `RLIMIT_RTPRIO` | a limit value only (no policy is taken); keep it paired with exclusive CPUs so a bug cannot starve a shared one |
 | `RuntimeDefault + io_uring` | a larger kernel surface than RuntimeDefault; the small deliberate widening |
 | `Unconfined` seccomp | the whole kernel surface; refused |
-| `hostNetwork` (the lab) | the node's network namespace and its IAM role via IMDS |
+| `hostNetwork` | the node's network namespace and its IAM role via IMDS |
 | PM QoS fd in a pod | the pod can widen the node's C-state latency while it lives; the request dies with the fd. Keep the value off |
 
 ## Not verified
@@ -315,14 +309,10 @@ test/e2e.sh
 - NRI socket and nodeadm validator TOML merge on a real AL2023 node.
 - That containerd 2.3.5's NRI has `SetLinuxSeccompPolicy` and
   `SetLinuxMemoryPolicy` (both are in the v0.12.3 proto).
-- Whether c8g.xlarge exposes `/dev/ptp*`, and whether it is single-NUMA (the
-  lab records both).
+- Whether c8g.xlarge exposes `/dev/ptp*`, and whether it is single-NUMA.
 - `/dev/cpu_dma_latency` in an EC2 guest at all, and whether enabling it
-  helps (the one committed C1-cap A/B, on a c7i VM, is mixed:
-  [evidence](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)).
-- The latency of `cpuset.cpus.partition=isolated` alone (the boot-arg
-  **bundle** is measured; the partition alone is "measure first", the lab's
-  job).
+  helps (not measured here).
+- The latency of `cpuset.cpus.partition=isolated` (measure first).
 - `AddMount` bind of `/run/ergon/node.json` into a pod (kind may not land the
   file; the e2e asserts the adjustment either way).
 - MutatingAdmissionPolicy JSON-Patch removal on this k8s version.

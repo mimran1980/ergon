@@ -132,11 +132,6 @@ pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
     } else {
         ""
     };
-    let io = if component == Component::Io {
-        "; the lab's network I/O benchmarks ran under `madvise`"
-    } else {
-        ""
-    };
     vec![Finding::found(
         id,
         sev,
@@ -144,7 +139,7 @@ pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
         format!(
             "transparent hugepages are {}: the kernel thread khugepaged scans and collapses \
              pages in the background, and its work can run on a busy-spinning thread's CPU (not \
-             measured with archived data){madvise}{io}. Fix: `{}`{boot}",
+             measured with archived data){madvise}. Fix: `{}`{boot}",
             what.join(", "),
             fixes.join("; ")
         ),
@@ -305,7 +300,7 @@ pub fn nodes_online(host: &Host) -> Result<Option<CpuSet>, ReadError> {
 }
 
 const T5_EVIDENCE: &str = "Linux Documentation/admin-guide/sysctl/kernel.rst (numa_balancing); \
-     the lab sets 0; not measured";
+     not measured";
 
 /// T5: automatic NUMA balancing is off, on a host with more than one node.
 #[must_use]

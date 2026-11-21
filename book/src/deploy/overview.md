@@ -6,10 +6,9 @@ A busy-spinning thread is only as fast as its host. Start with
 
 | page | for |
 |---|---|
-| [Kubernetes HFT tuning](hft.md) | **start here**: the settings table, the measured runs, copy-paste blocks, three checks |
+| [Kubernetes HFT tuning](hft.md) | **start here**: the settings table, copy-paste blocks, three checks |
 | [AWS and Azure hosts, x86 and Graviton](hosts.md) | how to apply each node setting on a VM or node |
 | [Kubernetes](kubernetes.md) | whole cores, no CPU quota, SMT off, what the node needs before kubelet |
-| [Benchmarks: x86 and Graviton](benchmarks.md) | which platform: what the lab runs support, and cost per hour |
 | [Java for Archive and Cluster](java.md) | the JVM and Aeron settings for Archive and Cluster |
 | [Latency pods](latency-pods.md) | the five grants a normal pod cannot make |
 | [Shared CPUs](shared-cpus.md) | `k8s/nri-shared-cpus`: exclusive CPUs plus the node's shared ones |
@@ -21,11 +20,11 @@ Host, Kubernetes and Java terms:
 
 | term | what it is | pros / cons, when it matters |
 |---|---|---|
-| [C-state](hosts.md#c-states) | how deeply an idle CPU sleeps | deeper saves power but wakes later. A spinning core never idles; capping is mixed ([C-states](hft.md#c-states)) |
-| [timer tick, RCU callbacks](hosts.md#kernel-command-line) | kernel work on every CPU: a regular timer interrupt; deferred clean-up | `isolcpus` keeps tasks off, `nohz_full` stops the tick, `rcu_nocbs` moves the callbacks ([isolation](hft.md#isolation)) |
+| [C-state](hosts.md#c-states) | how deeply an idle CPU sleeps | deeper saves power but wakes later. A spinning core never idles; cap the IRQ CPU ([hosts](hosts.md#c-states)) |
+| [timer tick, RCU callbacks](hosts.md#kernel-command-line) | kernel work on every CPU: a regular timer interrupt; deferred clean-up | `isolcpus` keeps tasks off, `nohz_full` stops the tick, `rcu_nocbs` moves the callbacks ([settings](hft.md#settings)) |
 | [interrupt affinity, `irqbalance`](hosts.md#interrupts-and-the-nic) | the CPUs an interrupt may run on; `irqbalance` is a daemon that moves interrupts around | stop `irqbalance`, pin interrupts to housekeeping, pin again after every NIC reset |
 | IOMMU passthrough | IOMMU: the unit that checks which memory a device may reach. Passthrough (`iommu=pt`; Graviton `iommu.passthrough=1`) skips it for the host's own drivers | needed by some kernel-bypass drivers on metal; harmless on a VM |
-| NUMA node | a group of cores and the memory nearest them | keep a pod's CPUs and devices on one; every lab host had only one |
+| NUMA node | a group of cores and the memory nearest them | keep a pod's CPUs and devices on one |
 | KSM, NUMA balancing | kernel background work: merging identical pages; moving pages nearer the CPU that uses them | KSM merges only memory marked mergeable (`MADV_MERGEABLE`), which Aeron does not mark; NUMA balancing matters only with several NUMA nodes. The EKS node turns both off. Not measured here |
 | [spin test](hft.md#settings) | spin on every CPU for two minutes; note any that stall 300 µs or more | a node-level check: a pod cannot choose its cores. Not measured here |
 | [`-march`, `-mcpu`, `target-cpu`](hosts.md#build-for-the-cpu) | compiler options that build for one CPU: `-march`, `-mcpu` (C), `target-cpu` (Rust). On AArch64 only `-mcpu` sets the core | Graviton: without them, gcc calls a library helper for each atomic add |

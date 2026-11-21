@@ -24,7 +24,7 @@ behaviour.
 | `just policy` | test-lane ownership and the suppression rules below, plus their self-tests |
 | `just preflight` | fmt, clippy, policy self-tests, book fences, golden and reference `--check` |
 | `just check-products` | `ergo-sbe` and `ergo-aeron-cluster` only |
-| `just check-local` | repository hygiene, fmt, clippy, the tests that need no Java, and the `exchange-example` sample |
+| `just check-local` | repository hygiene, fmt, clippy, the tests that need no Java, and the `exchange-example`, `cluster-ha-orderbook` and `cluster-rfq` samples |
 | `just test` | the full suite: builds the Aeron Java jars and runs the Java cluster lifecycle, recovery and HA lanes. A missing dependency fails |
 | `just test-all` | `just test` plus Miri and fuzz replay |
 | `just check-coverage` | coverage against the checked-in baseline |
@@ -166,15 +166,12 @@ cargo package -p ergon-tune --list --allow-dirty
 
 Packages exclude integration tests, fixtures not needed at build time,
 benchmarks, Java harness code, application protocols, samples and internal
-plans. `ergon-tune` ships its library sources and README only.
+plans. `ergon-tune` ships its library, the `ergon-tune` command and its README.
 
 Publishing, tagging and announcing a release need explicit maintainer
-authorisation. Before an authorised release, a maintainer refreshes the
-generated book chapters (pages under `book/src` marked generated, written by
-an export that is not in this repository; see
-[Verification & Release](book/src/project/verification.md#release-path)),
-then run `just release-check`; the release workflow runs the same command
-before `cargo release`.
+authorisation. Before an authorised release, a maintainer runs `just release-check`
+(see [Verification & Release](book/src/project/verification.md#release-path));
+the release workflow runs the same command before `cargo release`.
 
 ## Git hygiene
 

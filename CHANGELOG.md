@@ -11,6 +11,9 @@
 
 ### Changed
 
+- `ergon-tune` findings explain each check by its kernel or hardware mechanism and
+  cite kernel and driver documentation instead of lab runs.
+
 - Breaking: rusteron 0.3.0 throughout, from 0.2.18, and the `aeron` submodule,
   pin and jars at Aeron 1.54.2, from 1.54.0 (Aeron's Gradle is now 9.9.1).
   `ergo-aeron-cluster` re-exports rusteron 0.3's `Aeron`, `AeronContext` and
@@ -27,6 +30,10 @@
   variant `{ detail: String }` carrying the cluster's rejection detail from
   `SessionEvent(AUTHENTICATION_REJECTED)` (stripped of control characters and
   capped at 256 bytes), and fails the connect immediately.
+
+### Docs
+
+- Book: one sidebar part per module, light pages before deep ones.
 
 ## [0.1.39] — 2026-11-11
 

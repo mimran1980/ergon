@@ -346,7 +346,7 @@ impl Fixture {
 pub type IdleState = (&'static str, u32, bool);
 
 /// `intel_idle`'s states on AWS c7i (Sapphire Rapids, kernel 7.2), every one
-/// enabled: as lab session aws-20261028-092158 read them.
+/// enabled.
 pub const INTEL_SPR: [IdleState; 4] = [
     ("POLL", 0, false),
     ("C1", 1, false),

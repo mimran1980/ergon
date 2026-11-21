@@ -55,10 +55,8 @@ fn t20_warns_when_the_irq_cpu_may_enter_c1e_or_c6() -> R {
         "intel_idle",
         "C1E (exit 2 µs)",
         "C6 (exit 190 µs)",
-        // the measured effect, with the fix that removed it
-        "p50 43–160 µs",
-        "p99 315–559 µs",
-        "37–39",
+        // the effect
+        "waits for the wake, up to the state's exit latency",
         // per-CPU fixes, the boot-time one, PM QoS
         "echo 1 > /sys/devices/system/cpu/cpu0/cpuidle/state2/disable",
         "echo 1 > /sys/devices/system/cpu/cpu0/cpuidle/state3/disable",
@@ -75,7 +73,7 @@ fn t20_warns_when_the_irq_cpu_may_enter_c1e_or_c6() -> R {
     assert!(!v.message.contains("processor.max_cstate"), "{v}");
     // The busy-spinning loop's CPU never idles while it spins: no finding.
     assert!(on_cpu(&found, 2).is_empty(), "{found:?}");
-    assert!(v.evidence.contains("aws-20261028-092158"), "{}", v.evidence);
+    assert!(v.evidence.contains("cpuidle.rst"), "{}", v.evidence);
     Ok(())
 }
 
@@ -240,7 +238,6 @@ fn t20_is_unknown_when_it_cannot_read_never_a_warning() -> R {
 
 #[test]
 fn t20_threshold_is_c1s_exit_latency() {
-    // C1 (1 µs) is allowed; C1E (2 µs), the first state the lab's cap
-    // disabled, is not.
+    // C1 (1 µs) is allowed; C1E (2 µs), the first state past it, is not.
     assert_eq!(T20_MAX_EXIT_LATENCY_US, 1);
 }

@@ -12,18 +12,7 @@ fences + generated-API smoke), and rustdoc with `-D warnings`.
 
 ## Release path
 
-Before tagging, refresh the generated chapters: the pages under `book/src`
-whose first line marks them generated (ergon-io, ergon-md-dpdk, transports,
-findings and the two Kubernetes samples, listed in
-`book/generated/manifest.tsv`). This is a maintainer step: the export that
-rewrites them, their manifest and their `SUMMARY.md` block is not in this
-repository. Commit the result. `scripts/check-generated-book.py`
-(in `just preflight`, `just book-ci` and step 8/9) fails if a page was edited
-by hand, its hash or the manifest disagree, a generated page lies outside the
-export's paths, or `SUMMARY.md` drifted. It cannot tell whether a page is
-out of date with its source.
-
-Also before tagging, run `./scripts/check-book-diagrams.sh`. It names each
+Before tagging, run `./scripts/check-book-diagrams.sh`. It names each
 diagram in `book/diagrams.tsv` whose verified sources changed since its stamp. For each one, re-check every label and number against
 the code, update the diagram, then run
 `./scripts/check-book-diagrams.sh --restamp <diagram>`. Step 8/9 runs the same
@@ -38,7 +27,7 @@ release commit:
 | 2/8 | `just test`, including the sbe-tool reference check, rustdoc and bench compilation |
 | 4/8 | fuzz replay: one `cargo fuzz build`, then all six targets at once, 30 s each (`scripts/run-fuzz-replay.sh`) |
 | 5/8 | bench gates with `--noplot` (gates read only the JSON estimates). The parity and cluster gates reject estimates from another run id; `bench-historic` deletes earlier historic estimates first |
-| 8/9 | `_release-check-extras`: coverage, book checks (generated pages' hashes included), publish dry runs, packaged checks. `just release-check` is `just test` plus this |
+| 8/9 | `_release-check-extras`: coverage, book checks, publish dry runs, packaged checks. `just release-check` is `just test` plus this |
 | 8b/9 | `just test-fix-sbe-conformance`: the FIX SBE conformance suite at its pinned commit and the Java RLValidator over ergo-sbe's responses (also weekly in `nightly.yml`). Not in `release-check`, which the hosted release workflow runs on Java 25 |
 | 8c/9 | `just test-nri-published`: installs the published `ergon-shared-cpus` chart and image into a throwaway kind cluster ([Latency pods](../deploy/latency-pods.md)). Needs Docker with 6 CPUs, which a hosted runner lacks. Not yet run |
 

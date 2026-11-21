@@ -9,9 +9,7 @@ const AUTOCORK: &str = "/proc/sys/net/ipv4/tcp_autocorking";
 const T21_EVIDENCE: &str = "Linux net/ipv4/tcp.c tcp_should_autocork (a send of less than \
      size_goal is held while an earlier skb of the socket is still in the qdisc or the NIC's \
      queue, sk_wmem_alloc above one skb's truesize; TCP_NODELAY does not stop it) and \
-     Documentation/networking/ip-sysctl.rst (tcp_autocorking); the lab's nstat TcpExt \
-     TCPAutoCorking per point (aws-20261028-071640 and aws-20261028-092158: AWS c7i.4xlarge, \
-     mio and io_uring TCP round trips at 10k msg/s, about 600k sends a host a point)";
+     Documentation/networking/ip-sysctl.rst (tcp_autocorking); not measured here";
 
 /// T21: TCP autocorking is off (`net.ipv4.tcp_autocorking` 0).
 ///
@@ -80,11 +78,8 @@ pub fn t21_tcp_autocorking(host: &Host, latency_tcp: bool) -> Finding {
             "net.ipv4.tcp_autocorking is {value}: a small send is held (corked) while the \
              socket's previous one is still queued in the qdisc or the NIC and not yet freed, \
              even with TCP_NODELAY, and goes out only when that one's transmit completes (a TX \
-             interrupt, or the next send). On AWS c7i the lab's mio and io_uring round trips at \
-             10k msg/s corked 49k–164k of about 600k sends a host per point (nstat TcpExt \
-             TCPAutoCorking; the SQPOLL arm 5–16) while the IRQ CPU slept in C6, and \
-             42–149 once it was capped at C1 (T20): corking adds a late transmit completion to \
-             each late wake. Fix: `sysctl -w net.ipv4.tcp_autocorking=0`. It is per network \
+             interrupt, or the next send); with the IRQ CPU in a deep idle state (T20) that \
+             completion waits for its wake. Fix: `sysctl -w net.ipv4.tcp_autocorking=0`. It is per network \
              namespace: set it in the namespace the process sends from. Kubernetes: a pod with \
              its own network sets it in securityContext.sysctls (name \
              net.ipv4.tcp_autocorking, value \"0\"), which the kubelet admits only when listed \

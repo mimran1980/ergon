@@ -24,9 +24,7 @@ and queue `m1`. Aeron in has five fragments waiting but `FRAGMENT_LIMIT` is
 3, so it reads three and the other two stay in the image; the handler queues
 `m2` and `m3`. Aeron out commits `m1`, then `m2` gets `BackPressured`, a
 retryable error, so the loop stops offering and keeps `m2` and `m3`. Timers
-read the TSC once and compare: nothing is due (quanta's median batch on
-c7i.2xlarge is 15.99 ns a read, slowest batch 16.95 ns; the slowest single
-read is not recorded ([clocks](clocks.md))). Turn 2: the socket has
+read the TSC once and compare: nothing is due ([clocks](clocks.md)). Turn 2: the socket has
 nothing, so the read returns at once; Aeron in reads the two leftover
 fragments; Aeron out commits `m2` then `m3`, in queue order; a timer is due
 and its work runs. Never in the loop: allocation (reserved before it),
@@ -36,9 +34,7 @@ loop's. Why it wins: each step is bounded and back-pressure carries over instead
 waiting; on one Azure Cobalt VM with helpers off its CPU the loop measured
 p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, the max being the
 hypervisor's 3.5 to 5.5 µs floor ([shared CPUs](shared-cpus.md)). When it loses: it burns a whole
-CPU even when idle, a `cpu: 1` pod puts the helpers on the loop's CPU, and
-polling many sources every turn adds up: plain `recv-busy` at 64 sockets
-costs about 0.6 µs a socket a poll on Graviton ([findings](../findings.md)). The
+CPU even when idle, and a `cpu: 1` pod puts the helpers on the loop's CPU. The
 animation shows order, not timings.
 
 ## Never inside the loop
@@ -46,11 +42,11 @@ animation shows order, not timings.
 | never | why | instead |
 |---|---|---|
 | a blocking call: file or socket I/O outside the poll, DNS, `sleep`, a lock, a channel `recv` | the thread stops until it returns | before the loop, or on the housekeeping thread |
-| a connect or TLS handshake | about 0.7 ms of CPU each time | a helper thread that dials and hands the connected socket over |
+| a connect or TLS handshake | waits on the peer and costs CPU each time | a helper thread that dials and hands the connected socket over |
 | `poll_blocking`, or `add_*` with a timeout | busy-waits for the media driver | before the loop; in it, the async poller's `poll()` once a turn |
 | allocation | the allocator can lock and fault | reserve before the loop (`VecDeque::with_capacity`) |
 | logging that formats and writes | a write blocks when stdout is full | a bounded non-blocking queue to a logging thread |
-| host checks, `ThrottleWatch`, `FaultWatch` | each reads a file | the housekeeping thread |
+| host checks, `ThrottleWatch`, `FaultWatch`, `ClockWatch` | each reads a file or asks the kernel | the housekeeping thread |
 | `Instant::now()` or `SystemTime::now()` for durations | a vDSO call each | `quanta::Clock` (the TSC), calibrated before the loop ([clocks](clocks.md)) |
 | creating a thread | it inherits the loop's CPU mask: it would run on the loop's CPU | before the loop pins itself |
 | waiting for a retryable Aeron error to clear | stalls every other source | keep the message, retry next turn |
@@ -71,13 +67,13 @@ Aeron client conductor, logging), and only then pins itself to its own CPU.
 ## Housekeeping
 
 The checks that must run again while the loop runs, every few seconds, on
-a thread off the loop's CPU. Each check reads one file opened before the
-loop:
+a thread off the loop's CPU. Each reads what it opened before the loop:
 
 | watch | finds | fix |
 |---|---|---|
 | `ThrottleWatch` (T9) | the container's CPU quota stopped it | a Guaranteed pod, whole CPUs, the static CPU manager ([checklist](kubernetes.md#latency-checklist)) |
 | `FaultWatch` (T19) | the loop took a page fault | `mlockall` and write every buffer once before the loop |
+| `ClockWatch` (T11, T12) | time sync or the kernel's clock source changed | time sync on the node ([clocks](clocks.md)) |
 
 - Open the `FaultWatch` for the loop's thread before the loop starts.
 - A loop that has not warmed up faults on its first turns: expect T19

@@ -39,7 +39,7 @@ Use a dedicated node pool, tainted so only latency pods land there
 8. A whole-number CPU request on every busy-spinning container. With SMT
    off, one CPU is one core.
 9. Each busy thread pinned to its own core from the pod's cpuset, under
-   `SCHED_OTHER` (`SCHED_FIFO` was mixed: [evidence](hft.md#sched_fifo)).
+   `SCHED_OTHER` (`SCHED_FIFO`: [settings](hft.md#settings)).
 10. On CRI-O only: the annotations in [No CPU quota](#no-cpu-quota).
     containerd (EKS, AKS, k3s) ignores them.
 
@@ -110,8 +110,7 @@ dedicated nodes ([keep other pods in check](#keep-other-pods-in-check)).
 
 SMT (hyper-threading) runs two logical CPUs on one physical core. They share
 the core's execution resources: a pod with `cpu: 1` shares a core with its
-twin, and its latency follows what the twin does
-([SMT sibling](hft.md#smt-sibling)). Turn SMT off on x86 latency nodes, so
+twin, and its latency follows what the twin does. Turn SMT off on x86 latency nodes, so
 one Kubernetes CPU is one physical core, as on Graviton, which has no SMT.
 
 | where | how |
@@ -206,7 +205,7 @@ What the kubelet writes:
   then run unlimited on the shared CPUs. The kubelet's own behaviour above
   is enough, and it only touches the containers with exclusive CPUs.
 - **Kubelet 1.31 and 1.32** (EKS extended support, AKS) always set the
-  quota. Use 1.33 or later (the lab's k3s and the EKS deployment run 1.36).
+  quota. Use 1.33 or later (the EKS verification ran 1.36).
 - **Changing `cpuManagerPolicy`:** drain the node, stop the kubelet, delete
   `/var/lib/kubelet/cpu_manager_state`, start the kubelet. Without the
   delete, the kubelet crash-loops.

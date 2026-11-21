@@ -1,7 +1,7 @@
 //! ergon IPC sample: exercises codegen, Aeron IPC and domain objects.
 //!
 //! Demonstrates:
-//! - Multi-schema generate (normalized AppMessage + Bitget/Binance spot fixtures)
+//! - Multi-schema generate (normalized AppMessage + two exchange spot fixtures)
 //! - Nested AppMessage → L2Book/Trade, exact claim encode into Aeron IPC
 //! - Local L2 book orderbook maintenance
 //! - Decimal adapter and domain-object mapping

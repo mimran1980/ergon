@@ -27,10 +27,8 @@ fn t21_warns_while_autocorking_is_on_for_latency_sensitive_tcp() -> R {
     for part in [
         "net.ipv4.tcp_autocorking is 1",
         "TCP_NODELAY",
-        // the measured counts, uncapped and with the IRQ CPU at C1
-        "TCPAutoCorking",
-        "49k–164k",
-        "42–149",
+        // why it matters with a deep-sleeping IRQ CPU
+        "that completion waits for its wake",
         // the fix, where it applies, and Kubernetes
         "sysctl -w net.ipv4.tcp_autocorking=0",
         "network namespace",

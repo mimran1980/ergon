@@ -849,7 +849,7 @@ pub(crate) fn get_dimension_info(
 
 /// Returns (offset, size, primitive) of the numInGroup field within a dimension
 /// composite. The primitive drives the encoder's `count` parameter width so a
-/// schema whose dimensionType declares numInGroup as uint32 (e.g. Binance's
+/// schema whose dimensionType declares numInGroup as uint32 (e.g. a venue's
 /// default `groupSizeEncoding`) writes all 4 bytes, not just 2.
 pub(crate) fn get_dim_num_layout(
     elements: &SchemaElements,

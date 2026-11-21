@@ -250,7 +250,7 @@ type SeccompPolicy struct {
 }
 
 // ioUringSyscalls is the small deliberate widening. Aeron's RTT path does not
-// use io_uring; the lab records "no change expected" for latency and proves
+// use io_uring; its latency effect is not measured here, and the e2e proves
 // enablement.
 var ioUringSyscalls = []string{"io_uring_setup", "io_uring_enter", "io_uring_register", "io_uring_register2"}
 

@@ -42,7 +42,6 @@ jobs:
           bash scripts/tests/test-no-grep-q-pipefail.sh
           bash scripts/tests/test-cluster-ergo-sbe-features.sh
           bash scripts/tests/test-book-content.sh
-          bash scripts/tests/test-generated-book.sh
           bash scripts/tests/test-rerun-if-changed.sh
           bash scripts/tests/test-aeron-version.sh
           bash scripts/tests/test-workflow-paths.sh
@@ -102,8 +101,6 @@ jobs:
         run: ./scripts/check-book-fences.sh
       - name: Book content checks
         run: ./scripts/check-book-content.sh
-      - name: Generated book pages unedited (hashes, manifest, SUMMARY)
-        run: ./scripts/check-generated-book.py
       # GitHub's runners ship Node.js; the check fails, not skips, without it.
       - name: Book animations (embeds, modules, node --check, offline, citations)
         run: ./scripts/check-book-anim.py
