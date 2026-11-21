@@ -1,5 +1,5 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:99d07ebe2af1585c13548980815f469698794da5961f1b7dfff032669f388379 -->
-# ergon-md-dpdk (experimental)
+<!-- Generated page: edits here are overwritten by the next export. sha256:b1f42fb0aac17f4a0bda900377272aec15cc0ee2e035625b81b63a488ca34b01 -->
+# ergon-dpdk-transport (experimental)
 
 > **Not recommended for production use.**
 >
@@ -15,14 +15,14 @@
 >
 > **On one host it gains nothing:** host-local channels run on ordinary kernel
 > sockets in this driver too
-> (`md-dpdk/native/dpdk/rusteron_dpdk_kernel.c`), so there is no bypass to
+> (`io/dpdk/transport/native/dpdk/rusteron_dpdk_kernel.c`), so there is no bypass to
 > gain ([below](#localhost-no-gain)).
 
 ## Glossary
 
 Terms this chapter uses. Host, Kubernetes and Java terms:
 [deployment glossary](../deploy/overview.md#glossary). Figures:
-`md-dpdk/BENCHMARKS.md`.
+`io/dpdk/transport/BENCHMARKS.md`.
 
 | term | what it is | when it matters |
 | --- | --- | --- |
@@ -36,17 +36,16 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | threading mode | how the agents share threads: `DEDICATED`, `SHARED_NETWORK`, `SHARED` or `INVOKER` | [measured cost of `SHARED_NETWORK`](configuration.md#threads-and-cores) |
 | idle strategy, park | what an Aeron thread does with no work: `spin` and `noop` never sleep; `backoff` spins, yields, then parks (sleeps) ever longer | spinning needs a CPU of its own |
 | log buffer, term buffer | Aeron's memory-mapped file of one stream's messages, in three term buffers | [on hugepages, not sparse](configuration.md#aeron-settings) |
-| [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | on MANA, sized to what the 256-entry ring holds (not measured here) |
+| [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | |
 | heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings): below Aeron (raw floor), a quiet path is up to 9.8 µs slower at p50; one every 100 µs removes that |
 | [kernel UDP](#what-it-is) | the normal path: NIC interrupt, the kernel's network stack, a system call | no setup, every tool works ([tuning](#tuning-kernel-udp-first)) |
 | [kernel bypass](#why-bypass-is-faster-and-what-it-costs) | one process takes a NIC from the kernel and reads and writes its queues itself | lower median and max in these runs; costs cores, NICs, root setup and upkeep |
 | DPDK | the Data Plane Development Kit: the kernel-bypass library this crate uses | |
 | [EAL](configuration.md#environment) | DPDK's start-up layer (Environment Abstraction Layer): it maps the NICs and hugepages and starts DPDK's threads | extra options: `RUSTERON_DPDK_EAL_ARGS` |
-| NIC, PCI address, MAC | network interface card (virtual on a cloud VM); its slot on the host's bus; its hardware address | the crate picks NICs by PCI address, on Azure by MAC |
-| ENA | AWS's virtual NIC (Elastic Network Adapter) | a reset restores its interrupt placement and adaptive moderation (`md-dpdk/src/checks.rs`): re-apply them ([hosts](../deploy/hosts.md#interrupts-and-the-nic)) |
-| MANA, accelerated networking | MANA: Azure's virtual NIC (Microsoft Azure Network Adapter). Accelerated networking gives the VM a slice of it (a VF, virtual function) | rings of at most 256 entries: set `RUSTERON_DPDK_TX_DESCRIPTORS=256` |
-| [low-latency queue, BAR, write-combining](configuration.md#pitfalls) | ENA's fast send mode: the CPU writes each send into the NIC's memory window (the BAR). Write-combining batches those writes | start fails on an ENA port whose BAR is not mapped write-combined (`md-dpdk/tests/dpdk_ena_llq.rs`) |
-| `igb_uio`, `uio_hv_generic`, `vfio-pci` | kernel modules that hand a NIC to a user-space process | node-level, as root: `igb_uio` on AWS, `uio_hv_generic` on Azure. The kernel's tools then lose that NIC |
+| NIC, PCI address, MAC | network interface card (virtual on a cloud VM); its slot on the host's bus; its hardware address | the crate picks NICs by PCI address |
+| ENA | AWS's virtual NIC (Elastic Network Adapter) | a reset restores its interrupt placement and adaptive moderation (`io/dpdk/transport/src/checks.rs`): re-apply them ([hosts](../deploy/hosts.md#interrupts-and-the-nic)) |
+| [low-latency queue, BAR, write-combining](configuration.md#pitfalls) | ENA's fast send mode: the CPU writes each send into the NIC's memory window (the BAR). Write-combining batches those writes | start fails on an ENA port whose BAR is not mapped write-combined (`io/dpdk/transport/tests/dpdk_ena_llq.rs`) |
+| `igb_uio`, `vfio-pci` | kernel modules that hand a NIC to a user-space process | node-level, as root: `igb_uio` on AWS. The kernel's tools then lose that NIC |
 | interrupt | a NIC's signal that packets are waiting; the CPU stops its work to handle it | DPDK polls instead |
 | [interrupt moderation](../deploy/hosts.md#interrupts-and-the-nic) | the NIC waits to batch several packets into one interrupt. Adaptive: the driver re-tunes the wait itself | off on Graviton in the best kernel path measured; its cost on x86 is not measured here |
 | busy polling (kernel) | a socket read spins on the NIC's queue instead of sleeping (`net.core.busy_read`, `busy_poll`) | measured, never isolated: no setting recommended ([below](#tuning-kernel-udp-first)). A node-wide sysctl ([kernel docs](https://docs.kernel.org/admin-guide/sysctl/net.html)) |
@@ -54,7 +53,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | pin, CPU affinity | pin: tie a thread to one CPU. Affinity: the CPUs a thread may run on (`AERON_*_CPU_AFFINITY`) | the crate pins the agents ([threads and cores](configuration.md#threads-and-cores)) |
 | housekeeping core | the core for interrupts, the conductor and every thread that does not spin | keeps that work off the busy cores |
 | isolated CPU | a CPU the kernel keeps its own work off: scheduler, timer tick, interrupts | node-level ([kernel command line](../deploy/hosts.md#kernel-command-line)) |
-| ring, descriptor | a NIC queue: RX receives, TX sends. Each descriptor in it points at one packet buffer | RX default: min(4,096, the NIC's maximum): 4,096 on ENA, 256 on MANA |
+| ring, descriptor | a NIC queue: RX receives, TX sends. Each descriptor in it points at one packet buffer | RX default: min(4,096, the NIC's maximum): 4,096 on ENA |
 | packet buffer (mbuf) | DPDK's buffer for one packet, from a pool per NIC on hugepages | 16,384 a NIC by default |
 | burst | many messages sent back to back | the RX ring must hold it while the reader catches up |
 | jumbo frames | packets above Ethernet's usual 1,500 B | [one run only](configuration.md#aeron-settings) |
@@ -63,7 +62,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | transparent hugepages | the kernel building large pages by itself, in the background (`khugepaged`) | [not separated in one run](configuration.md#aeron-settings); node-level |
 | page fault | the first touch of a memory page: the kernel stops the thread to map it | hugepages and pre-touching move it off the hot path |
 | flow | packets between one source and one destination address and port | an Aeron channel is one flow; one flow topped out at 7.75–7.77 Gbit/s of Aeron frames on `c7i.4xlarge` |
-| placement group | hosts placed close together: a cluster placement group (AWS) or a proximity placement group (Azure) | two c7i.4xlarge pairs still differed by about 7 µs at the median |
+| placement group | hosts placed close together: a cluster placement group (AWS) | two c7i.4xlarge pairs still differed by about 7 µs at the median |
 | spot instance | spare AWS capacity, sold cheaper; AWS can take it back | a `c9g.2xlarge` pair: $0.306 spot against $0.696 on demand an hour ([cost](../deploy/benchmarks.md#cost-per-hour)) |
 | x86, Graviton | x86: Intel and AMD CPUs. Graviton: AWS's Arm CPUs | never compared in one run: pairs, days and builds differ (BENCHMARKS.md) |
 | SMT, hyperthread, sibling, vCPU | SMT runs two hyperthreads (siblings) on one core. A vCPU is a hyperthread on x86, a whole core on Graviton (no SMT) | on x86, leave each busy core's sibling idle |
@@ -103,8 +102,8 @@ kernel UDP:  client ─ media driver ─ system call ─ kernel UDP/IP ─ inter
 DPDK:        client ─ media driver ─ this crate, polling ─────────────────────── NIC
 ```
 
-It runs on AWS's ENA and Azure's MANA virtual NICs, on Linux x86-64 and
-aarch64 (Graviton). The sender and the receiver each get a NIC of their own;
+It runs on AWS's ENA, on Linux x86-64 and aarch64 (Graviton). A MANA path
+from earlier Azure runs stays in the code, unused. The sender and the receiver each get a NIC of their own;
 the host's primary NIC stays with the kernel.
 
 ## Tuning kernel UDP first
@@ -234,7 +233,7 @@ are infrastructure.
   [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
   The EKS overlays for this driver (`eks-ena-x86`, `eks-ena-arm64`):
   AWS Kubernetes sample.
-- Aeron kernel UDP and DPDK against mio, ergon-io and TCP:
+- Aeron kernel UDP and DPDK against mio, ergon-net and TCP:
   [transport latency comparison](../transports/comparison.md).
 - Every run, setting and range:
-  `md-dpdk/BENCHMARKS.md`.
+  `io/dpdk/transport/BENCHMARKS.md`.

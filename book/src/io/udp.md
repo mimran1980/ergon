@@ -1,8 +1,10 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:a9dc4dea1c1fb563f883cbfdfb7540b16b6bdecb4cb9a742e29d4c0f4454094d -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:7907e6375fd966720c6fa30e32e9e58b88a924bae96e37adb14c7f4a9a7cbfbf -->
 # UDP
 
 `UdpConn` is one UDP socket that a `Driver` owns. Whole datagrams in,
-whole datagrams out, on the `epoll-spin` backend only.
+whole datagrams out, on `epoll-spin`, and on `smoltcp-spin` as `UdpConn<SmolUdp>`
+(from `Stack::udp_connect` or `udp_bind`); `recv-busy` and `uring-sqpoll`
+refuse it.
 
 - `UdpConn::connect(local, peer, &opts)`: bound to `local` (port 0: the
   kernel picks), connected to `peer`. It sends with `send` and receives
@@ -51,7 +53,7 @@ fn a_connected_pair_round_trips_whole_datagrams() -> R {
     Ok(())
 }
 ```
-*(From `ergon-io/tests/udp.rs`; `cargo test -p ergon-io` runs it on Linux.)*
+*(From `io/net/tests/udp.rs`; `cargo test -p ergon-net` runs it on Linux.)*
 
 ## Batching
 
@@ -246,7 +248,7 @@ fn an_inline_reply_leaves_in_the_same_poll() -> R {
     Ok(())
 }
 ```
-*(From `ergon-io/tests/udp.rs`.)*
+*(From `io/net/tests/udp.rs`.)*
 
 ## Options
 

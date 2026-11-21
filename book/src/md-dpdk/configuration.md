@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:96301560e6c9a68c0427aabffda71ba42ecd60e3c9552d27235b3723e9d6a7e3 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:ff7409d18d170c9fc6db37052c2411e2198adabbde16d57c12ba28db56476cf2 -->
 # Configuring the DPDK Transport
 
 > Read the [notice](overview.md) first: this transport is a proof of concept,
@@ -22,7 +22,7 @@
   level.
 
 ```sh
-cargo test -p ergon-md-dpdk -- --test-threads=1   # every platform, without the feature
+cargo test -p ergon-dpdk-transport -- --test-threads=1   # every platform, without the feature
 ```
 
 With the `dpdk` feature the same tests run on Linux with libdpdk, natively
@@ -37,7 +37,7 @@ The bundled `media_driver` binary picks the transport from
 `RUSTERON_MEDIA_DRIVER_TRANSPORT`:
 
 ```sh
-RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena cargo run -p ergon-md-dpdk --features dpdk --bin media_driver
+RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena cargo run -p ergon-dpdk-transport --features dpdk --bin media_driver
 ```
 
 | value | result |
@@ -64,15 +64,15 @@ process:
 //! cleanly. A NIC reset request (`RTE_ETH_EVENT_INTR_RESET`) does not reset
 //! the device under the polling agents: the process stops the driver, then
 //! exits non-zero so the pod can be restarted. The configuration is the
-//! library's ([`ergon_md_dpdk::driver::ConfiguredDriver`]), which a process
+//! library's ([`ergon_dpdk_transport::driver::ConfiguredDriver`]), which a process
 //! embedding the driver shares, host checks included: one stderr line for each
 //! low-latency setting that is not fine, and under `ERGON_HOST_CHECKS=require`
 //! a non-zero exit before any driver starts while one warns
-//! ([`ergon_md_dpdk::checks`]).
+//! ([`ergon_dpdk_transport::checks`]).
 //! `media_driver --version` prints the version, the architecture, Rust's
 //! target CPU and the native C's CPU flag, and exits without starting a driver.
 
-use ergon_md_dpdk::driver::ConfiguredDriver;
+use ergon_dpdk_transport::driver::ConfiguredDriver;
 use log::info;
 use rusteron_media_driver::AeronDriverContext;
 use std::sync::Arc;
@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
-*(`md-dpdk/src/bin/media_driver.rs`: built by `cargo test -p ergon-md-dpdk`
+*(`io/dpdk/transport/src/bin/media_driver.rs`: built by `cargo test -p ergon-dpdk-transport`
 on every platform; `tests/media_driver_transport_selection.rs` runs it with
 each value, checks it never falls back, and stops it with SIGTERM.)*
 
@@ -165,7 +165,7 @@ Each returns `Result<_, DpdkError>`, except `clock()`.
 | `lock_memory_from_env()` | `true` if it locked memory | **Not recommended.** `RUSTERON_MEDIA_DRIVER_MLOCKALL=1`: its latency effect is not measured here |
 | `DpdkTransport::clock()` | the `TransportClock` the transport reads: `Counter { hz, rate, eal_hz, measured_hz }` or `Monotonic { reason }` | you check whether the transport reads the CPU counter, at which rate, and if not, why |
 
-**Dropping a `DpdkTransport` only leaks it** (`md-dpdk/src/ffi.rs`, no
+**Dropping a `DpdkTransport` only leaks it** (`io/dpdk/transport/src/ffi.rs`, no
 `Drop`). Freeing it is `DpdkTransport::close`, which is `unsafe` and sound
 only after every driver started from the context has stopped.
 `EnvMediaDriver` frees it in that order for you.
@@ -182,9 +182,9 @@ DPDK's own threads.
 | `RUSTERON_DPDK_FILE_PREFIX` | the EAL's file prefix (required) |
 | `RUSTERON_DPDK_SENDER_PCI`, `_IPV4_CIDR`, `_GATEWAY` | the sender's NIC: PCI address, address with prefix, gateway (required) |
 | `RUSTERON_DPDK_RECEIVER_*` | the same for the receiver's NIC (required) |
-| `RUSTERON_DPDK_SENDER_MAC`, `_RECEIVER_MAC` | Azure: pick the NICs by MAC (every NIC of a VM shares one PCI function) |
+| `RUSTERON_DPDK_SENDER_MAC`, `_RECEIVER_MAC` | MANA only (Azure): pick the NICs by MAC (every NIC of a VM shares one PCI function) |
 | `RUSTERON_DPDK_RX_DESCRIPTORS` | receive ring size; unset: 4,096 on ENA, 256 on MANA |
-| `RUSTERON_DPDK_TX_DESCRIPTORS` | transmit ring size, 512 by default; **set 256 on Azure**, or start fails |
+| `RUSTERON_DPDK_TX_DESCRIPTORS` | transmit ring size, 256 by default (an ENA's maximum under large LLQ) |
 | `RUSTERON_DPDK_MBUFS_PER_PORT` | packet buffers per NIC, 16,384 by default |
 | `RUSTERON_DPDK_EAL_ARGS` | extra EAL options, such as `-l <cpu>` to keep the EAL's main thread on a housekeeping CPU from the pod's cpuset |
 | `RUSTERON_DPDK_HOUSEKEEPING_CPU` | the CPU for the transport's housekeeping and local-I/O threads |
@@ -195,7 +195,7 @@ DPDK's own threads.
 | `RUSTERON_MEDIA_DRIVER_MLOCKALL` | `1`: `mlockall` before the driver starts (needs `CAP_IPC_LOCK` in the pod). **Not recommended**: see the entry-point table above |
 
 Every other knob (rate caps, host-local channels, ENA device arguments,
-receive drain, statistics) is in `md-dpdk/README.md`.
+receive drain, statistics) is in `io/dpdk/transport/README.md`.
 
 ## Threads and cores
 
@@ -269,20 +269,19 @@ kernel UDP.
 ## Aeron settings
 
 What the lab used, and the evidence for each. Figures:
-`md-dpdk/BENCHMARKS.md`. Where: **pod** is
+`io/dpdk/transport/BENCHMARKS.md`. Where: **pod** is
 the pod spec or the channel URI; **node** needs node-level access.
 
 | setting | where | what it does | evidence |
 |---|---|---|---|
-| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | under DPDK the poll drains whole bursts itself, so this sizes host-local socket reads; the A/B predates that. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs (BENCHMARKS.md) |
+| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`io/dpdk/transport/src/driver.rs`) | under DPDK the poll drains whole bursts itself, so this sizes host-local socket reads; the A/B predates that. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs (BENCHMARKS.md) |
 | `AERON_DIR` on a *sized* 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | node mount, pod env | the log buffers sit on hugepages, allocated up front | required, not A/B'd: an unsized hugetlbfs reports no free space, and Aeron refuses every log buffer |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` on clients | pod | clients fault their mappings in before the first message | not measured here |
 | `AERON_MTU_LENGTH=1408` (at most `RUSTERON_DPDK_MAX_AERON_MTU`, 1,408 by default) | pod | every frame fits one packet buffer | jumbo frames, Graviton G2, **one run**: 1,344 B bursts p50 242 → 210 µs, max 954 → 1,533 µs; idle unchanged. A candidate for bulk or bursty channels only |
 | `AERON_RCV_INITIAL_WINDOW_LENGTH`, `AERON_SOCKET_SO_RCVBUF`, `_SNDBUF` all 2 MiB; `net.core.rmem_max`/`wmem_max` 16 MiB | pod; sysctls node | the window fits the socket buffer | not A/B'd here |
-| Azure, a channel where loss matters more than rate: `rcv-wnd` of 256 × the smallest datagram (80 KiB for 288 B), with `AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us` | pod | the sender never has more in flight than MANA's 256-entry receive ring holds, which overflows while the receiver agent stalls; the faster park buys back part of the rate | two `Standard_D8ds_v6` pairs, 288 B, 1–4 M msgs/s: no loss in 50 rep-points with the window against 9 of 50 without; with it 288 B keeps up only to 2 M msgs/s (flat out 2.93 M with the park, 0.24 M without, against 4.57 M). The park alone did not stop the loss in a second pair (7 of 40 against 9 and 10 of 40) (BENCHMARKS.md) |
 | kernel busy polling (`net.core.busy_read`, `busy_poll`): none recommended | node | a socket read spins on the NIC's queue | measured, not isolated: Graviton G1 lost at 288 B 1 M msgs/s in 5 of 5 reps, max 9,175 (8,544–102,826) µs (four settings differ); x86 round 7 lower p50 at 288 B 100 k msgs/s, max 382 (372–389) against 469 (448–578) µs (two settings differ) (BENCHMARKS.md). Check M4 reports the state as information |
 | transparent hugepages off | node | the kernel stops building large pages in the background | not separated: one run (`aws-20261014-113947`), idle p99.99 53.15 against 67.01 µs, max 90 (77–1,180) against 94 (80–498). Azure idle p99.99 67 to 53 µs and idle max 546 to 106 µs; a traced `khugepaged` drain was a 16.25 µs max. The IPC 2 MiB directory was not separated from tmpfs. [Hugepages](../transports/comparison.md#hugepages) |
-| a keep-alive every 100 µs on sparse, latency-critical streams | application | a lost frame is noticed at the next keep-alive, not at Aeron's next heartbeat (100 ms, `aeron_network_publication.h:38`, rusteron-media-driver 0.2.13); the path stays warm | below Aeron (raw floor, `c8g.2xlarge`, 3 reps): one ping a second p50 33.98 (32.99–34.24) µs, with the keep-alive 24.50 (24.13–24.83), unpaced 24.21; a 1 ms gap costs +0.8 µs (a 1 ms keep-alive is not measured; this run has no A/A) (BENCHMARKS.md) |
+| a keep-alive every 100 µs on sparse, latency-critical streams | application | a lost frame is noticed at the next keep-alive, not at Aeron's next heartbeat (100 ms, `aeron_network_publication.h:38`, rusteron-media-driver 0.2.21, Aeron 1.54.2); the path stays warm | below Aeron (raw floor, `c8g.2xlarge`, 3 reps): one ping a second p50 33.98 (32.99–34.24) µs, with the keep-alive 24.50 (24.13–24.83), unpaced 24.21; a 1 ms gap costs +0.8 µs (a 1 ms keep-alive is not measured; this run has no A/A) (BENCHMARKS.md) |
 
 **One AWS flow topped out at 7.75–7.77 Gbit/s of Aeron frames** on
 `c7i.4xlarge`, kernel UDP and DPDK alike; on `c9g.2xlarge` 1,344 B messages
@@ -307,7 +306,7 @@ on different ports.
   `DpdkTransport::clock()` say which, and why.
 - **NIC receive timestamps:** `RUSTERON_DPDK_RX_HW_TIMESTAMP=1`. Only AWS ENA
   offers them (Gen7+ instances in a `precision-time` placement group, DPDK
-  25.11+); Azure MANA does not. They mean something only while chrony keeps
+  25.11+). They mean something only while chrony keeps
   the host on the NIC's clock ([time sync](../deploy/clocks.md#set-up-time-sync)).
 - **Media receive timestamps** (`media-rcv-ts-offset=reserved` on a
   subscription). One run (Graviton G3, DPDK): p50 within 0.07 µs of without
@@ -336,10 +335,8 @@ on different ports.
 
 | symptom | cause | fix |
 |---|---|---|
-| start fails on Azure | transmit ring above MANA's 256 | `RUSTERON_DPDK_TX_DESCRIPTORS=256` |
 | start fails naming the ENA's BAR | the NIC's memory window (BAR) is not mapped write-combined, so ENA's low-latency queue cannot run | node: `igb_uio` with `wc_activate=1`, or a write-combining `vfio-pci` with `RUSTERON_DPDK_VFIO_WC=1` |
 | Aeron refuses every log buffer | hugetlbfs mounted without `size=` | node: mount it sized |
 | window smaller than asked | `net.core.rmem_max` below 2 MiB | node: raise it to 16 MiB |
 | a channel stops at a fixed rate of 1,344 B on AWS | one flow's Gbit/s cap | more channels, on different ports |
-| millisecond spikes about once a minute on Azure | not traced: an ergon-io run saw stalls up to 2.1 ms at seconds :49–:51 of every minute, on both hosts (io benchmarks) | keep busy threads off the cores the spin test flags; the spin test's effect is not measured here |
 | no gain on localhost | host-local channels use kernel sockets | expected; use IPC |

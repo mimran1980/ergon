@@ -1,7 +1,7 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:0f6adbc1e98115cb9a9bf53022021763bb0d931fc271c6c72d6de07605a14e15 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:3625c5c962d3051b9e446450d381c1508040ace36b6b8b57fcadd7869bdb463c -->
 # MDC and MDS
 
-Aeron's two multi-destination features, read from the Aeron 1.54.0 C
+Aeron's two multi-destination features, read from the Aeron 1.54.2 C
 driver and tested here:
 
 - **MDC** (multi-destination-cast): one publication sends every frame to
@@ -58,7 +58,9 @@ driver and tested here:
    subscriber holds every other one for the timeout, 5 s by default. (From
    the source, not measured here: see [Not measured](#not-measured).)
 5. **Size the window for the round trip.** The receiver window is
-   `min(rcv-wnd, term-length / 2)`, 128 KiB by default, and a reliable
+   `min(rcv-wnd, term-length / 2)`, 128 KiB by default (the lab's driver
+   sets `AERON_RCV_INITIAL_WINDOW_LENGTH=512k`, about 31,000 messages/s at
+   176 ms), and a reliable
    publisher can have at most one window in flight to its fastest receiver.
    So a stream carries at most `window / RTT`: 128 KiB over 176 ms is
    0.74 MB/s, about 7,700 messages/s of 96-byte frames. Past that the
@@ -113,7 +115,7 @@ flowchart LR
 
 ## How Aeron does it
 
-All from the Aeron 1.54.0 C driver (`aeron-driver/src/main/c`).
+All from the Aeron 1.54.2 C driver (`aeron-driver/src/main/c`).
 
 ### MDS: one image from several destinations
 
@@ -374,8 +376,8 @@ From the Aeron source only, each with the test that would settle it:
 | MDS costs one datagram read per extra path on the receiver and one send per destination on the sender; the first copy is readable at once | two hosts, one and two paths, p50 to max and the driver threads' CPU |
 | dynamic MDC with a wildcard control address works across two paths | two subscriber destinations, each joining at the publisher's address on its own path |
 
-- **Latency verdict:** two hosts with two ENIs each (on AWS). The numbers
-  here come from one desktop box with `netem`.
+- **Latency verdict:** none. The numbers here come from one desktop box
+  with `netem`; a verdict needs two hosts with two ENIs each.
 - **Why the default `nak-delay` sent about 2,500 NAKs a rep, not one per
   fast-path loss:** not established.
 

@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:38110fdd73f4ad4fc25080dfc420603f17340b968009ceec36aa9735af15164a -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:c602a42cdba2d8593ca6f5ce4875b7f9a311a2d7fb6fa6adef8493e77a6c37ef -->
 # Kubernetes quickstart
 
 This sample
@@ -8,7 +8,7 @@ republished over Aeron through the DPDK media driver to a busy-spinning
 app. Each pod prints ergon-tune's findings (with their fixes) at start, and
 the feed and the app print latency lines with the max every 5 s.
 
-F-Stack is lab-grade and ergon-md-dpdk is a lab proof of concept: this
+F-Stack is lab-grade and ergon-dpdk-transport is a lab proof of concept: this
 sample shows the wiring and the tuning, not a production data path. For the
 reference layout with the shared-CPU plugin and a verifier, see
 [Low-Latency Kubernetes](low-latency-k8s.md).
@@ -17,8 +17,9 @@ reference layout with the shared-CPU plugin and a verifier, see
 
 Needs Docker (9 CPUs or more), kind and kubectl.
 
-`run.sh` builds the cluster, the image and the pods and follows the feed and
-the app for 60 s; `down.sh` deletes the cluster and the images.
+`run.sh` (in the sample's `scripts/` folder) builds the cluster, the image
+and the pods and follows the feed and the app for 60 s; `down.sh` deletes
+the cluster and the images.
 
 The first build compiles F-Stack, its DPDK and Aeron's C (about 15 minutes);
 later builds reuse them. `run.sh` is safe to run again: it reuses the
@@ -36,39 +37,40 @@ follows until Ctrl-C.
 
 ```text
 qs-ws-echo ──TLS WebSocket──► qs-feed ──aeron:udp──► qs-media-driver ──► qs-app
- kernel TCP    (echoes)      F-Stack TCP   (offer)   md-dpdk sender port    subscriber
-                             DPDK port 1             wire, receiver port    busy-spin
+ kernel TCP    (echoes)      F-Stack TCP   (offer)   ergon-dpdk-transport subscriber
+                             DPDK port 1             sender port, wire,  busy-spin
+                                                     receiver port:
                                                      DPDK ports 2 and 3
 ```
 
 | pod | CPUs | does |
 |---|---|---|
 | `qs-ws-echo` | 1 | TLS WebSocket echo server on kernel TCP, standing in for a remote feed; serves its self-signed certificate on `:8080/cert.pem` |
-| `qs-feed` | 2 | ergon-io's WebSocket client on `fstack-spin`: sends 10 000 messages a second of 64 bytes on a fixed timetable, checks each echo byte for byte (a mismatch stops it), times it from its **intended** send time, stamps it and offers it to an Aeron exclusive publication |
-| `qs-media-driver` | 2 | Aeron's C media driver on ergon-md-dpdk, `SHARED_NETWORK`: the network agent spins on one CPU, the conductor and DPDK housekeeping use the other |
+| `qs-feed` | 2 | ergon-net's WebSocket client on `fstack-spin`: sends 10 000 messages a second of 64 bytes on a fixed timetable, checks each echo byte for byte (a mismatch stops it), times it from its **intended** send time, stamps it and offers it to an Aeron exclusive publication |
+| `qs-media-driver` | 2 | Aeron's C media driver on ergon-dpdk-transport, `SHARED_NETWORK`: the network agent spins on one CPU, the conductor and DPDK housekeeping use the other |
 | `qs-app` | 2 | Aeron subscriber spinning on one CPU; times each message from the feed's stamps |
 
 Every pod is Guaranteed with whole CPUs, so the static CPU manager gives it
 CPUs of its own. Each loop spins on a CPU taken from its pod's cgroup
 cpuset; the helpers (reporter, health server, Aeron's client conductor,
-ergon-io's warning thread, the EAL's control threads) run on the pod's other
+ergon-net's warning thread, the EAL's control threads) run on the pod's other
 CPU. Nothing on a loop allocates, locks, prints or waits: an offer Aeron
 refuses is counted and dropped (a term rotation is retried at once, at most
 four times).
 
-F-Stack and md-dpdk never meet:
+F-Stack and ergon-dpdk-transport never meet:
 
-| | feed (F-Stack) | media driver (md-dpdk) |
+| | feed (F-Stack) | media driver (ergon-dpdk-transport) |
 |---|---|---|
 | process, pod | `feed` in `qs-feed` | `media_driver` in `qs-media-driver` |
 | DPDK | F-Stack's own, static | Debian's 24.11, shared |
 | EAL file prefix | `qs-feed` | `ll-<pod>` |
 | port on kind | `net_af_packet0` on a veth in its pod (10.9.0.2, NAT out of the pod) | `net_tap0` 10.9.0.1 and `net_tap1` 10.9.0.3, bridged in its pod |
-| port on EKS | its own ENA (device number 3) | md-dpdk's ENA pair (1 and 2) |
+| port on EKS | its own ENA (device number 3) | ergon-dpdk-transport's ENA pair (1 and 2) |
 
 The feed publishes to `aeron:udp?endpoint=10.9.0.3:40001`, the driver's
 receiver port: each message leaves by the sender port and comes back in by
-the receiver port. Aeron IPC would skip md-dpdk. The feed, the driver and
+the receiver port. Aeron IPC would skip ergon-dpdk-transport. The feed, the driver and
 the app share the node's Aeron directory (`/mnt/huge-aeron`) and its CPU
 counter (TSC, `CNTVCT_EL0`), which is why they run on one node: the app's
 pod affinity holds it to the feed's node, and a stamp later than the app's
@@ -88,7 +90,7 @@ app: 5.0 s recv 50000 aeron hop p50 14.5 us p99 61.1 us p99.9 138.9 us max 875.5
 | field | measured from | to |
 |---|---|---|
 | `ws rtt` | the message's intended send time (so a late send counts) | the echo's arrival in the feed |
-| `aeron hop` | the feed's offer | the app's receipt, through md-dpdk |
+| `aeron hop` | the feed's offer | the app's receipt, through ergon-dpdk-transport |
 | `ws send to app` | the message's intended send time (so a late send counts) | the app's receipt |
 | `not published` | Aeron refused the offer (back-pressure, no subscriber) | |
 | `missing` | sequence numbers the app never saw | |
@@ -108,7 +110,7 @@ Each pod's start-up, long lines cut:
 ```text
 feed: pod CPUs 4-5 (from its cgroup cpuset, ...); loop on CPU 5, helpers on CPU 4
 feed: memory locked (mlockall): no page fault on first touch in the loop
-feed: ergon-tune: ergon-io ran 21 checks at start, the feed 3 more; each WARN carries its fix:
+feed: ergon-tune: ergon-net ran 21 checks at start, the feed 3 more; each WARN carries its fix:
 feed:  WARN T1 warn: CPU 5 (loop) is not isolated: ... Fix: boot with `isolcpus=nohz,domain,managed_irq,5 nohz_full=5 rcu_nocbs=5 irqaffinity=0-4,6-9` ...
 feed:  WARN T13 warn: CPU 5 (loop) is in the unbound workqueue cpumask ...
 feed:  ok T9 ok: no CPU quota on this process's cgroup ...
@@ -125,8 +127,8 @@ feed: ergon-tune: summary 3 warnings, 3 info, 2 unknown, 16 ok (ERGON_HOST_CHECK
 | `ok` | proven fine | nothing |
 
 The app and the echo print the same set (the `ergon-tune` command's, for one
-spinning thread); the driver prints ergon-md-dpdk's own. On kind, T1 and
-T13 warn in every pod, and T3 everywhere but the feed (ergon-io rates it
+spinning thread); the driver prints ergon-dpdk-transport's own. On kind, T1 and
+T13 warn in every pod, and T3 everywhere but the feed (ergon-net rates it
 info): the node shares Docker's kernel, which has no isolated CPUs, no
 `nohz_full` and transparent hugepages `always`. K6 warns when the pod's
 CPU saw any pressure. The echo's K4 warns too: it has one CPU and no helper
@@ -139,14 +141,14 @@ warning, or a pod property ergon-tune cannot prove, stops the start.
 | setting | where | file | ergon-tune |
 |---|---|---|---|
 | requests = limits for CPU and memory, whole CPUs | pod | `k8s/base/*.yaml` | K1, K4 |
-| `cpuManagerPolicy: static`, `full-pcpus-only`, `reservedSystemCPUs` | node (kubelet) | `node/kind.yaml`; on EKS md-dpdk's node config | K2, T9 |
+| `cpuManagerPolicy: static`, `full-pcpus-only`, `reservedSystemCPUs` | node (kubelet) | `node/kind.yaml`; on EKS ergon-dpdk-transport's node config | K2, T9 |
 | `net.ipv4.tcp_autocorking: "0"` | pod `securityContext.sysctls`; the kubelet's `allowedUnsafeSysctls` | `ws-echo.yaml`, `feed.yaml`, `node/kind.yaml` | T21 |
 | `httpGet` probes (`/healthz`, `/readyz`), never `exec` | pod | pod yamls | |
 | loop CPU from the pod's cpuset; helpers on its other CPU | app | `src/cpus.rs`, `src/run.rs` | T1, T8, K3, K4 |
 | the driver's CPUs from its cpuset | entrypoint | `docker/qs-driver.sh` | T1, T8 |
 | `mlockall` before the loop | app (`CAP_IPC_LOCK`, or `RLIMIT_MEMLOCK`) | `src/run.rs`, `app.yaml` | T19 |
-| the Aeron directory on tmpfs or hugetlbfs | node | `run.sh`; md-dpdk's bootstrap on EKS | T4 |
-| `isolcpus`, `nohz_full`, `rcu_nocbs`, `irqaffinity`, THP `never`, SMT off | node (boot line) | md-dpdk's `node/provision-node.sh` on EKS; not possible on kind | T1, T3, T10, T13 |
+| the Aeron directory on tmpfs or hugetlbfs | node | `run.sh`; ergon-dpdk-transport's EKS node bootstrap (`bootstrap-dpdk-ena.sh`) | T4 |
+| `isolcpus`, `nohz_full`, `rcu_nocbs`, `irqaffinity`, THP `never`, SMT off | node (boot line) | ergon-dpdk-transport's EKS node provisioning (`provision-node.sh`); not possible on kind | T1, T3, T10, T13 |
 
 The feed and the driver are privileged (DPDK takes their ports; on kind the
 feed also makes its veth and NAT) and run as root; the app runs as root
@@ -161,11 +163,11 @@ has not run on EKS.
 
 | piece | what |
 |---|---|
-| node | one c8g.2xlarge (Graviton4, 8 CPUs, no SMT, 4 ENIs): md-dpdk's ENA node user data (CPU 0 reserved, 1-7 isolated, hugepages, Aeron's hugetlbfs at `/mnt/huge-aeron`) |
-| ENIs | primary (management), device numbers 1 and 2 (the driver's pair, bound by md-dpdk's bootstrap, granted by its device plugin), 3 (F-Stack's); the three data ENIs tagged `node.k8s.amazonaws.com/no_manage=true` so the VPC CNI never claims them |
-| F-Stack's ENA | `node/eks-fstack-ena.sh` on the node after each boot: binds it to md-dpdk's DPDK driver and prints the feed's `QS_BACKEND` line |
+| node | one c8g.2xlarge (Graviton4, 8 CPUs, no SMT, 4 ENIs): ergon-dpdk-transport's ENA node user data (CPU 0 reserved, 1-7 isolated, hugepages, Aeron's hugetlbfs at `/mnt/huge-aeron`) |
+| ENIs | primary (management), device numbers 1 and 2 (the driver's pair, bound by ergon-dpdk-transport's bootstrap, granted by its device plugin), 3 (F-Stack's); the three data ENIs tagged `node.k8s.amazonaws.com/no_manage=true` so the VPC CNI never claims them |
+| F-Stack's ENA | `node/eks-fstack-ena.sh` on the node after each boot: binds it to ergon-dpdk-transport's DPDK driver and prints the feed's `QS_BACKEND` line |
 | CPUs | feed, driver and app take 2 each: 6 of the 7 left after CPU 0; the echo runs on another node |
-| hugepages | the driver 2 GiB (md-dpdk's budget: its mempools plus Aeron's 1 GiB hugetlbfs), the feed 1 GiB: 3 of the node's 4 GiB |
+| hugepages | the driver 2 GiB (ergon-dpdk-transport's budget: its mempools plus Aeron's 1 GiB hugetlbfs), the feed 1 GiB: 3 of the node's 4 GiB |
 | channel | the feed publishes to the receiver ENA (device number 2): its address in place of `RECEIVER_IP` in `QS_AERON_CHANNEL` |
 | overlay | `k8s/overlays/eks`: replace `REGISTRY`, `RECEIVER_IP` and the `FSTACK_*` placeholders, then `kubectl apply -k` |
 

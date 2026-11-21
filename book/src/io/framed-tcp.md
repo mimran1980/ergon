@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:f975c9764a713068b50dca1748d9b37c16a973d8230de9dd5d5d58b3a798a9ee -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:e11eedbdf83fe8c9e1e89e6bcb37a24768ff419c18ca3485e2c1414929cff549 -->
 # Framed TCP
 
 `FrameConn` carries length-prefixed frames over plain TCP (no TLS), on
@@ -57,7 +57,7 @@ every backend.
         })
     }
 ```
-*(From `ergon-io/tests/frame.rs`; `cargo test -p ergon-io` runs it on Linux,
+*(From `io/net/tests/frame.rs`; `cargo test -p ergon-net` runs it on Linux,
 on every backend.)*
 
 ## Options

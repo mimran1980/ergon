@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:4a8863e07dfdcbb1bbe94bc8a40a561a0d75a70d37789f0d18a99b515c3e836a -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:d931601a4c100bd82a9d0e77f33af111017bc0e36279f9e653bf8db75899d447 -->
 # Backends and Configuration
 
 A backend is the kernel interface the `Driver` waits and reads with. It is
@@ -17,7 +17,7 @@ configuration, so one binary can run with each. Which to pick:
   the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` ran
   on AWS; the ranking uses the cells whose echo was pinned, including
   the TCP and WebSocket remeasure
-  ([transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
+  ([transport comparison](../transports/comparison.md#ergon-net-kernel-smoltcp-and-f-stack)).
 - **Among `epoll-spin`, `recv-busy` and `uring-sqpoll`, UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
   driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
   endpoints run on all three ([UDP](udp.md)). `smoltcp-spin` also carries UDP.
@@ -27,8 +27,9 @@ configuration, so one binary can run with each. Which to pick:
 - **Plain `recv-busy` reads every socket on every poll**, so each socket
   adds a little to every poll. `per_queue` reads one socket per NIC
   queue instead: see [cost per poll](#cost-per-poll).
-- **`uring-sqpoll` costs a spinning kernel thread per ring.** Rings in one
-  process can share one; other processes cannot. Its kernel thread polls each
+- **`uring-sqpoll` costs a spinning kernel thread per ring.** Each driver
+  builds its own ring, so each `uring-sqpoll` driver adds a spinner
+  ([W2](#start-up-warnings-w1-and-w2)). Its kernel thread polls each
   NIC queue, not each socket ([cost per poll](#cost-per-poll)).
 
 ## Configuration strings
@@ -46,21 +47,23 @@ fn keys_override_defaults() -> R {
     Ok(())
 }
 ```
-*(From `ergon-io/tests/backend_config.rs`; `cargo test -p ergon-io` runs it on
+*(From `io/net/tests/backend_config.rs`; `cargo test -p ergon-net` runs it on
 every platform.)*
 
 | key | default | meaning |
 |---|---|---|
-| `loop_cpu` | unset | the loop's CPU, for the host checks; unset: the CPU the calling thread is pinned to (ergon-io never pins it) |
+| `loop_cpu` | unset | the loop's CPU, for the host checks; unset: the CPU the calling thread is pinned to (ergon-net never pins it) |
 | `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first helper CPU ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A core of its own or the loop's SMT sibling: [what the sibling costs](#uring-sqpoll-on-the-loops-smt-sibling-x86) |
 | `sqpoll_idle_ms` | 600,000 | idle time before the SQPOLL thread sleeps; NIC polling does not count as work, so keep it long |
 | `ring_entries` | 256 | `io_uring` submission queue size |
 | `per_queue` | `false` | `recv-busy` only: one busy-polled read per NIC queue, then the sockets epoll reports ready |
-| `connect_cpu` | unset | the `connect_background` helper thread's CPU; unset: the housekeeping CPUs |
+| `connect_cpu` | unset | the `connect_background` helper thread's CPU; unset: the helper CPUs ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A CPU outside the cpuset, or the polling CPU, makes `connect_background` fail |
+| `helper_cpus` | unset | the CPUs of ergon-net's helper threads (the connect helper, the warning thread, SQPOLL); unset: `ERGON_HELPER_CPUS`, else chosen at `Driver::new` ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)) |
+| `inline_connect_fallback` | `false` | with no helper CPU, `connect_background` connects inline on the calling thread instead of failing |
 | `connect_timeout_ms` | 10,000 | the longest connection set-up |
 | `rcvbuf` | 4 MiB | `SO_RCVBUF` for every socket; needs `net.core.rmem_max` at least as large (warned at start-up); 0: the kernel's autotuning |
 | `rx_timestamps` | `true` | kernel software, and where supported NIC hardware, receive timestamps in `RxMeta` |
-| `rx_read_timestamp` | `false` | ergon-io's own receive time in `RxMeta::rx_read_ns`: one `CLOCK_REALTIME` read (vDSO) per read with data, right after the read returns (`io_uring`: when the completion is reaped; frames the upgrade read with the 101: when the driver takes them); off, no clock read and the field is 0 |
+| `rx_read_timestamp` | `false` | ergon-net's own receive time in `RxMeta::rx_read_ns`: one `CLOCK_REALTIME` read (vDSO) per read with data, right after the read returns (`io_uring`: when the completion is reaped; frames the upgrade read with the 101: when the driver takes them); off, no clock read and the field is 0 |
 | `quickack_check` | `warn` | `off`, `warn` or `require` |
 | `keepalive_idle_s` | 10 | TCP keepalive: idle seconds before the first probe; 0: off |
 | `keepalive_interval_s`, `keepalive_count` | 5, 3 | seconds between probes, probes before the drop |
@@ -129,7 +132,7 @@ fn the_one_core_backends() -> R {
     Ok(())
 }
 ```
-*(From `ergon-io/tests/backend_config.rs`; `cargo test -p ergon-io` runs it on
+*(From `io/net/tests/backend_config.rs`; `cargo test -p ergon-net` runs it on
 every platform.)*
 
 What one poll does:
@@ -181,20 +184,6 @@ error, never ignored:
     }
 ```
 
-On the lab command line:
-
-```sh
-# plain: one recvmsg per socket per poll
-io_bench lab --variants recv-busy --cpus 2 \
-  --server SENDER:9447 --conns 100 --duration 60 --out res/c100-recv-busy
-
-# per_queue: one read per NIC queue, then the ready sockets
-io_bench lab --variants recv-busy --per-queue --cpus 2 \
-  --server SENDER:9447 --conns 100 --duration 60 --out res/c100-per-queue
-
-$B/analyse --warmup-s 2 res/c100-*
-```
-
 Measured against plain `recv-busy` and `uring-sqpoll` at 1–256
 connections: polling backends.
 
@@ -235,23 +224,21 @@ In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical
 ## `fstack-spin`: TCP on F-Stack
 
 Kernel bypass: [F-Stack](https://github.com/F-Stack/f-stack) (FreeBSD's
-TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-io builds v2.0) owns a NIC of
+TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-net builds v2.0) owns a NIC of
 its own, and the polling thread runs it. **Status:** Docker lab test (two
-F-Stack processes over a veth pair), and AWS `c7i` / `c8g` runs. The
-F-Stack TCP echo was pinned. Kernel TCP and WebSocket echoes in that
-first session were on CPU 0; the remeasure pinned them
-([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
+F-Stack processes over a veth pair), and AWS `c7i` / `c8g` runs
+([ergon-net](../transports/comparison.md#ergon-net-kernel-smoltcp-and-f-stack)).
 
 | | |
 |---|---|
 | a poll | one F-Stack pass (`ff_run_once`: NIC receive burst, the stack, timers, transmit), its kqueue (`epoll-spin`'s loop: level-triggered, zero timeout), one read per ready socket, the send pass, then a second pass so replies leave in the same poll |
-| endpoints | `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`, from `FrameDial::<FstackTcp>::on_stack`, `WsDial::<FstackTcp>::on_stack`, `HttpDial::<FstackTcp>::on_stack` (with `Driver::connect`, or `connect_blocking` then `Driver::add`). TCP over IPv4; no UDP |
+| endpoints | `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`, from `FrameDial::<FstackTcp>::on_stack`, `WsDial::<FstackTcp>::on_stack`, `HttpDial::<FstackTcp>::on_stack` (with `Driver::connect`, or `connect_blocking` then `Driver::add` before the loop starts: it blocks the polling thread, and with it every connection, for the whole handshake). TCP over IPv4; no UDP |
 | type safety | the socket type is the endpoint's parameter: dropping an endpoint closes it with `ff_close`, never `close(2)`; `Driver::new` refuses endpoints of the other stack |
 | threads | F-Stack is single-threaded: `fstack::init` (called by `Driver::new` if not yet) binds it to the polling thread, once per process. F-Stack endpoints are not `Send`, so there is no `connect_background`; every `Driver` of the process runs on that thread |
 | allocation | none once warm (tested on framed TCP and WebSocket over TLS); F-Stack's own buffers are DPDK's |
 
 Configuration: `fstack-spin` and the `fstack_*` keys (`FstackConf`), from
-which ergon-io writes F-Stack's config file (`fstack::initialised()` keeps
+which ergon-net writes F-Stack's config file (`fstack::initialised()` keeps
 the text):
 
 ```text
@@ -330,7 +317,7 @@ The EAL exits the process (`rte_exit`) on most start-up failures instead of
 returning; its own lines say why.
 
 Kubernetes: the pod gets the NIC from a device plugin (an SR-IOV virtual
-function, or an ENA ENI bound to DPDK as [ergon-md-dpdk](../md-dpdk/overview.md)'s plugin hands one out),
+function, or an ENA ENI bound to DPDK as [ergon-dpdk-transport](../md-dpdk/overview.md)'s plugin hands one out),
 `hugepages-2Mi` (or `-1Gi`) as a resource, the capabilities above, and
 whole CPUs (Guaranteed QoS, static CPU manager): `loop_cpu` inside the
 pod's cpuset, with a second CPU for the EAL's control threads
@@ -343,8 +330,7 @@ Kernel bypass with a TCP/IP stack in the process:
 [smoltcp](https://github.com/smoltcp-rs/smoltcp) 0.14.0 (0BSD) over one
 DPDK port, driven by the polling thread. Pure Rust, so it runs on Graviton
 as on x86. **Status:** Docker lab test (a DPDK `net_af_packet` port against
-the kernel's stack across a veth pair, arm64), and the same AWS runs. The
-UDP echo was pinned. Its TCP and WebSocket echoes were on the housekeeping CPU in that session, and pinned in the remeasure.
+the kernel's stack across a veth pair, arm64), and the same AWS runs.
 
 | | |
 |---|---|
@@ -358,8 +344,8 @@ UDP echo was pinned. Its TCP and WebSocket echoes were on the housekeeping CPU i
 Start the stack, then the driver:
 
 ```rust,ignore
-use ergon_io::smoltcp_dpdk::{SmolTcp, Stack, StackConfig};
-use ergon_io::{Config, Driver, FrameConn, FrameDial, FrameOptions, Target};
+use ergon_net::smoltcp_dpdk::{SmolTcp, Stack, StackConfig};
+use ergon_net::{Config, Driver, FrameConn, FrameDial, FrameOptions, Target};
 
 let stack = Stack::init(&StackConfig::parse(
     "port=0000:00:06.0,ip=10.0.1.20/24,gw=10.0.1.1,eal=-a 0000:00:06.0",
@@ -454,7 +440,7 @@ frames (`CLOCK_REALTIME`); `quickack_check` is off (`require` refused);
 Requirements: Linux x86_64 or aarch64; the `smoltcp-dpdk` feature;
 libdpdk >= 23.11 through pkg-config (Ubuntu 24.04's `libdpdk-dev`);
 a port DPDK can take (an ENA ENI bound to `igb_uio`, as the EKS node of
-[ergon-md-dpdk](../md-dpdk/overview.md) binds it, or to `vfio-pci`),
+[ergon-dpdk-transport](../md-dpdk/overview.md) binds it, or to `vfio-pci`),
 hugepages, and that driver's privileges (as for `fstack-spin` above). It cannot be linked beside `fstack` with `FSTACK_PREFIX` (two
 DPDKs).
 
@@ -471,14 +457,15 @@ timers) runs on the polling thread once a millisecond, a few µs each.
 | `epoll-spin`, `recv-busy` | any supported kernel |
 | `uring-sqpoll` | Linux 6.9+ (NAPI registration) and the `uring` feature |
 | `fstack-spin` | what DPDK 24.11 runs on, the `fstack` feature and F-Stack linked ([above](#fstack-spin-tcp-on-f-stack)) |
+| `smoltcp-spin` | Linux x86_64 or aarch64, libdpdk 23.11 or later and the `smoltcp-dpdk` feature ([above](#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk)) |
 
 An older kernel gives `Error::Unsupported` from `Driver::new`.
 
 ## Host settings
 
-The loop is only as quiet as its core. What mattered on AWS and Azure, for
-x86 and Graviton: [Deployment: AWS and Azure hosts](../deploy/hosts.md).
-ergon-io's own checks ([ergon-tune](../tune/overview.md)) report what is
+The loop is only as quiet as its core. What matters on AWS, for x86 and
+Graviton: [Deployment: hosts](../deploy/hosts.md).
+ergon-net's own checks ([ergon-tune](../tune/overview.md)) report what is
 missing at start-up.
 
 ## Cost per poll
@@ -606,13 +593,97 @@ no second CPU.
 | pass time | not measured | not measured |
 
 What was measured is the round trip, one rep, echo pinned, no A/A arm
-([ergon-io on DPDK](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)):
+([ergon-net on DPDK](../transports/comparison.md#ergon-net-kernel-smoltcp-and-f-stack)):
 against kernel `epoll-spin`, smoltcp's no-loss p50 is 3.0–8.9 µs lower on
 TCP and 3.8–7.5 µs lower on UDP; F-Stack WebSocket's is 1.0–9.8 µs lower,
 on `c7i.4xlarge` and `c8g.2xlarge`, 1 and 8 connections. Neither was run
 past 8 connections, so the socket-count rows of
 [choosing a backend](overview.md#choosing-a-backend) have no bypass
 column past 8.
+
+## The advisor: `ergon-net-advise`
+
+A dry run: it prints the backend one loop thread should name on this host,
+the rule that chose it, the facts it read and what is not measured behind
+it. It builds no driver and changes nothing. Run it where the loop runs
+(inside the pod), with the thread's plan:
+
+```text
+ergon-net-advise --sockets N [--drivers N] [--spin] [--udp] [--loop-cpu N] [--dev IFACE]
+```
+
+| argument | what |
+|---|---|
+| `--sockets N` | sockets at peak on the thread: every driver and `HttpClient` pool, idle ones too |
+| `--drivers N` | drivers on the thread, each `Driver` and `HttpClient` (default 1) |
+| `--spin` | the loop busy-spins (`runtime.idle: spin`); without it, the runtime's default backoff |
+| `--udp` | the endpoints are UDP |
+| `--loop-cpu N` | the loop's CPU |
+| `--dev IFACE` | the egress device toward the venue (`ip route get <addr>`) |
+
+What it reads, before any loop:
+
+- where `SQPOLL` would go ([pod layouts](kubernetes.md#pod-layouts)) and whether that
+  CPU is its own, shared with neither the loop nor the dial helper and
+  warning thread;
+- whether a `uring-sqpoll` ring builds (the real ring, then dropped);
+- whether `SO_BUSY_POLL` takes (set and read back on a probe socket);
+- whether `--dev` has NAPI: a `device` link (a NIC or VF) says yes, none
+  says no (`lo`, a veth), a VLAN or bond is not known;
+- the NIC checks T2, N1 and N2 on `--dev` for the loop's CPU;
+- the DPDK pair the device plugin granted: reported, never picked.
+
+The first rule that matches wins:
+
+| rule | when | picks |
+|---|---|---|
+| R2b | the DPDK pair is malformed | refuses |
+| R0 | the loop does not spin | `epoll-spin` |
+| R1 | UDP | `epoll-spin` |
+| R3 | `--dev` has no NAPI, or it is not known | `epoll-spin` |
+| R4 | at most 4 sockets | `recv-busy` (`epoll-spin` if `SO_BUSY_POLL` is refused) |
+| R8 | 5 or more sockets on more than one driver | `epoll-spin`, and consolidate |
+| R9 | more than 256 sockets on one driver | refuses |
+| R6 | 5–256 sockets, T2, N1 and N2 pass | `epoll-spin` |
+| R5 | 5–256 sockets, `SQPOLL` on a CPU of its own, the ring builds | `uring-sqpoll` |
+| R7 | 5–256 sockets, otherwise | `recv-busy,per_queue=true` (`epoll-spin` if `SO_BUSY_POLL` is refused) |
+
+- **Every pick past 4 sockets in a spinning loop rests on cells not
+  measured in a pod**; the output's `not measured:` line names them.
+- **It differs from [choosing a backend](overview.md#choosing-a-backend)
+  in these places.** The table assumes a spinning loop on a NIC with NAPI;
+  the advisor checks both and otherwise names `epoll-spin` (R0, R3). It
+  adds a driver count: with several drivers on the thread it names
+  `epoll-spin` (R8). With the NIC checks passed it names `epoll-spin` at
+  5-256 sockets (R6), where the table names `uring-sqpoll`, including at
+  65-256 where interrupt backends are not measured. It names `uring-sqpoll`
+  only when `SQPOLL` has a CPU of its own: a `cpu: 2` pod without a helper
+  list (`ERGON_HELPER_CPUS`) puts the dial helper and the warning thread on
+  `SQPOLL`'s CPU, a case not measured. And the table's column "the NIC's
+  interrupts on a core of their own" is not what it reads: T2, N1 and N2
+  pass when no NIC interrupt fires on the loop's CPU, the ENA's adaptive RX
+  moderation is off (any other driver passes N1 unchecked) and interrupts
+  are not deferred.
+- Exit status 0 with a pick, 1 when it refuses, 2 on a bad argument.
+- In code: `ergon_net::advise::gather` reads the facts, `decide` is the
+  pure table, `Decision::line` the `io:` line.
+
+## Start-up warnings W1 and W2
+
+Two layouts to avoid, each warned about once per process, never on the
+polling path. W1's cell is measured at 64 sockets, where plain `recv-busy`
+could not hold 10,000 round trips a second
+(fair run);
+at 4 sockets the backends are level, and the x86 p99 crossover is about 16
+(BENCHMARK.md),
+so the threshold of 4 is interpolated, not measured. W2's is not measured.
+
+| | warns when | counted |
+|---|---|---|
+| W1 | plain `recv-busy` (no `per_queue`) reads more than 4 sockets on one thread, across its drivers | when a driver's connection slots grow (`add`, `connect`, `connect_background`), on that thread; a reconnect that reuses a slot adds nothing |
+| W2 | a second `uring-sqpoll` driver is alive in the process with its `SQPOLL` thread on the same CPU as another's (each builds its own ring and thread; without `sqpoll_cpu` they all go on the same CPU); a `sqpoll_cpu` of its own for each does not warn | at `Driver::new`; a dropped driver no longer counts |
+
+`ERGON_HOST_CHECKS` does not silence them.
 
 ## Find the crossover on your own host
 
@@ -675,7 +746,7 @@ runs in CI on Linux x86_64 and aarch64 (release):
   mio loop makes exactly two reads per echo.
 - **Latency**, two-sided: a loopback TLS 1.3 WebSocket round trip, 64 B
   at 10,000/s, through the `Driver` and through a minimal mio loop doing
-  the same work (ergon-io's TLS record layer and WebSocket framing, the
+  the same work (ergon-net's TLS record layer and WebSocket framing, the
   same echo peer on its own CPU, `TCP_NODELAY`, 4 MiB `SO_RCVBUF`, 64
   events per wait, each echo checked byte for byte). 7 pairs at 1 and 16
   sockets; in each pair the two loops take turns round trip by round trip.
@@ -697,7 +768,7 @@ Why it is not a backend:
    connection for queued sends on each pass and `mio_bench` does not. That
    cost was the `Driver`'s, paid by every backend, not epoll's; the send set
    has removed it (not re-measured: [cost per poll](#cost-per-poll)).
-3. **Off Linux it would lose what ergon-io is for.** macOS and Windows have
+3. **Off Linux it would lose what ergon-net is for.** macOS and Windows have
    no `SO_BUSY_POLL`, `io_uring`, `TCP_QUICKACK`, `SO_TIMESTAMPING` or
    netlink route checks. Latency verdicts come from Linux only.
 4. **Its fair-run maxima have no cause yet:**
@@ -714,9 +785,9 @@ Why it is not a backend:
    `fair.md`.
 5. **The market-data arm was confounded.** The default `SO_RCVBUF` gave
    receive-window pressure (`TCPWantZeroWindowAdv` up to 2,862 per point)
-   that no ergon-io arm showed. So mio is not ranked on market data. Data:
+   that no ergon-net arm showed. So mio is not ranked on market data. Data:
    `loop-counters.md`, "mio receive-window pressure".
 
-The `Driver` itself now runs on macOS for development (`epoll-spin` on
-kqueue, none of the Linux tuning), so that need is met without mio.
+On macOS the `Driver` runs `epoll-spin` on kqueue for development, without
+the Linux tuning.
 Windows: not supported.

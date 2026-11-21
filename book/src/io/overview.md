@@ -1,5 +1,5 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:37feee345175e8d3116525cb170c7a90f3bca331adbcc63a97d47eeafca66814 -->
-# ergon-io
+<!-- Generated page: edits here are overwritten by the next export. sha256:5c321dda29079183710080f310e8e5bcfce8c750f5d1faac2627d1bda2754b39 -->
+# ergon-net
 
 Network I/O for an exchange client on one busy-spinning thread: WebSocket
 and HTTP/1.1 over TLS 1.3 (TLS 1.2 opt-in, for a server without TLS 1.3).
@@ -12,8 +12,10 @@ and HTTP/1.1 over TLS 1.3 (TLS 1.2 opt-in, for a server without TLS 1.3).
 
 - Features: `uring` (on by default) adds the `io_uring` backends;
   `webpki-roots` adds Mozilla's root store (`tls::webpki_roots`); `curl` adds
-  libcurl as an `HttpClient` implementation.
-- API reference: `cargo doc -p ergon-io --features webpki-roots --open`.
+  libcurl as an `HttpClient` implementation; `tls12` adds TLS 1.2 for a
+  target that opts in (`Target::with_tls12`); `fstack` adds `fstack-spin`
+  and `smoltcp-dpdk` adds `smoltcp-spin`.
+- API reference: `cargo doc -p ergon-net --features webpki-roots --open`.
 - Every measured figure, with its max and its data file:
   the benchmark notes
   (their first table answers the common questions).
@@ -46,8 +48,8 @@ Terms this chapter uses. Each links to the section that explains it.
 | [`recv-busy`](backends.md) | Reads every socket every poll; `SO_BUSY_POLL` makes each read poll the NIC too. | The pick at 1–4 sockets. Each socket adds to every poll. |
 | [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Its NIC polling stops growing at the queue count. The one-CPU pick past 4 sockets. |
 | [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.9+ (NAPI). |
-| [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) | TCP on F-Stack (FreeBSD's stack on DPDK) on a NIC of its own; the polling thread runs the stack. | Kernel bypass, feature `fstack`. AWS: F-Stack TCP was pinned in the first sessions. Kernel TCP and WebSocket were pinned in the remeasure ([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)). |
-| [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk) | TCP and UDP on smoltcp, a stack in the process, over a DPDK port; the polling thread runs it. | Kernel bypass, feature `smoltcp-dpdk`, x86 and Graviton. UDP echo pinned on the first runs. TCP and WebSocket echoes were pinned in the remeasure. |
+| [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) | TCP on F-Stack (FreeBSD's stack on DPDK) on a NIC of its own; the polling thread runs the stack. | Kernel bypass, feature `fstack`. Measured on AWS `c7i` and `c8g` ([ergon-net](../transports/comparison.md#ergon-net-kernel-smoltcp-and-f-stack)). |
+| [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk) | TCP and UDP on smoltcp, a stack in the process, over a DPDK port; the polling thread runs it. | Kernel bypass, feature `smoltcp-dpdk`, x86 and Graviton. |
 | DPDK address | F-Stack: `fstack_addr`, `fstack_gateway`, and exactly one of `fstack_pci` and `fstack_vdev`. smoltcp: `ip`. | Not detected. DPDK takes the NIC from the kernel, so the kernel route lookup cannot fill these in afterwards. Name the data NIC before the bind. F-Stack's gateway is always required. smoltcp's gateway is optional when the peer is on the prefix (default /24). |
 | [`uring-sqpoll`](backends.md) | A kernel thread (SQPOLL) spins for the ring: submits, completes, polls the NIC. | Its kernel thread polls NIC queues, not sockets; the loop's own pass still grows with sockets ([cost per poll](backends.md#cost-per-poll)). Needs a second CPU or the loop's sibling. |
 | [crossover](backends.md#find-the-crossover-on-your-own-host) | The socket count where one backend stops beating another. | Depends on the NIC, its queue count, the interrupt path and the traffic: measure it on your host. |
@@ -67,7 +69,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | [HTTP/1.1 keep-alive](http-client.md#rules) | One connection reused for many requests. | No handshake per request. One request in flight per connection; a timed-out request closes its connection. |
 | [connection pool](http-client.md#many-connections) | The warm keep-alive connections an `HttpClient` keeps. | All busy: `Error::Busy`. Each one is one more socket the loop polls. |
 | [libcurl](http-client.md) | The common C HTTP library: `HttpImpl::Curl` (feature `curl`). | Pro: redirects, proxies, HTTP/2, compression. Con: slower than native at the median on the same interrupt path. |
-| [rate limit](rate-limits.md) | A venue's cap on requests, orders or connects per window: per IP, account, instrument or connection. | Break it: refused (429). Keep going: your IP is banned. Pacing is the application's: ergon-io has no rate limiter. |
+| [rate limit](rate-limits.md) | A venue's cap on requests, orders or connects per window: per IP, account, instrument or connection. | Break it: refused (429). Keep going: your IP is banned. Pacing is the application's: ergon-net has no rate limiter. |
 | [verdict](rate-limits.md#outcomes-and-http) | What became of a request: done, rejected, not run, throttled, banned, clock skew, unknown. | Only the "did not run" kinds may be sent again, inside their deadline. |
 | [`Sent::No`, `Sent::Maybe`](rate-limits.md#outcomes-and-http) | For a request with no answer: it never left, or it may have run. | Only the transport knows. `Maybe`: look the order up. |
 | [client order id](rate-limits.md#limits) | Your unique id on each order. | The only way to find out what became of an order with an unknown outcome. |
@@ -109,8 +111,8 @@ and why the native client stays HTTP/1.1), [Backends and configuration](backends
 
 ## Choosing a backend
 
-Whether ergon-io, Aeron or kernel bypass at all:
-[which transport when](../transports/choose.md). Within ergon-io:
+Whether ergon-net, Aeron or kernel bypass at all:
+[which transport when](../transports/choose.md). Within ergon-net:
 
 The backend is configuration: `Config::parse("recv-busy")`. Count every
 socket the loop thread polls: WebSocket feeds, order connections and every
@@ -128,8 +130,16 @@ fair run, Graviton
 (1–64 sockets, HTTP pool of 1 and 20),
 polling backends, x86
 (1–256 connections) and
-[ergon-io on DPDK](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)
+[ergon-net on DPDK](../transports/comparison.md#ergon-net-kernel-smoltcp-and-f-stack)
 (1 and 8 connections).
+
+To apply this table to the host itself, run
+[`ergon-net-advise`](backends.md#the-advisor-ergon-net-advise) in the pod.
+It differs from the table where the host says so: `epoll-spin` when the
+loop does not spin, the NIC has no NAPI, the thread has several drivers or
+the NIC checks pass at 5-256 sockets, and `uring-sqpoll` only when `SQPOLL`
+has a CPU of its own
+([the differences in full](backends.md#the-advisor-ergon-net-advise)).
 
 **Does DPDK change the choice?** Only where the process may own a NIC; the
 kernel columns stand.
@@ -147,8 +157,8 @@ its own, the bypass backends were lower at p50 in every measured cell,
 but on one rep, to 8 connections, with worse tails under loss: treat them
 as a lab option, not the default. The measured production path with DPDK
 is Aeron on DPDK
-(samples/README.md#aws-k8s).
-ergon-io on DPDK has no Kubernetes overlay.
+(io/dpdk/examples/README.md#aws-k8s).
+ergon-net on DPDK has no Kubernetes overlay.
 
 - **Plain `recv-busy` reads every socket on every poll.** Its poll grows
   with sockets, so a message waits longer for its socket's turn. It leads
@@ -163,7 +173,7 @@ ergon-io on DPDK has no Kubernetes overlay.
   rose from 4 sockets.
 - **mio or tokio in place of `epoll-spin`** gains nothing on Linux: the
   same epoll wait and reads, level in the fair run and gated in CI
-  ([mio](backends.md#mio-measured-not-a-backend)). ergon-io's part is the
+  ([mio](backends.md#mio-measured-not-a-backend)). ergon-net's part is the
   protocol stack and the other backends.
 - **One physical core with two hyperthreads:** `uring-sqpoll` with the
   SQPOLL thread on the loop's sibling (the default in a `cpu: 2` x86 pod:
@@ -180,6 +190,14 @@ ergon-io on DPDK has no Kubernetes overlay.
 | `Driver::add(WsConn::connect(…)?)` | the caller's thread, which waits | tools, tests, start-up |
 | `Driver::connect(dial)` | the loop, a step per poll; the handshake makes one poll long | a loop that can take a long poll per connect |
 | `Driver::connect_background(dial)` | a helper thread on the helper CPUs (`connect_cpu`; in a pod: [Kubernetes](kubernetes.md)), not the polling CPU when it is known | reconnects on a live loop |
+| `Driver::connect_recipe(id)` | the same helper, which also builds the dial from a recipe registered once (`Driver::add_recipe`) | reconnects that allocate nothing on the loop: one fixed-size message per connect; `Driver::rewrite` points later dials at a new host and value (a token) |
+
+> **Never block inside the busy-spin loop.** `WsConn::connect` and the
+> dials' `connect_blocking` (`WsDial`, `FrameDial`, `HttpDial`) block the
+> calling thread for the whole TCP and TLS handshake. Called from the loop
+> (inside `Driver::poll`, or between polls), they stall every connection
+> on that pinned CPU. Use them before the loop starts; on a live loop use
+> `Driver::connect_background`.
 
 The loop's worst poll per connect, both ways:
 connection set-up.
@@ -227,7 +245,7 @@ connection set-up.
   layer owns the record cryptography that rustls would own after the
   handshake: post-handshake messages, key updates and the cipher's
   confidentiality limit. On the malformed records in
-  `ergon-io/tests/tls_records.rs` it terminates as stock rustls does, with
+  `io/net/tests/tls_records.rs` it terminates as stock rustls does, with
   the same alert wherever rustls sends one; unlike
   rustls it does not cap consecutive `KeyUpdate`s or empty handshake
   records. Its effect on a whole request is **not measured**
@@ -287,7 +305,7 @@ allocates nor takes a page fault. Resident bytes at default options:
 - `io_uring` adds a 64 KiB send buffer per slot. It and the backend's
   other per-slot tables are sized when the driver reserves a slot (`add`,
   `connect`, `connect_background`), so adopting a finished dial inside
-  `poll` allocates nothing (`ergon-io/tests/reconnect_burst_alloc.rs`, every
+  `poll` allocates nothing (`io/net/tests/reconnect_burst_alloc.rs`, every
   kernel backend mode).
 
 ### TLS session tickets
@@ -330,7 +348,7 @@ allocates, so a `NewSessionTicket` is never stored on the record path:
 - rustls dates a ticket from when it is stored, not received, so a ticket
   held for a while looks younger to the client than it is. One held past
   its lifetime is refused by the server: a full handshake, nothing worse
-  (ergon-io sends no early data, the only use of the age). A ticket
+  (ergon-net sends no early data, the only use of the age). A ticket
   rustls refuses when stored (malformed) is counted in
   `tickets_dropped`; before, it closed the connection.
 - Pod spec: nothing to set; the 8 KiB is in the memory table above.
@@ -383,8 +401,8 @@ queue, capped idle states. Not measured here: route `quickack` and
 ## Verify
 
 ```sh
-cargo test -p ergon-io -- --test-threads=1
-cargo clippy -p ergon-io --all-targets -- -D warnings
+cargo test -p ergon-net -- --test-threads=1
+cargo clippy -p ergon-net --all-targets -- -D warnings
 ```
 
 ## Measured results
@@ -393,5 +411,5 @@ Every figure, with its max and its data file:
 the benchmark notes.
 WebSocket and HTTP round trips: [WebSocket](websocket.md#measured-results),
 [HTTP client](http-client.md#measured-results).
-UDP against TCP, and mio against ergon-io, beside Aeron:
+UDP against TCP, and mio against ergon-net, beside Aeron:
 [transport latency comparison](../transports/comparison.md).

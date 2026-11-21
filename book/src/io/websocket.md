@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:5f4abd6d6d92d761dc344f538fcff9e3e0c5bf42a24906e9cb49379c1118d8db -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:8353dd90ca40dbb8f3997c0cf10acd1cf4849d19b75d4e9e7b30e98362dda8d3 -->
 # WebSocket
 
 `WsConn` is a TLS 1.3 WebSocket client that a `Driver` owns (TLS 1.2 on a
@@ -24,9 +24,10 @@ Connect, subscribe, print each message, reconnect and subscribe again after
 a drop, then close cleanly:
 
 ```rust,ignore
-use ergon_io::reconnect::{Closed, LinkId, LinkState, Retry};
-use ergon_io::{
-    ConnId, ConnMut, Driver, Error, Handler, Reconnect, Result, RxMeta, WsConn, WsDial, WsHandler,
+use ergon_net::reconnect::{Closed, LinkId, LinkState, Retry};
+use ergon_net::{
+    ConnId, ConnMut, Driver, Error, Handler, RecipeId, Reconnect, Result, RxMeta, WsConn, WsDial,
+    WsHandler,
 };
 
 /// The default subscribe message: replace it with your service's.
@@ -35,7 +36,7 @@ pub const SUBSCRIBE: &str = r#"{"action":"subscribe","channel":"updates"}"#;
 /// The application: `Driver::poll` calls its handlers.
 pub struct App {
     /// Keeps the connection open: reopens it with backoff after a drop.
-    pub links: Reconnect<WsDial>,
+    pub links: Reconnect<RecipeId>,
     /// The one link (a connection that `links` keeps open).
     pub link: LinkId,
     /// Sent on every connect and reconnect (`SUBSCRIBE` unless changed).
@@ -55,31 +56,35 @@ pub struct App {
 ///
 /// # Errors
 /// The backend failed. A connection that fails goes to `on_closed` instead.
-pub fn run(config: ergon_io::Config, app: &mut App) -> Result<()> {
-    let mut driver: Driver<WsConn> = Driver::new(config)?;
+pub fn run(driver: &mut Driver<WsConn>, app: &mut App) -> Result<()> {
     while !app.finished() {
         driver.poll(app)?; // receive, decrypt, deliver, send
-        app.links.poll(&mut driver); // start a reconnect when one is due
-        app.subscribe_new(&mut driver)?;
+        app.links.poll(driver); // start a reconnect when one is due
+        app.subscribe_new(driver)?;
         if app.messages >= app.limit {
-            app.close(&mut driver)?;
+            app.close(driver)?;
         }
     }
     Ok(())
 }
 
 impl App {
-    /// `dial` builds a fresh connection set-up for each attempt.
+    /// Registers `dial` as a recipe on `driver`: the connect helper builds
+    /// the dial for each attempt, so a reconnect allocates nothing on the
+    /// loop.
     ///
     /// # Errors
-    /// `retry` is out of range.
+    /// `retry` is out of range, or the recipe could not be registered
+    /// (`Driver::add_recipe`).
     pub fn new(
+        driver: &mut Driver<WsConn>,
         retry: Retry,
-        dial: impl FnMut() -> Result<WsDial> + 'static,
+        dial: impl FnMut() -> Result<WsDial> + Send + 'static,
         limit: u64,
     ) -> Result<Self> {
+        let recipe = driver.add_recipe(dial)?;
         let mut links = Reconnect::new(retry)?;
-        let link = links.add(dial);
+        let link = links.add(move || Ok(recipe));
         Ok(Self {
             links,
             link,
@@ -157,7 +162,7 @@ impl WsHandler for App {
 
 #[cfg(feature = "webpki-roots")]
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ergon_io::{Config, Target, WsOptions, tls};
+    use ergon_net::{Config, Target, WsOptions, tls};
 
     let usage = "usage: websocket HOST PORT PATH [MESSAGES] [BACKEND]";
     let mut args = std::env::args().skip(1);
@@ -176,22 +181,23 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let tls = tls::client_config(tls::webpki_roots())?;
     let target = Target::new(host, port, path);
     let dial = move || WsDial::with_options(target.clone(), tls.clone(), WsOptions::default());
-    let mut app = App::new(Retry::default(), dial, limit)?;
-    run(config, &mut app)?;
+    let mut driver: Driver<WsConn> = Driver::new(config)?;
+    let mut app = App::new(&mut driver, Retry::default(), dial, limit)?;
+    run(&mut driver, &mut app)?;
     println!("{} messages, {} connection(s)", app.messages, app.opens);
     Ok(())
 }
 ```
-*(From `ergon-io/examples/websocket.rs`. `cargo test -p ergon-io` builds it, and
-`ergon-io/tests/example_websocket.rs` runs it against a local server on every
+*(From `io/net/examples/websocket.rs`. `cargo test -p ergon-net` builds it, and
+`io/net/tests/example_websocket.rs` runs it against a local server on every
 backend: a server close, the reconnect, the second subscribe and the clean
 close.)*
 
 Run it:
 
 ```sh
-cargo run -p ergon-io --features webpki-roots --example websocket -- HOST 443 /updates
-cargo run -p ergon-io --features webpki-roots --example websocket -- HOST 443 /updates 50 uring-sqpoll
+cargo run -p ergon-net --features webpki-roots --example websocket -- HOST 443 /updates
+cargo run -p ergon-net --features webpki-roots --example websocket -- HOST 443 /updates 50 uring-sqpoll
 ```
 
 - Arguments: your service's host, port and path; then, optionally, the
@@ -314,7 +320,7 @@ impl WsHandler for Trades {
     }
 }
 ```
-*(From `ergon-io/tests/ws_receive.rs`, which `cargo test -p ergon-io` runs on
+*(From `io/net/tests/ws_receive.rs`, which `cargo test -p ergon-net` runs on
 every platform; the test feeds it TLS records sealed with a real
 handshake's key.)*
 
@@ -372,7 +378,7 @@ impl WsHandler for FillReader {
     }
 }
 ```
-*(From `ergon-io/tests/ws_stream.rs`, run the same way.)*
+*(From `io/net/tests/ws_stream.rs`, run the same way.)*
 
 `Fragments`: `len()` (payload bytes), `count()` (slices), `iter()` /
 `for part in &m`, `get(i)`, `contiguous()` (`Some` with one slice), and
@@ -435,7 +441,7 @@ What a byte at or above 0x80 does:
 | `AsciiChecked(NonAscii::Close)` | closes the connection |
 | `Utf8` | invalid UTF-8 closes the connection (RFC 6455) |
 
-`Ascii` is a promise, not a check. `AsciiText` (`ergon_io::text`) is a
+`Ascii` is a promise, not a check. `AsciiText` (`ergon_net::text`) is a
 `Copy` view over the payload, built at no cost: `get`, indexing,
 `slice`, `find`, `position`, `starts_with` and `split_at` are byte
 operations, safe whatever the bytes are, and none allocates. Only
@@ -463,7 +469,7 @@ impl WsHandler for Prices {
     }
 }
 ```
-*(From `ergon-io/tests/ws_stream.rs`.)*
+*(From `io/net/tests/ws_stream.rs`.)*
 
 - On ASCII text `AsciiChecked` and `Utf8` cost the same (the same scan);
   on text with other characters `AsciiChecked` stays one scan while
@@ -483,7 +489,7 @@ impl WsHandler for Prices {
   message starts again at `index` 0, so a handler
   that sees index 0 while it holds a partial message discards it. Pinned
   by `a_streamed_non_ascii_fragment_ends_the_message_without_fin`
-  (`ergon-io/tests/ws_stream.rs`).
+  (`io/net/tests/ws_stream.rs`).
 - RFC 6455 §8.1 requires invalid UTF-8 to fail the connection. A skipped
   message is never read, so invalid text in it does not close the
   connection. This relaxation is deliberate.
@@ -514,13 +520,13 @@ macOS cannot pin the thread, and the host's 1-minute load average was
 - shape: `whole`: unfragmented, one window; `frag4`: four fragments per
   message; `split`: unfragmented, every message cut across two records at
   its middle, records at most 16 KiB.
-- old: `Interest::Keep` for every message: a fragmented message is copied,
+- `Keep` for all: `Interest::Keep` for every message: a fragmented message is copied,
   every text message is checked, a message the handler ignores is still
   copied and checked.
-- new: `Interest::Fragments` for kept messages, `Interest::Skip` for
+- `Fragments` / `Skip`: `Interest::Fragments` for kept messages, `Interest::Skip` for
   skipped ones.
 
-| message | shape | decision | old (`Keep`) | new (`Fragments` / `Skip`) |
+| message | shape | decision | `Keep` for all | `Fragments` / `Skip` |
 |---|---|---|---|---|
 | 100 B | whole | kept | 9.1 / 11.0 / 333.3 | 9.1 / 11.0 / 381.5 |
 | 100 B | whole | skipped | 8.4 / 9.1 / 201.1 | 3.9 / 4.5 / 103.5 |
@@ -638,12 +644,12 @@ p50 against 28.6 (`Fragments`) and 32.5 (`Stream`); at 300 B 26.0 against
 #### A frame cut across records
 
 Messages back to back, stand-in records of 16 KiB cut wherever they fall,
-so almost every record ends inside a frame. old: the new record is always
-moved back next to the leftover (`WsConn::set_span_back_only`, the join
-before this change); new: the smaller side moves
+so almost every record ends inside a frame. Back-only join: the new record
+is always moved back next to the leftover (`WsConn::set_span_back_only`);
+smaller-side join (the default): the smaller side moves
 (`ws_bench-span.md`):
 
-| message | old: new record moved back | new: smaller side moved | bytes moved per message, old / new |
+| message | back-only join | smaller-side join | bytes moved per message, back-only / smaller-side |
 |---|---|---|---|
 | 100 B | 7.4 / 16.1 / 153.4 | 5.6 / 8.0 / 143.6 | 95 / 0 |
 | 300 B | 11.6 / 12.8 / 204.2 | 9.7 / 10.8 / 71.9 | 285 / 3 |
@@ -713,16 +719,22 @@ and feed it every open and close.
   error, so it always retries.
 - `stop(link)` vetoes reconnects; `resume(link)` starts again.
 - `Driver::close` reports nothing: call `on_closed(id)` yourself after it.
+- A link's factory builds a dial on the loop for each attempt. To keep
+  reconnects off the loop's allocator, register the dial as a recipe and
+  hand `Reconnect` its id: `let id = driver.add_recipe(move ||
+  WsDial::new(..))?; links.add(move || Ok(id));`. The helper builds each
+  dial; the link connects where its recipe was registered, whatever
+  `background` says.
 - `poll` starts due attempts. It costs one branch while nothing waits.
 
 ### Connect limits and the server's wait
 
 Services may limit connect attempts per IP. One gate, the application's
-pacing, serves every link on that IP. ergon-io has no rate limiter; the
+pacing, serves every link on that IP. ergon-net has no rate limiter; the
 test's pacer is a few lines:
 
 ```rust,ignore
-/// The application's connect pacing (ergon-io has none): at most `limit`
+/// The application's connect pacing (ergon-net has none): at most `limit`
 /// starts in any `window_ns`, a hold until a time (a 429's wait), and a
 /// halt that only `clear` ends (a ban).
 struct Pace {
@@ -784,7 +796,7 @@ impl Pace {
         // Ok(()): connect now; Err(wait_ns): ask again after the wait.
         let started = links.poll_at_gated(&mut f, now, || pace.try_start(now));
 ```
-*(From `ergon-io/tests/reconnect.rs`, which `cargo test -p ergon-io` runs on
+*(From `io/net/tests/reconnect.rs`, which `cargo test -p ergon-net` runs on
 every platform, with a stand-in connector and a fake clock.)*
 
 - `poll_gated(driver, gate)` starts an attempt only when the gate passes
@@ -829,7 +841,7 @@ per IP, pace each IP on its own and let the gate pick one per connect. The
 test's pick, round-robin over one `Pace` per IP:
 
 ```rust,ignore
-/// The application's pick (ergon-io has none): each IP with its own
+/// The application's pick (ergon-net has none): each IP with its own
 /// [`Pace`], tried round-robin from after the last pick; none has room:
 /// the soonest wait.
 struct SourcePick {
@@ -863,7 +875,7 @@ impl SourcePick {
     let now = 0;
     let started = rc.poll_at_sourced(&mut f, now, || pick.try_pick(now));
 ```
-*(From `ergon-io/tests/reconnect.rs`.)*
+*(From `io/net/tests/reconnect.rs`.)*
 
 | what | how |
 |---|---|
@@ -908,15 +920,15 @@ What a send costs before the kernel:
   low.
 
 `ws_bench --suite tx`: one masked frame per message, built alone
-(`build`) and inside a sealed record (`sealed`, AES-GCM in place). old:
-zeroed resize, copy, then XOR (`ws::encode_frame`), the path before this
-change; new: `ws::push_frame`. Both build the same bytes, checked before
-timing; `ergon-io/tests/ws_send.rs` checks `WsConn`'s output against the old
-encoder for every length from 1 to 16 KiB and over several records. ns per
+(`build`) and inside a sealed record (`sealed`, AES-GCM in place):
+`ws::encode_frame` (zeroed resize, copy, then XOR) against `ws::push_frame`,
+which `WsConn` sends with. Both build the same bytes, checked before
+timing; `io/net/tests/ws_send.rs` checks `WsConn`'s output against
+`ws::encode_frame` for every length from 1 to 16 KiB and over several records. ns per
 message, p50 / p99 / max, same host and run as above
 (`ws_bench-tx.md`):
 
-| message | stage | old | new |
+| message | stage | `encode_frame` | `push_frame` |
 |---|---|---|---|
 | 100 B | build | 14.3 / 16.9 / 324.3 | 13.6 / 15.6 / 199.2 |
 | 100 B | sealed | 130.8 / 213.5 / 18009.5 | 131.5 / 186.1 / 10988.7 |

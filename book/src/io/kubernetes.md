@@ -1,7 +1,7 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:b6b5a4840292c6a90efd22d94c962242680a81b03a8ea9d2acd1f54920dacb9c -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:a47fe34b8fec91fbd7132a6b973287d50735e3eb68dbfdea850bedc45aeb69e6 -->
 # Kubernetes
 
-Where ergon-io's helper threads run inside a pod. On a host they run on
+Where ergon-net's helper threads run inside a pod. On a host they run on
 the housekeeping CPUs. In a pod there are none. This page says what to
 do instead, for every pod size.
 
@@ -73,7 +73,7 @@ until there is work. One warning line at start says all this.
 /// (the TLS handshake on the loop, about 0.7 ms of CPU once per connect
 /// or reconnect). Never `uring-sqpoll` here: it is refused at
 /// `Driver::new`.
-fn one_cpu_pod() -> ergon_io::Result<Config> {
+fn one_cpu_pod() -> ergon_net::Result<Config> {
     Config::parse("recv-busy,inline_connect_fallback=true")
 }
 ```
@@ -98,7 +98,7 @@ warning thread take the other. Nothing to configure.
 /// physical core, its two hyperthreads. The loop takes one; `SQPOLL`, the
 /// dial helper and the warning thread take the other (the loop's SMT
 /// sibling). Nothing to configure.
-fn x86_two_cpu_pod() -> ergon_io::Result<Config> {
+fn x86_two_cpu_pod() -> ergon_net::Result<Config> {
     Config::parse("uring-sqpoll")
 }
 ```
@@ -138,7 +138,7 @@ helpers take the other. Nothing to configure.
 ```rust,ignore
 /// Graviton (no SMT), `cpu: 2`: two cores. The loop takes one; the
 /// helpers take the other. Nothing to configure.
-fn graviton_two_cpu_pod() -> ergon_io::Result<Config> {
+fn graviton_two_cpu_pod() -> ergon_net::Result<Config> {
     Config::parse("recv-busy")
 }
 ```
@@ -155,7 +155,7 @@ CPUs in `Config::helper_cpus`, or let the mechanism set
 /// Shared CPUs a node-level mechanism added to the pod's cpuset: name
 /// them for the helper threads. A CPU outside the process's CPUs is
 /// refused (`Error::Cpu`), never used.
-fn shared_cpu_pod() -> ergon_io::Result<Config> {
+fn shared_cpu_pod() -> ergon_net::Result<Config> {
     Config::parse("recv-busy,helper_cpus=3-4")
 }
 ```
@@ -204,7 +204,7 @@ fn pin_loop() -> R {
         .iter()
         .next()
         .ok_or_else(|| format!("no CPU to pin to: {source}"))?;
-    ergon_io::clock::pin_current_thread(usize::try_from(cpu)?)?;
+    ergon_net::clock::pin_current_thread(usize::try_from(cpu)?)?;
     Ok(())
 }
 ```

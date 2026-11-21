@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:e67c3214f86326e6329974f0e01f4d5e4416a1791131711255b56af3f33b80a4 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:4d78b8e2172a357237eadbeab9265edc3f5659bbb1191b21d1292a8ccd72be49 -->
 # Aeron with many streams
 
 **Use a small number of Aeron streams: up to 8 per media driver, and 4 when
@@ -18,7 +18,8 @@ cost one key read and a branch per message.
 
 ## What the stream count costs
 
-Measured with rusteron's `many_streams` bench on a 6-core desktop x86
+Measured with a rusteron bench (`rusteron-client/benches/many_streams.rs`,
+on rusteron's `feat/readiness` branch, not on its `main`) on a 6-core desktop x86
 (i5-8500T, Linux 7.2, no isolated CPUs). The traffic was 10,000 msg/s in
 total of 32-byte messages, ping-pong in one process, with the driver's
 threads pinned. Read the shape and the ratios, not the absolute latencies:

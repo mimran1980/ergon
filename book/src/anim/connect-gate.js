@@ -1,24 +1,24 @@
-// Generated file: edits here are overwritten by the next export. sha256:15df979bb3a817e32b57e4dc0073620e4e82b510ce3ea6f53f87250ff9b9acb8
-// Pacing with gates and verdicts: what ergon-io reports, and what it asks.
+// Generated file: edits here are overwritten by the next export. sha256:2679ecc2cec76e9adb60d993526a22d001e9744f406c38b0c64edfc28e01f998
+// Pacing with gates and verdicts: what ergon-net reports, and what it asks.
 // Sources: every state below comes from a port of this code, run in order.
-//   ergon-io/src/outcome.rs:36-43    Sent: No (record never wholly with the kernel), Maybe
-//   ergon-io/src/outcome.rs:48-75    Verdict; Throttled { retry_after_ms }
-//   ergon-io/src/outcome.rs:81-97    from_sent (No -> NotRun, Maybe -> Unknown), may_resend
-//   ergon-io/src/outcome.rs:181-191  generic: 429 -> Throttled with Retry-After
-//   ergon-io/src/outcome.rs:209-228  refused_upgrade: a refused handshake's 429
-//   ergon-io/src/client.rs:645-656   Sent::No only when first_unsent <= the request
-//   ergon-io/src/reconnect.rs:29-30  cost: one branch while nothing waits
-//   ergon-io/src/reconnect.rs:66-77  Retry::default (250 ms, x2, 30 s, jitter 0.2)
-//   ergon-io/src/reconnect.rs:111-116  delay_ms
-//   ergon-io/src/reconnect.rs:327-335  on_open_at: reconnect = was open before
-//   ergon-io/src/reconnect.rs:346-358  on_closed_at -> schedule
-//   ergon-io/src/reconnect.rs:539-572  run: a gate's Err(wait_ns) keeps the attempt count;
+//   io/net/src/outcome.rs:36-43    Sent: No (record never wholly with the kernel), Maybe
+//   io/net/src/outcome.rs:48-75    Verdict; Throttled { retry_after_ms }
+//   io/net/src/outcome.rs:81-97    from_sent (No -> NotRun, Maybe -> Unknown), may_resend
+//   io/net/src/outcome.rs:181-191  generic: 429 -> Throttled with Retry-After
+//   io/net/src/outcome.rs:209-228  refused_upgrade: a refused handshake's 429
+//   io/net/src/client.rs:645-656   Sent::No only when first_unsent <= the request
+//   io/net/src/reconnect.rs:29-30  cost: one branch while nothing waits
+//   io/net/src/reconnect.rs:66-77  Retry::default (250 ms, x2, 30 s, jitter 0.2)
+//   io/net/src/reconnect.rs:111-116  delay_ms
+//   io/net/src/reconnect.rs:327-335  on_open_at: reconnect = was open before
+//   io/net/src/reconnect.rs:346-358  on_closed_at -> schedule
+//   io/net/src/reconnect.rs:539-572  run: a gate's Err(wait_ns) keeps the attempt count;
 //                                      :547, :570 a pass starts after the last link the gate passed
-//   ergon-io/src/reconnect.rs:619-631  defer_at: not_before
-//   ergon-io/src/reconnect.rs:634-662  schedule: attempt + 1, at = max(backoff, not_before)
-//   ergon-io/tests/reconnect.rs:417-466  Pace, the test's pacer (the application's)
-//   ergon-io/tests/reconnect.rs:690-704  a refused handshake holds the gate and defers the link
-// Text: book/src/ergon-io/rate-limits.md:3-22 and :71-75 (Limits).
+//   io/net/src/reconnect.rs:619-631  defer_at: not_before
+//   io/net/src/reconnect.rs:634-662  schedule: attempt + 1, at = max(backoff, not_before)
+//   io/net/tests/reconnect.rs:417-466  Pace, the test's pacer (the application's)
+//   io/net/tests/reconnect.rs:690-704  a refused handshake holds the gate and defers the link
+// Text: book/src/io/net/rate-limits.md:3-22 and :71-75 (Limits).
 // Illustrative: the times, the 3-per-second gate, the jitter draw 0.5, the
 // Retry-After of 2 s and request 1's 3 of 8 parts. The page records no latency for any of this.
 (() => {
@@ -174,8 +174,8 @@
     const add = (s) => steps.push(Object.assign({ reqs: snap(reqs) }, s));
 
     add({
-      part: 1, op: 'ergon-io has no rate limiter', math: 'it reports what happened; your pacer decides when to send',
-      caption: 'Three parties: your application (its pacer included), ergon-io, and the server. ergon-io never counts a venue’s budget: it hands back two facts per request, Sent and Verdict, and asks your gate before every connect.',
+      part: 1, op: 'ergon-net has no rate limiter', math: 'it reports what happened; your pacer decides when to send',
+      caption: 'Three parties: your application (its pacer included), ergon-net, and the server. ergon-net never counts a venue’s budget: it hands back two facts per request, Sent and Verdict, and asks your gate before every connect.',
       arrows: [], changed: [],
     });
 
@@ -185,7 +185,7 @@
       part: 1, op: 'on_error(1, Sent::No, err)', math: 'first_unsent <= request 1  =>  Sent::No  =>  Verdict::NotRun',
       caption: 'Request 1 is one TLS record. Only 3 of its 8 parts (illustrative) were with the kernel when the connection dropped. The server cannot decrypt part of a record, so it cannot have run: Sent::No, NotRun, safe to send again inside its deadline.',
       arrows: [['app', 'io', 'request 1', 'send #1'], ['io', 'srv', '3/8 of the record, then drop', '3/8 of record, drop', 'cut'], ['io', 'app', 'on_error(1, Sent::No, err)', 'on_error(Sent::No)', 'ok']],
-      changed: ['r1'], cost: 'ergon-io: one comparison of the request with first_unsent',
+      changed: ['r1'], cost: 'ergon-net: one comparison of the request with first_unsent',
     });
 
     reqs.push({ id: 2, parts: 8, sent: 'Maybe', verdict: fromSent('Maybe') });
@@ -193,7 +193,7 @@
       part: 1, op: 'on_error(2, Sent::Maybe, err)', math: 'the whole record was with the kernel  =>  Sent::Maybe  =>  Verdict::Unknown',
       caption: 'Request 2’s whole record was with the kernel before the connection was lost, with no response. It may have run: Sent::Maybe, Unknown. may_resend() is false: look the order up by its client order id; never send an order again blindly.',
       arrows: [['app', 'io', 'request 2', 'send #2'], ['io', 'srv', 'whole record, then silence', 'whole record, silence', 'cut'], ['io', 'app', 'on_error(2, Sent::Maybe, err)', 'on_error(Sent::Maybe)', 'maybe']],
-      changed: ['r2'], cost: 'ergon-io: same comparison; nothing re-sent for you',
+      changed: ['r2'], cost: 'ergon-net: same comparison; nothing re-sent for you',
     });
 
     reqs.push({ id: 3, parts: 8, status: 429, verdict: 'Throttled { Some(2000) }' });
@@ -201,7 +201,7 @@
       part: 1, op: 'outcome::generic(resp, now) on a 429', math: '429 + "Retry-After: 2"  =>  Throttled { retry_after_ms: Some(2000) }',
       caption: 'Request 3 is answered 429 with Retry-After: 2. generic turns it into Throttled { retry_after_ms: Some(2000) }. Your pacer holds that scope 2,000 ms and re-sends after. No Retry-After gives None (use your own backoff); a malformed one is Error::Http, still a 429.',
       arrows: [['app', 'io', 'request 3', 'send #3'], ['srv', 'io', '429, Retry-After: 2', '429, Retry-After: 2', 'wait'], ['io', 'app', 'Throttled { Some(2000) }', 'Throttled{Some(2000)}', 'wait']],
-      changed: ['r3'], cost: 'ergon-io: status match + Retry-After parsed with no allocation',
+      changed: ['r3'], cost: 'ergon-net: status match + Retry-After parsed with no allocation',
     });
 
     // Part 2: two links on one IP share one pacer (the application's gate).
@@ -236,7 +236,7 @@
       math: `backoff ${sa.backoff} ms (jitter draw ${R}, illustrative); at = max(80 + ${sa.backoff}, not_before) = ${fmt(A.at)}`,
       caption: `The refused handshake was a real attempt, so it counts: attempt ${sa.attempt}. Its backoff is only ${sa.backoff} ms, but not_before wins: A waits until ${fmt(A.at)} ms, the server’s wait, whatever the backoff says.`,
       arrows: [['io', 'app', `Closed::Retry { attempt ${sa.attempt}, ${fmt(sa.delay)} ms }`, `Retry{attempt ${sa.attempt}, ${fmt(sa.delay)} ms}`]],
-      changed: ['A-st'], ghostA: 80 + sa.backoff, cost: 'ergon-io: one jitter draw, delay_ms, then max(backoff, not_before)',
+      changed: ['A-st'], ghostA: 80 + sa.backoff, cost: 'ergon-net: one jitter draw, delay_ms, then max(backoff, not_before)',
     });
 
     const sb = schedule(B, 400);
@@ -253,7 +253,7 @@
       t: 625, op: `gate()  =>  Err(${fmt(r1[0].err)} ms)`, math: `B due: the gate refuses; at = 625 + ${fmt(r1[0].err)} = ${fmt(B.at)}; attempt stays ${B.attempts}`,
       caption: `B is due, so poll_gated asks your gate. The IP is held: Err(wait_ns), ${fmt(r1[0].err)} ms. A gate refusal is not a failed attempt (unlike A’s refused handshake): B keeps attempt ${B.attempts} and max_attempts does not count it. Had it counted, B’s next backoff would double to ${delayMs(2)} ms, then ${delayMs(3)}.`,
       arrows: [['io', 'app', 'gate()', 'gate()'], ['app', 'io', `Err(${fmt(r1[0].err)} ms)`, `Err(${fmt(r1[0].err)} ms)`, 'wait']],
-      changed: ['B-st'], ghost: true, cost: 'ergon-io: the gate is asked once, for the one due link',
+      changed: ['B-st'], ghost: true, cost: 'ergon-net: the gate is asked once, for the one due link',
     });
 
     const r2 = poll(rc, p, 2080);
@@ -282,7 +282,7 @@
   }
 
   const LANES = { app: 0, io: 1, srv: 2 };
-  const LANE_NAMES = [['your application (pacer)', 'your app'], ['ergon-io', 'ergon-io'], ['server', 'server']];
+  const LANE_NAMES = [['your application (pacer)', 'your app'], ['ergon-net', 'ergon-net'], ['server', 'server']];
 
   function layout(narrow) {
     if (narrow) return { W: 360, H: 670, lane: [60, 180, 300], headW: 108, laneY: 72, arrowY: [112, 146, 180], low: 222, small: true };
@@ -339,7 +339,7 @@
   function drawRequests(svg, put, L, st) {
     const changed = new Set(st.changed);
     const y0 = L.low;
-    put(svg, 'rq-h', 'text', { x: 16, y: y0, cls: 'ea-small', text: L.small ? 'each request: its record, then Sent and Verdict' : 'each request is one TLS record: parts with the kernel, then what ergon-io reports' });
+    put(svg, 'rq-h', 'text', { x: 16, y: y0, cls: 'ea-small', text: L.small ? 'each request: its record, then Sent and Verdict' : 'each request is one TLS record: parts with the kernel, then what ergon-net reports' });
     const rowH = L.small ? 66 : 52;
     for (let i = 0; i < 3; i += 1) {
       const r = st.reqs[i];
@@ -467,17 +467,17 @@
       put(g, 'h', 'text', { x: 14, y: 20, cls: 'ea-title', text: title });
       lines.forEach((t, k) => put(g, `l${k}`, 'text', { x: 14, y: 40 + k * 15, cls: L.small ? 'ea-tiny' : 'ea-small', text: t }));
     };
-    put(svg, 'tk-t', 'text', { x: 16, y: 24, cls: 'ea-title', text: 'Pacing: ergon-io reports, you decide' });
+    put(svg, 'tk-t', 'text', { x: 16, y: 24, cls: 'ea-title', text: 'Pacing: ergon-net reports, you decide' });
     col('tk-w', 'Why it wins here', wins, 16, 40, 'ea-c');
     col('tk-l', 'When it loses', loses, L.small ? 16 : 24 + (L.W - 40) / 2, L.small ? 40 + 30 + wins.length * 15 + 12 : 40, 'ea-d');
     // B's backoff after its next real failure, from the port above.
     const y = L.small ? 40 + 2 * (30 + 7 * 15) + 40 : 40 + 30 + 7 * 15 + 40;
     put(svg, 'tk-b', 'text', { x: 16, y, cls: 'ea-title', text: L.small ? 'B’s backoff after its next failure' : 'B’s backoff after its next real failure (jitter draw 0.5, illustrative)' });
-    const bars = [['ergon-io: gate refusal not counted', 2, 'ea-c'], ['if gate refusals counted', 3, 'ea-d']];
+    const bars = [['ergon-net: gate refusal not counted', 2, 'ea-c'], ['if gate refusals counted', 3, 'ea-d']];
     const scale = (L.small ? 150 : 300) / delayMs(3);
     bars.forEach(([label, attempt, cls], n) => {
       const g = put(svg, `tk-bar${n}`, 'g', { at: [16, y + 16 + n * (L.small ? 40 : 30)] });
-      put(g, 'l', 'text', { x: 0, y: 12, cls: 'ea-small', text: L.small ? label.replace('ergon-io: ', '') : label });
+      put(g, 'l', 'text', { x: 0, y: 12, cls: 'ea-small', text: L.small ? label.replace('ergon-net: ', '') : label });
       const bx = L.small ? 0 : 230;
       const by = L.small ? 16 : 0;
       put(g, 'r', 'rect', { x: bx, y: by, width: delayMs(attempt) * scale, height: 16, rx: 3, cls });

@@ -20,11 +20,11 @@ book/src/samples/l3-book.md:123 — deliberate; {{#include}} of the l3-book samp
 book/src/samples/l3-book.md:132 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:144 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:188 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
-book/src/sbe/configuration/conversion-vs-domain.md:77 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:89 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:95 — deliberate; see page context
-book/src/sbe/configuration/conversion-vs-domain.md:110 — deliberate; snippet references test-only helpers (generate_domain_with, path) not part of the public API
-book/src/sbe/configuration/conversion-vs-domain.md:114 — deliberate; snippet references generated codec types (OrderEncoder etc.) that don't exist in the book harness
+book/src/sbe/configuration/conversion-vs-domain.md:79 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:91 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:97 — deliberate; see page context
+book/src/sbe/configuration/conversion-vs-domain.md:112 — deliberate; snippet references test-only helpers (generate_domain_with, path) not part of the public API
+book/src/sbe/configuration/conversion-vs-domain.md:116 — deliberate; snippet references generated codec types (OrderEncoder etc.) that don't exist in the book harness
 book/src/sbe/configuration/feature-integrations.md:30 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:37 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:45 — deliberate; see page context
@@ -84,7 +84,7 @@ book/src/sbe/recipes/timestamps.md:158 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:182 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:244 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
-book/src/tune/overview.md:269 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune), a test file the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
-book/src/tune/overview.md:277 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
-book/src/tune/overview.md:327 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
+book/src/tune/overview.md:271 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune), a test file the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
+book/src/tune/overview.md:279 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
+book/src/tune/overview.md:329 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
 book/src/project/ai-assistance/what-did-not-work.md:39 — historical fabricated specification example, not executable library code; retained as disclosure evidence.

@@ -127,6 +127,10 @@ re-audited.
   substitute for that record. Dated plans and scratch task trees do not
   belong in the tree.
 - One page owns a fact; other pages link to it.
+- A book diagram (`book/src/diagrams/`) lists in `book/diagrams.tsv` every
+  source its facts were checked against. A change to a listed source fails
+  `scripts/check-book-diagrams.sh`: re-verify the diagram against the change,
+  then `--restamp` it.
 
 ## Versioning
 

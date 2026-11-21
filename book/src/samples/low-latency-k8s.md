@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:521d9f520ce66d7d62b942e67b638b65c647a8237d082e142940ee5abd052f20 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:d57869f75003462f1d2d4de44945d13cedd83dd6b6374bb8af0176bae6c64e8c -->
 # Low-latency Kubernetes
 
 This sample
@@ -10,13 +10,13 @@ thread ran. Its README section is the full guide.
 | part | what it is |
 |---|---|
 | `src/bin/ll-app.rs`, `src/pingpong.rs` | the app: one pinned Aeron thread (`ll-hot`), helpers on the shared CPUs, ergon-tune's K checks at start, a placement self-check, a latency report |
-| `src/bin/ll-probe.rs`, `verify.sh` | the verifier: every thread's CPU over a run |
+| `src/bin/ll-probe.rs`, `verify.sh` (in `scripts/`) | the verifier: every thread's CPU over a run |
 | `src/logging.rs` | `tracing` through a bounded, non-blocking queue: the hot thread never waits on stdout |
 | `docker/` | the image (app, DPDK media driver, entrypoint) and its CPU-level tags |
 | `k8s/base`, `k8s/components`, `k8s/overlays` | kustomize: kind (`vdev-local`), a Linux VM (`vdev-isolated`), EKS (`eks-ena-x86`, `eks-ena-arm64`) |
 | `helm/` | values for the [shared-CPU plugin](../deploy/shared-cpus.md) chart |
 | `node/` | node preparation: EKS user data, kind config, a VM script, the quiet-CPU unit |
-| `tests/aeron_client_book.rs`, `tests/busy_loop_book.rs` | the code in [Aeron client](../transports/aeron-client.md) and a busy-spin loop that polls ergon-io and Aeron together |
+| `tests/aeron_client_book.rs`, `tests/busy_loop_book.rs` | the code in [Aeron client](../transports/aeron-client.md) and a busy-spin loop that polls ergon-net and Aeron together |
 
 What has run where (macOS, Docker on arm64 and amd64, a Docker DPDK
 end-to-end) and what has not (kind, a VM with `isolcpus`, EKS): the

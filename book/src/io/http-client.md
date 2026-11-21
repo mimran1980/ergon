@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:f97aca48f163d040ea2649c59b063804807e5dfd30c2a3551f71eee443036ebf -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:825715984ce01d1c03e40e989a3de88138e85b619b7c5e3a3c33ab81ce419c67 -->
 # HTTP client
 
 `HttpClient` keeps a pool of warm HTTP/1.1 connections behind one API. The
@@ -6,7 +6,7 @@ implementation is configuration:
 
 | `HttpImpl` | What it is | Use it when |
 |---|---|---|
-| `Native` (default) | ergon-io's own client on a `Driver`: each request is one TLS record, each response is parsed in place | latency matters: on the same interrupt-driven path (`epoll-spin`), faster at the median than the source-built libcurl ([measured results](#measured-results)) |
+| `Native` (default) | ergon-net's own client on a `Driver`: each request is one TLS record, each response is parsed in place | latency matters: on the same interrupt-driven path (`epoll-spin`), faster at the median than the source-built libcurl ([measured results](#measured-results)) |
 | `Curl` (feature `curl`) | libcurl, linked in-process, driven without blocking | the endpoint needs redirects, proxies, HTTP/2 (opt-in, `curl_http2_streams`: [HTTP/2](http2.md)), other auth schemes or compression |
 
 - Same code for both: switching is a configuration change.
@@ -103,7 +103,7 @@ The method is a `Method`: `Get`, `Head`, `Post`, `Put`, `Delete`,
 (checked when the request is built; a space or separator is
 `Error::Http`). `Post`, `Put` and `Patch` always send `Content-Length`.
 
-*(From `ergon-io/tests/client.rs`. `cargo test -p ergon-io` runs `get` through
+*(From `io/net/tests/client.rs`. `cargo test -p ergon-net` runs `get` through
 the native client against a local TLS server on Linux; with
 `--features curl`, through libcurl too. `lab` is that server: in your code
 use `Target::new("api.example.com", 443, "")` and
@@ -130,7 +130,7 @@ use `Target::new("api.example.com", 443, "")` and
   (`Error::CurlResend`) unless `curl_allow_non_idempotent_methods` is
   set. Why: libcurl sends a request again, up to 5 times, when the reused
   connection it went out on dies before any reply byte, so an order could
-  be placed twice (`ergon-io/tests/client.rs` shows it happening). The native
+  be placed twice (`io/net/tests/client.rs` shows it happening). The native
   client never re-sends: send orders through it.
 - **Connections open in the background** (`background_connect`, on by
   default): the handshake runs off the loop, unless the driver's
@@ -140,6 +140,15 @@ use `Target::new("api.example.com", 443, "")` and
   delay of up to 100 ms (the limit doubles per failed connect, up to 5 s),
   so connections that drop together do not reconnect together.
   `reconnect_seed` fixes the delays (tests).
+- **Connection max age** (native only, `max_conn_age_ms`, 0 = off): call
+  `rotate_aged` at idle. A connection that old is replaced make-before-break:
+  a fresh one opens first, on the next poll and through the connect gate
+  like any reconnect (the pool holds `pool + 1` for a moment). Meanwhile
+  the old one takes no new request while another connection is open, and it
+  closes once the fresh one is open and it is idle. A connection with a
+  request in flight is never closed for age. No venue
+  documents a REST connection lifetime: this rotates edge nodes. libcurl
+  refuses it at `new`.
 - **A venue's connect limit** (native only): with `connect_gate`, `new`
   opens nothing and every connect waits for the gate passed to
   `poll_gated`; `poll` then refuses. A refusal does not grow the backoff.
@@ -190,7 +199,7 @@ per-request headers, `Content-Length` and the body:
         body,
     )?;
 ```
-*(From `ergon-io/tests/http_request.rs`.)*
+*(From `io/net/tests/http_request.rs`.)*
 
 - The bytes on the wire equal `request`'s: the tests compare the
   ciphertext at every request size up to one TLS record.
@@ -218,7 +227,7 @@ per-request headers, `Content-Length` and the body:
   head and a 4 KiB body in two records).
 - The de-chunk buffer is allocated and written at connect, at `buf_size`
   minus two records: the first chunked or streamed response neither
-  allocates nor takes a page fault (`ergon-io/tests/http_alloc.rs` counts
+  allocates nor takes a page fault (`io/net/tests/http_alloc.rs` counts
   from the first request). Memory per connection:
   [overview](overview.md#memory-per-connection).
 - A session ticket arriving on a live connection is held in an 8 KiB
@@ -233,12 +242,13 @@ per-request headers, `Content-Length` and the body:
 - Counters: `HttpStats::chunk_copy_bytes`, `span_copy_bytes`,
   `compact_bytes`, `head_parses`.
 
-`http_bench` (in `ergon-io/benches`) times the previous path (commit a003bf60)
-and the current one interleaved on the same input, per response or
+`http_bench` (in `io/net/benches`) times a reference arm (`old`: the body
+de-chunked again on every record, and a request built line by line) against
+the shipped path, interleaved on the same input, per response or
 request, ns. Native macOS, M1 Pro, loaded host, no pinning
 (data):
 
-| Row | Previous p50 / p99 / max | Current p50 / p99 / max | De-chunk copy B, previous → current |
+| Row | `old` arm p50 / p99 / max | shipped p50 / p99 / max | De-chunk copy B, `old` → shipped |
 |---|---|---|---|
 | chunked 4 KiB (one chunk) | 173 / 202 / 1,410 | 122 / 138 / 1,499 | 4,096 → 0 |
 | chunked 64 KiB, 4 KiB chunks | 4,381 / 5,376 / 22,234 | 1,615 / 1,896 / 6,848 | 212,992 → 65,615 |
@@ -247,18 +257,18 @@ request, ns. Native macOS, M1 Pro, loaded host, no pinning
 | build, 3 headers | 113 / 125 / 440 | 72 / 81 / 404 | |
 | build, 20 headers | 527 / 694 / 2,027 | 326 / 425 / 1,592 | |
 
-- The chunked gains follow the copy counts: the previous path de-chunked
+- The chunked gains follow the copy counts: the `old` arm de-chunks
   the whole body again on every record (65 head parses for 1 MiB).
 - The build gain is mostly the faster header checks, which `request`
   shares; the template saves the line and fixed-header writes.
 - The split row's gain is the smaller-side join: the 73-byte head moves,
   not the 4 KiB body.
-- The maxes (up to 2.7 ms, the previous path's 1 MiB row) come from a host
+- The maxes (up to 2.7 ms, the `old` arm's 1 MiB row) come from a host
   running other builds; macOS cannot say whether the thread was preempted,
   so no cause is established.
 - In a Linux arm64 Docker VM on the same host, pinned, the order is the
   same; bulk copies run several times slower in that VM, so its absolute
-  figures are not comparable. Only the previous path's 1 MiB max was
+  figures are not comparable. Only the `old` arm's 1 MiB max was
   preempted; the other maxes show no context switch, and a host-side vCPU
   stall is invisible to the guest, so their cause is not established
   (data).
@@ -355,8 +365,7 @@ and plain `recv-busy` further behind.
   `Config::parse("recv-busy,per_queue=true")?`.
 
 Measure on two hosts with your target pool size, using a pool of one as
-the reference. The executable harness lives in the downstream stack.
-
+the reference.
 
 - On AWS, set the NIC on the node first (node-level):
   `ethtool -C <nic> adaptive-rx off rx-usecs 0`, with the NIC's interrupts

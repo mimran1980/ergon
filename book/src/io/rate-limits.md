@@ -1,11 +1,11 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:62d50e300d384555d687443724709dc42675b45be1c6097e716eafcf8d2c020b -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:8ef0fff8f7f4e8f912a6ac99a2e4851f2b70273668b8f932d82d946efffcba67 -->
 # Rate Limits and Errors
 
-ergon-io has no rate limiter. Pacing requests, orders and connects to a
+ergon-net has no rate limiter. Pacing requests, orders and connects to a
 venue's limits is the application's: only it knows the venue's scopes,
-costs and usage headers. ergon-io gives the pieces a pacer needs.
+costs and usage headers. ergon-net gives the pieces a pacer needs.
 
-## What ergon-io gives you
+## What ergon-net gives you
 
 | Piece | Contract |
 |---|---|

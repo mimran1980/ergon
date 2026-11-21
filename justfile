@@ -50,6 +50,7 @@ policy:
         'bash scripts/tests/test-book-content.sh' \
         'bash scripts/tests/test-generated-book.sh' \
         'bash scripts/tests/test-book-anim.sh' \
+        'bash scripts/tests/test-book-diagrams.sh' \
         'python3 -I scripts/tests/test-performance-page.py' \
         'bash scripts/tests/test-rerun-if-changed.sh' \
         'bash scripts/tests/test-aeron-version.sh' \
@@ -58,6 +59,7 @@ policy:
         'bash scripts/tests/test-fix-sbe-conformance-pin.sh' \
         'bash scripts/tests/test-no-secrets.sh' \
         './scripts/check-no-secrets.sh' \
+        './scripts/check-book-diagrams.sh' \
         './scripts/check-test-policy.sh' \
         './scripts/check-mutation-config.sh' \
         './scripts/check-stale-deny-ignores.sh' \
@@ -113,6 +115,7 @@ preflight:
         'bash scripts/tests/test-book-content.sh' \
         'bash scripts/tests/test-generated-book.sh' \
         'bash scripts/tests/test-book-anim.sh' \
+        'bash scripts/tests/test-book-diagrams.sh' \
         'python3 -I scripts/tests/test-performance-page.py' \
         'bash scripts/tests/test-rerun-if-changed.sh' \
         'bash scripts/tests/test-aeron-version.sh' \
@@ -127,6 +130,7 @@ preflight:
         './scripts/check-book-content.sh' \
         './scripts/check-generated-book.py' \
         './scripts/check-book-anim.py' \
+        './scripts/check-book-diagrams.sh' \
         'python3 -I scripts/generate-performance-page.py --check' \
         'bash scripts/tests/test-generated-public-api.sh && ./scripts/check-generated-public-api.sh' \
         'bash scripts/check-packaged-cluster-features.sh --list' \
@@ -219,6 +223,9 @@ _release-check-extras: check-coverage check-generated-rustdoc
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
     ./scripts/check-book-anim.py
+    # A diagram whose sources changed since it was verified blocks the
+    # release: re-verify it, update it, then restamp (verification.md).
+    ./scripts/check-book-diagrams.sh
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
     cargo publish -p ergon-tune --dry-run --allow-dirty

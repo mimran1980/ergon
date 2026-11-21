@@ -46,6 +46,8 @@ The client handles these documented transitions:
 | Payload too large | `ClusterError::PayloadTooLarge` |
 | Publication backpressure | Retryable `ClusterError::Publication` |
 
+{{#include ../diagrams/cluster-session.html}}
+
 ## What CI runs against a live cluster
 
 The harness (`cluster-test-harness/tests/`) runs in `ci.yml`

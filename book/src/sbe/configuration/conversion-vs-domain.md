@@ -62,6 +62,8 @@ scalars keep their wire type in a domain DTO even when a selector matches
 them. The flyweight still gets the converted accessor, but the owned struct
 stores `[u8; N]` / `Option<i64>`.
 
+{{#include ../../diagrams/conversion-selectors.html}}
+
 ### Option A: you choose the app type (`Cents`)
 
 ```rust,no_run

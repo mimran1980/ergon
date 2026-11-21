@@ -187,6 +187,8 @@ default, so leave `strict-cpu-reservation` off while using it.
 - A pod has a quota of its own too: the sum of its containers' limits. From
   inside a container, only `cpu.stat.local` shows it.
 
+{{#include ../diagrams/cpu-quota.html}}
+
 What the kubelet writes:
 
 | case | container `cpu.max` | pod `cpu.max` |

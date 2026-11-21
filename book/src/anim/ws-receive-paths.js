@@ -1,23 +1,23 @@
-// Generated file: edits here are overwritten by the next export. sha256:4473ad88c4bc8e7aa120d2787af27641ba556e31dd17bb7a275254e1a4eb1ae6
+// Generated file: edits here are overwritten by the next export. sha256:67569a060c064395b4d4897d5088fc32aab9edd4f9ef8b1029561fb6ba74c813
 // WebSocket receive: one fragmented message across reads, records and fragments.
 // Sources: every buffer state below comes from a port of this code, run in order.
-//   ergon-io/src/stream.rs:1-28     buffer layout: leftover plaintext | gap | ciphertext | free tail
-//   ergon-io/src/stream.rs:181-198  open_next: a complete record is decrypted in place
-//   ergon-io/src/stream.rs:209-231  place: adopt in place when the window is empty, else move the smaller side
-//   ergon-io/src/stream.rs:242-281  consume, hold, held_len, held, release
-//   ergon-io/src/stream.rs:286-320  compact: reset when empty; move only when the free tail is short
-//   ergon-io/src/tls.rs:43-53       record header 5 B, tag 16 B, MAX_RECORD
-//   ergon-io/src/tls.rs:543         complete_record_len: a part record waits for the next read
-//   ergon-io/src/ws.rs:146-219      parse_header: 2-byte header for payloads up to 125 B
-//   ergon-io/src/ws_conn.rs:807-911   parse_frames: stops when the next frame is not all in the window
-//   ergon-io/src/ws_conn.rs:914-955   first_fragment: Keep copies, Fragments holds, Stream hands over
-//   ergon-io/src/ws_conn.rs:960-1000  continuation: Part { start: held_len + header_len, len }
-//   ergon-io/src/ws_conn.rs:1005-1086 stream_fragment: on_fragment borrows the slice in the window
-//   ergon-io/src/ws_conn.rs:1090-1176 end_message: on_message(&frag) or on_fragments, then release
-//   ergon-io/src/ws_conn.rs:184, 1182-1195, 1973-1975  MAX_FRAGMENTS 32, spill, max_frame
-//   ergon-io/src/ws_conn.rs:606     frag: Vec::with_capacity(1 << 20), so Keep's copy allocates nothing here
-// (ergon-io/src/frame.rs is the length-prefixed TCP protocol, not this path.)
-// Figures: book/src/ergon-io/websocket.md:135-155 (what each case copies),
+//   io/net/src/stream.rs:1-28     buffer layout: leftover plaintext | gap | ciphertext | free tail
+//   io/net/src/stream.rs:181-198  open_next: a complete record is decrypted in place
+//   io/net/src/stream.rs:209-231  place: adopt in place when the window is empty, else move the smaller side
+//   io/net/src/stream.rs:242-281  consume, hold, held_len, held, release
+//   io/net/src/stream.rs:286-320  compact: reset when empty; move only when the free tail is short
+//   io/net/src/tls.rs:43-53       record header 5 B, tag 16 B, MAX_RECORD
+//   io/net/src/tls.rs:543         complete_record_len: a part record waits for the next read
+//   io/net/src/ws.rs:146-219      parse_header: 2-byte header for payloads up to 125 B
+//   io/net/src/ws_conn.rs:807-911   parse_frames: stops when the next frame is not all in the window
+//   io/net/src/ws_conn.rs:914-955   first_fragment: Keep copies, Fragments holds, Stream hands over
+//   io/net/src/ws_conn.rs:960-1000  continuation: Part { start: held_len + header_len, len }
+//   io/net/src/ws_conn.rs:1005-1086 stream_fragment: on_fragment borrows the slice in the window
+//   io/net/src/ws_conn.rs:1090-1176 end_message: on_message(&frag) or on_fragments, then release
+//   io/net/src/ws_conn.rs:184, 1182-1195, 1973-1975  MAX_FRAGMENTS 32, spill, max_frame
+//   io/net/src/ws_conn.rs:606     frag: Vec::with_capacity(1 << 20), so Keep's copy allocates nothing here
+// (io/net/src/frame.rs is the length-prefixed TCP protocol, not this path.)
+// Figures: book/src/io/net/websocket.md:135-155 (what each case copies),
 // :334-350 (Keep, Fragments, Stream, four fragments) and :240-277 (TextCheck::Utf8 rows).
 // The frag rows' input: the WebSocket bench's ws_bench.rs:161-205, 917-950
 // (Frag4 is preloaded as plaintext, no records, so no frame is cut).

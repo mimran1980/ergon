@@ -185,6 +185,8 @@ caller should run.
 | a media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10, T22, T23; T24 on a DPDK transport; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset |
 | your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18, T21, T22; K1–K7 inside a pod; on a kernel NIC also T2, T20, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping |
 
+{{#include ../diagrams/host-checks.html}}
+
 Read `ERGON_HOST_CHECKS` through `HostCheckPolicy`: `on` (default), `off`
 (no warning line; the results stay) or `require` (a warning, or an unproven
 proof check, stops the start). Skip a check by not calling it.

@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:39c3199d3e0967e733d2f8e64323361463299baaa91d6756e920e1de5b3f2c4c -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:72de86abcc5b37836caef8c96110ed05ad13df0f7bb6b9ad4e5a2ff0ae44f0ad -->
 # HTTP/2
 
 All but one of the venue REST hosts probed offer HTTP/2. HTTP/2 does not make one request faster here. Its gain is fewer connections, not latency.
@@ -7,10 +7,9 @@ All but one of the venue REST hosts probed offer HTTP/2. HTTP/2 does not make on
 
 | use | protocol | why |
 |---|---|---|
-| Signed order REST (a REST order gateway, cancel-all, dead man) | native HTTP/1.1 (unchanged) | Lowest latency measured, one request per warm connection, never re-sent. HTTP/2 saves bytes only inside packets that already fit in one segment. |
+| Signed order REST (a REST order gateway, cancel-all, dead man) | native HTTP/1.1 | Lowest latency measured, one request per warm connection, never re-sent. HTTP/2 saves bytes only inside packets that already fit in one segment. |
 | Many REST calls at once (depth snapshots at start and after gaps, reconciliation bursts) | native HTTP/1.1 pool; libcurl HTTP/2 only if the pool's connection count is the problem | HTTP/2 puts N requests on one connection: one handshake, one socket for the loop, one entry against a connect limit. Each request is slower than on its own HTTP/1.1 connection (below). |
-| WebSocket order entry and market data | unchanged (HTTP/1.1 upgrade) | No venue offers WebSocket over HTTP/2 (RFC 8441). |
-| A native HTTP/2 client | not now | About 2,000–3,000 lines plus conformance fuzzing ([design and cost](#native-http2-design-and-cost-not-built)). Nothing here needs it. |
+| WebSocket order entry and market data | HTTP/1.1 upgrade | No venue offers WebSocket over HTTP/2 (RFC 8441). |
 
 libcurl's HTTP/2 is opt-in: `HttpClientConfig::curl_http2_streams` (default `0`, HTTP/1.1).
 
@@ -19,7 +18,7 @@ libcurl's HTTP/2 is opt-in: `HttpClientConfig::curl_http2_streams` (default `0`,
 
 ## What HTTP/2 would change
 
-| aspect | HTTP/1.1 today (`HttpConn`, `HttpClient`) | HTTP/2 | effect here |
+| aspect | HTTP/1.1 (`HttpConn`, `HttpClient`) | HTTP/2 | effect here |
 |---|---|---|---|
 | Requests in flight | One per connection (pipelining off); a pool of warm connections | Many streams on one connection | Fewer connections and handshakes. Not faster per request. |
 | Head-of-line blocking | None at the HTTP level with a pool; a lost segment stalls one connection | None at the HTTP level; **a lost segment stalls every stream** (one TCP stream) | Worse under loss: a pool spreads it. |
@@ -32,7 +31,7 @@ libcurl's HTTP/2 is opt-in: `HttpClientConfig::curl_http2_streams` (default `0`,
 | Receive path cost | `httparse` over ASCII, body a slice of the receive buffer | Frame demux, HPACK (Huffman) decode, per-stream buffers | More work per response on the hot path. |
 | Memory | A receive buffer per connection | HPACK tables (4 KiB each way by default), stream table, per-stream buffers | Fixed sizes; can be allocated once. |
 
-## libcurl: what changed
+## libcurl HTTP/2
 
 `HttpImpl::Curl` keeps HTTP/1.1 unless `curl_http2_streams > 0`.
 
@@ -42,15 +41,15 @@ libcurl's HTTP/2 is opt-in: `HttpClientConfig::curl_http2_streams` (default `0`,
 | `CURLOPT_PIPEWAIT` | off | on: concurrent requests wait for the first connection's ALPN instead of opening more |
 | Multi handle | `MAX_HOST_CONNECTIONS = pool` | also `CURLMOPT_PIPELINING = MULTIPLEX` and `MAX_CONCURRENT_STREAMS = N` |
 | Requests in flight before `Error::Busy` | `pool` | `pool × N` (`idle()` follows) |
-| Status line | `HTTP/1.1 200 OK` | `HTTP/2 200`, which httparse refuses. The status now comes from libcurl (`CURLINFO_RESPONSE_CODE`) and httparse reads only the header lines, for both versions. Before this change every HTTP/2 response was an error. |
+| Status line | `HTTP/1.1 200 OK` | `HTTP/2 200`, which httparse refuses. The status comes from libcurl (`CURLINFO_RESPONSE_CODE`) and httparse reads only the header lines, for both versions. |
 | A libcurl without HTTP/2 (no nghttp2) | — | refused at `HttpClient::new` (`Error::Unsupported`), never a silent HTTP/1.1 |
 | Re-sends | `curl_allow_non_idempotent_methods` still guards POST, PUT and PATCH | unchanged |
 | A timed-out request the server got | `Sent::Maybe` | `Sent::Maybe` (tested) |
 | A server that answers HTTP/1.1 | — | `pool` at once; the rest wait inside libcurl, their timeouts running |
 
-The busy-spin loop does not change: `curl_multi_perform` (or `curl_multi_socket_action`) still drives every transfer, and completions are still matched to handles. A static libcurl build needs the `curl` crate's `http2` feature (`ergon-io/benches` turns it on for `h2_lat`). `h2_lat`'s `eio-curl-h1` and `eio-curl-h2` arms (Linux) run this code through `HttpClient`. Their smoke run in a Linux container checks correctness and connection counts; their latency waits for the AN1 run.
+The busy-spin loop is the same for both: `curl_multi_perform` (or `curl_multi_socket_action`) still drives every transfer, and completions are still matched to handles. A static libcurl build needs the `curl` crate's `http2` feature (`io/net/benches` turns it on for `h2_lat`). `h2_lat`'s `eio-curl-h1` and `eio-curl-h2` arms (Linux) run this code through `HttpClient`. Their smoke run in a Linux container checks correctness and connection counts. The Mac table below times `curl-h1` and `curl-h2`, which drive libcurl directly, not through `HttpClient`.
 
-Tests (`ergon-io/tests/curl_http2.rs`, Linux, feature `curl`, against an h2 + HTTP/1.1 server where ALPN picks):
+Tests (`io/net/tests/curl_http2.rs`, Linux, feature `curl`, against an h2 + HTTP/1.1 server where ALPN picks):
 
 | test | proves |
 |---|---|
@@ -62,9 +61,9 @@ Tests (`ergon-io/tests/curl_http2.rs`, Linux, feature `curl`, against an h2 + HT
 
 ## Measured (Mac, indicative)
 
-`h2_lat` (`ergon-io/benches`, feature `http2`). One hyper server on loopback (HTTP/1.1 and HTTP/2 by ALPN, rustls TLS 1.3, two worker threads) serves every arm. Each request has the shape of a signed order: a new timestamp and 64-hex-digit signature every time, plus `X-MBX-APIKEY`. Each cell runs 8 rounds, rotating which arm goes first, with fresh clients and 500 checked warm-up requests per round. Before timing, the server counts each arm's connections and their ALPN: N `http/1.1`, or one `h2`. The time is from handing a request to the client to its complete response, in µs, nearest rank over 40,000 pooled samples per arm.
+`h2_lat` (`io/net/benches`, feature `http2`). One hyper server on loopback (HTTP/1.1 and HTTP/2 by ALPN, rustls TLS 1.3, two worker threads) serves every arm. Each request has the shape of a signed order: a new timestamp and 64-hex-digit signature every time, plus `X-MBX-APIKEY`. Each cell runs 8 rounds, rotating which arm goes first, with fresh clients and 500 checked warm-up requests per round. Before timing, the server counts each arm's connections and their ALPN: N `http/1.1`, or one `h2`. The time is from handing a request to the client to its complete response, in µs, nearest rank over 40,000 pooled samples per arm.
 
-Apple M4, macOS 27.2, libcurl 8.23.0 (nghttp2 1.71.0, OpenSSL 4.1.0). ergon-io ran `epoll-spin` (kqueue on macOS) and offers only `http/1.1` by ALPN. The TLS stacks differ: ergon-io uses rustls, libcurl uses OpenSSL. Load average 3.0 to 2.7 over the run, other builds sharing the host. The macOS clock has 1 µs resolution. No tracing ran, so **every max is unexplained**. Data: `rows.md` (run C; runs A and B agree on every ordering of p50).
+Apple M4, macOS 27.2, libcurl 8.23.0 (nghttp2 1.71.0, OpenSSL 4.1.0). ergon-net ran `epoll-spin` (kqueue on macOS) and offers only `http/1.1` by ALPN. The TLS stacks differ: ergon-net uses rustls, libcurl uses OpenSSL. Load average 3.0 to 2.7 over the run, other builds sharing the host. The macOS clock has 1 µs resolution. No tracing ran, so **every max is unexplained**. Data: `rows.md` (run C; runs A and B agree on every ordering of p50).
 
 | arm | body | in flight | n | min | p50 | p99 | p99.99 | max | req/s |
 |---|---|---|---|---|---|---|---|---|---|
@@ -89,23 +88,8 @@ Apple M4, macOS 27.2, libcurl 8.23.0 (nghttp2 1.71.0, OpenSSL 4.1.0). ergon-io r
 
 - **libcurl HTTP/2 against libcurl HTTP/1.1:** p50 5–7 µs higher at 1 in flight, 14–79 µs higher at 4 and 16, and throughput 10–32 % lower in every cell.
 - **What the cells measure.** Every time includes the loopback server's work, and its HTTP/2 path (hyper's `h2`) differs from its HTTP/1.1 path. Only the 1-in-flight cells compare like with like, and even they include hyper's HTTP/2 framing. At 4 and 16 in flight the server drives the one HTTP/2 connection from one task, while N HTTP/1.1 connections spread over its two workers. Those cells therefore do not show that multiplexing loses to N connections at a venue edge. They show only that it did not win here.
-- **ergon-io HTTP/1.1** has the lowest min and p50 in every cell (p50 5–8 µs below libcurl HTTP/1.1 at 1 in flight).
+- **ergon-net HTTP/1.1** has the lowest min and p50 in every cell (p50 5–8 µs below libcurl HTTP/1.1 at 1 in flight).
 - Maxima: the ms-scale maxima (curl-h2 3,471 and 3,067; curl-h1 1,107) moved between arms across runs A to C. Unexplained, host load.
-
-## Native HTTP/2: design and cost (not built)
-
-If a venue ever needs it (for example a connect limit that a pool of HTTP/1.1 connections cannot meet):
-
-| part | design |
-|---|---|
-| Where | A second protocol on `HttpConn`'s TLS record path, picked by ALPN (`tls.rs` offers `http/1.1` only today). |
-| Setup | The preface, then SETTINGS: push off, a large initial window and connection window (no mid-snapshot WINDOW_UPDATE stall), and our stream limit. |
-| Streams | A fixed table of `N` slots (client stream ids are odd, so slot = `(id >> 1) % N`), each with a response buffer allocated at connect. A full table is `Error::Busy`, as now. |
-| HPACK out | The fixed headers are encoded once, indexed. The signed path is sent as a literal, never indexed (it never repeats). |
-| HPACK in | A 4 KiB dynamic table in a ring allocated once, and a table-driven Huffman decoder. Headers are delivered as slices, as `Response` does now. |
-| Control | SETTINGS ACK and PING answered inline (a few bytes). WINDOW_UPDATE batched once per poll. GOAWAY and RST_STREAM map to `Sent::No` for streams the server says never ran, and to `Sent::Maybe` otherwise. |
-| Hot path | No allocation after connect. The extra work is the frame header and HPACK decode per response. |
-| Cost | About 2,000–3,000 lines plus h2spec-style conformance and fuzz targets, and a bench gate against the HTTP/1.1 pool. |
 
 ## Kubernetes
 

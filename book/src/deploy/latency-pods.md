@@ -132,6 +132,8 @@ the new partition shares with an already-running pod has to be updated
 with the union of both reservations. The hook does that under a lock and
 reads every write back; a write that does not stick fails the create.
 
+{{#include ../diagrams/isolated-partition.html}}
+
 ### 3. io_uring
 
 `RuntimeDefault` blocks io_uring (containerd issue 9320). Aeron's C media

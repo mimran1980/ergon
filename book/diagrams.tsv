@@ -1,0 +1,31 @@
+# Book diagrams and the source files their facts were verified against, with each
+# source's git blob (`git hash-object`) at that verification.
+# scripts/check-book-diagrams.sh fails, naming the diagram, when a source changes:
+# re-verify the diagram against it, then run `scripts/check-book-diagrams.sh --restamp <diagram>`.
+# diagram	source	blob
+book/src/diagrams/cpu-quota.html	tune/src/quota.rs	d27850e02e1eb616a92c44647e5edd8c5b2eaa0e
+book/src/diagrams/cpu-quota.html	book/src/deploy/kubernetes.md	7b5a83900f8e3e2ed28f0c17a2786311ba7be5e0
+book/src/diagrams/host-checks.html	tune/src/report.rs	0155ceffb7e00d2be1bc520650bce068375f2d7a
+book/src/diagrams/host-checks.html	tune/src/bin/ergon-tune.rs	784883919ddc79c6679d926711cfb0f19aa13e09
+book/src/diagrams/host-checks.html	tune/src/k8s.rs	c1cdb79f8fdf2971cf3df10cfabb3075b6c6df2e
+book/src/diagrams/host-checks.html	tune/src/quota.rs	d27850e02e1eb616a92c44647e5edd8c5b2eaa0e
+book/src/diagrams/host-checks.html	tune/src/faults.rs	5e6f507ff92cc9eb326b6efaf377d3914ed30dc1
+book/src/diagrams/host-checks.html	tune/src/time/watch.rs	a74fd1701ee42c35b285d9164f2b4c117a7151e7
+book/src/diagrams/host-checks.html	tune/src/net.rs	1a3b2f1c67c9c0111233e729df147f8e62f18337
+book/src/diagrams/host-checks.html	tune/src/finding.rs	ca87d0ebce6f5ef4f53053e63931f32370366680
+book/src/diagrams/host-checks.html	book/src/tune/overview.md	8c3ecf6861e56ccbeb69255ea5df4bcb4e5d7c9e
+book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/cpuset/partition.go	239892bbace64a2ec614783dc596269608fb7dc4
+book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/hook/hook.go	4317ee8e3f7a4bce9ba698c344b5bc07ec660a76
+book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/nriplugin/admit.go	b189f26044448061f531826d0d59edb1b7fcb9ba
+book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/names/names.go	5ab4498376289222e5aa865b89659136a69171a6
+book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/test/cgroup/kernel_test.go	8f466eef78dd47eddc6f1e22764530bff8e8f32b
+book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/latency/latency.go	eeb24af8fbcd132e2442559dea3d8bb811fe40d7
+book/src/diagrams/cluster-session.html	cluster/src/client.rs	d5d8c4654c2d9635fae071dca0830dfadb08e768
+book/src/diagrams/cluster-session.html	cluster/src/protocol.rs	a1f60988e0572e6d3eb9bf1e42ac501806d5c5b5
+book/src/diagrams/cluster-session.html	cluster/src/state.rs	4c1f80f95a08c33e0c35129c72d28ebf25743493
+book/src/diagrams/cluster-session.html	cluster/src/config.rs	5c6f3045e9cfd9e9fbe65c57a0bb47b74fe7d5f7
+book/src/diagrams/conversion-selectors.html	sbe/src/config.rs	4a25281b56804c3ec362ce5c697a05445f7aaf49
+book/src/diagrams/conversion-selectors.html	sbe/src/codegen/conversion_helpers.rs	2bd2835c4f5bd8f04975f2aae6d44676950e6ca1
+book/src/diagrams/conversion-selectors.html	sbe/src/codegen/converter_impls.rs	2ac1bbfb3218374a7c6737d0781ed2102f7d270f
+book/src/diagrams/conversion-selectors.html	sbe/src/codegen/mod.rs	c8977b88baeace1d598ac16e584b7f692121ae91
+book/src/diagrams/conversion-selectors.html	book/examples/conversion-config.rs	ad41aadf229bb2acb10dfee4ba535894aedfb839

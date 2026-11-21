@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:b27d530c68210d7fd0b01cc933c1661e346890dc5603e6d8d8f4f086a545a0ce -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:6be8c67c8c47ee0c889d82900ea99e3f7e4505329a8d23521fad5145205d4677 -->
 # Request/response
 
 One server, N clients, each reply specific to its client. Two patterns:
@@ -8,21 +8,21 @@ One server, N clients, each reply specific to its client. Two patterns:
 
 Both patterns carry an application heartbeat. The focus is low volume and many connections. The arms compared:
 
-- ergon-io TCP, WebSocket and HTTP/1.1.
+- ergon-net TCP, WebSocket and HTTP/1.1.
 - An epoll baseline (mio).
 - Aeron response channels over UDP and over IPC.
 - Aeron spies.
 - Aeron dynamic multi-destination-cast (MDC).
 
-Bench: `rr_lat` in `ergon-io/benches` (`src/rr.rs`, `src/rr/*.rs`).
+Bench: `rr_lat` in `io/net/benches` (`src/rr.rs`, `src/rr/*.rs`).
 
-> **Not a latency verdict.** The same-host run is one 6-core desktop x86 box. The two-host run crossed Wi-Fi at both ends (ping 5 to 33 ms), so two-host p50 is 6.9 to 12.2 ms for every arm. Two-host tables show what fails and what it costs, not which arm is faster. The verdict needs two AWS hosts: DEFERRED, see [Reproduce](#reproduce).
+> **Not a latency verdict.** The same-host run is one 6-core desktop x86 box. The two-host run crossed Wi-Fi at both ends (ping 5 to 33 ms), so two-host p50 is 6.9 to 12.2 ms for every arm. Two-host tables show what fails and what it costs, not which arm is faster. A verdict needs two AWS hosts: see [Reproduce](#reproduce).
 
 ## Arms
 
 | arm | client → server | server → client | drivers |
 |---|---|---|---|
-| `tcp` | ergon-io `FrameConn` on a busy-spin `Driver`, one connection per client, u32 length frames | same connection | none |
+| `tcp` | ergon-net `FrameConn` on a busy-spin `Driver`, one connection per client, u32 length frames | same connection | none |
 | `tcp-mio` | the same framing on a mio loop (the loop baseline) | same connection | none |
 | `ws` | WebSocket binary frames, one connection per client | same connection | none |
 | `http` | HTTP/1.1 keep-alive, pipelined `POST`s; streams are one chunked response | same connection | none |
@@ -33,7 +33,7 @@ Bench: `rr_lat` in `ergon-io/benches` (`src/rr.rs`, `src/rr/*.rs`).
 | `aeron-mdc-shared` | as `aeron-mdc` | one dynamic MDC publication for all; each client process keeps its own clients' messages | one per side |
 | `aeron-mdc-spy` | `aeron:ipc` | `aeron-mdc-shared`'s publication through an untethered spy | one, plus a remote witness |
 
-- **The server side.** The `tcp`, `ws` and `http` servers are small busy-spin servers inside the bench. ergon-io itself is client-only.
+- **The server side.** The `tcp`, `ws` and `http` servers are small busy-spin servers inside the bench. ergon-net itself is client-only.
 - **The spy arms' witness.** A spy-only publication sends nothing on the network, so a witness process on a second driver subscribes to every reply stream. The sender then does the real sends.
 
 **Aeron 1.54 has no MDC response channel.** The source rules it out in three places:
@@ -414,7 +414,7 @@ Unary, x 10/s, same host (µs):
 
 ### Why `bus.same_host` stays off by default
 
-ergon-runtime's `bus.same_host` setting (`off`, `auto`, `force`) lets a subscriber read an MDC feed published on its own media driver through a spy instead of off the network. It defaults to `off`:
+ergon-core's `bus.same_host` setting (`off`, `auto`, `force`) lets a subscriber read an MDC feed published on its own media driver through a spy instead of off the network. It defaults to `off`:
 
 - **A spy that stops polling holds its publisher**, and with it every other subscriber and the recording, until the driver drops the spy. The runtime's own test measured the hold: 2.4 s on the test driver, about 4 s at most (demonstrated). Here the same hazard took a healthy client down (`aeron-mdc-spy` above).
 - **Read off the network, a stalled subscriber holds no one**: `aeron-mdc-shared`'s healthy reader stayed at p50 20.8 µs.
@@ -424,11 +424,11 @@ So a spy stays opt-in per feed (`auto` or `force`), for a reader that cannot sta
 
 ## Conclusion
 
-**Which arm wins.** Same host is measured. Across hosts no arm can be ranked from the Wi-Fi run, so the cross-host column is the expected choice on cost and scaling, pending AWS.
+**Which arm wins.** Same host is measured. Across hosts no arm can be ranked from the Wi-Fi run, so the cross-host column is the expected choice on cost and scaling.
 
 | arm | A: unary, same host | A: unary, across hosts | B: stream, same host | B: stream, across hosts |
 |---|---|---|---|---|
-| raw TCP (ergon-io framed) | best at 1000 clients and the best non-IPC arm from 100: p50 17.6 µs (100), 16.8 µs (1000), max 4,817 µs (preempted, correlated) | the expected choice: flat to 1000 clients, one thread a side, no driver, 85 ms setup | best at 1000: first item p50 22.9 µs, max 349 µs (server stall, correlated) | the expected choice |
+| raw TCP (ergon-net framed) | best at 1000 clients and the best non-IPC arm from 100: p50 17.6 µs (100), 16.8 µs (1000), max 4,817 µs (preempted, correlated) | the expected choice: flat to 1000 clients, one thread a side, no driver, 85 ms setup | best at 1000: first item p50 22.9 µs, max 349 µs (server stall, correlated) | the expected choice |
 | WebSocket | TCP plus 0.3 to 0.4 µs p50 and 3 bytes | when the peer needs WebSocket | p50 40.7 µs at 1000, 1.8x TCP | when the peer needs it |
 | HTTP/1.1 | no: in-order replies, so one held reply expires every later one (demonstrated) | no, for the same reason | p50 50.1 µs at 1000 | no |
 | Aeron response channels (UDP) | best UDP arm at 1 client (p50 18.0 µs, max 58.8 µs) but 33.6 µs at 100 and no start at 1000 | only when the server must not know client addresses, few clients | p50 78.0 µs at 100, worst there | as for A |
@@ -442,7 +442,7 @@ So a spy stays opt-in per feed (`auto` or `force`), for a reader that cannot sta
 |---|---|---|
 | same host, up to about 100 clients, both ends already run Aeron | Aeron IPC response channels | p50 0.9 µs (1 client) and 2.1 µs (100), against 23.1 and 17.6 for TCP; carries 200,000/s. Costs one driver thread and `/dev/shm` |
 | same host, 1000 clients | framed TCP | TCP p50 16.8 µs, flat from 100 to 1000; IPC rises to 28.4 µs; the per-client UDP Aeron arms did not start |
-| across hosts, any N, own peers | framed TCP on ergon-io (WebSocket when the peer needs it) | flat p50 to 1000 clients with one thread a side and no driver; setup 85 ms for 1000. WebSocket costs 0.3 to 0.4 µs p50 and 3 bytes |
+| across hosts, any N, own peers | framed TCP on ergon-net (WebSocket when the peer needs it) | flat p50 to 1000 clients with one thread a side and no driver; setup 85 ms for 1000. WebSocket costs 0.3 to 0.4 µs p50 and 3 bytes |
 | across hosts, server must not know client addresses (NAT, ephemeral clients), few clients | Aeron UDP response channels | 18.0 µs p50 at 1 client against TCP's 23.1. But 33.6 against 17.6 at 100, two driver threads, and no start at 1000 here |
 | anything multiplexed with timeouts | not HTTP/1.1 | in-order replies: one held reply expires every later one on that connection |
 
@@ -464,7 +464,7 @@ Cancel is advisory on every arm: items sent during the cancel's round trip still
   - same-host request/response over IPC up to about 100 clients;
   - request/response from servers that cannot know their clients.
 
-  For per-client request/response across hosts at hundreds of clients, use TCP until the AWS run says otherwise.
+  For per-client request/response across hosts at hundreds of clients, use TCP.
 - **IPC is worth it; spies rarely are.** IPC is worth it on one host at small N. A spy only pays when the same stream must also reach another host.
 - **The stalled-spy hazard.** A stalled untethered spy on a shared publication took a healthy reader down: its server queued up to 357 messages and the reader heard nothing for 300 ms. The runtime's test measured such a hold at 2.4 s. A stalled reader through the network, or through a per-client spy, did not harm the healthy one. So never let a reader that can stall spy on a publication other readers share. That is why `bus.same_host` defaults to `off`.
 - **Aeron 1.54 has no MDC response channel.** Dynamic MDC gives the "server needs no client address" property, but it pairs clients by a session id the client claims. It needs one control port per client for per-client streams.
@@ -481,24 +481,7 @@ Cancel is advisory on every arm: items sent during the cancel's round trip still
 - **Response channels reply to the address the client's control flow came from.** Through a Service or NAT this was not tested.
 - **`bus.same_host` in a pod.** Leave it `off` unless the reader and the publisher share the pod's driver and the reader's loop has its own exclusive CPU.
 
-**What to build next:**
-
-1. **A busy-spin server side in ergon-io:**
-   - a non-blocking accept into the `Driver`, framed TCP;
-   - the WebSocket server handshake, which `ws::accept_key` already supports.
-
-   The bench's own server held 16.8 µs p50 at 1000 clients on one thread with no driver. That is the best cross-host and many-client result here, and today it exists only inside the bench.
-2. **A request/response helper on ergon-runtime's Aeron bus, for same-host IPC only:**
-   - correlation ids;
-   - a timeout on the timer wheel;
-   - heartbeat;
-   - cancel.
-
-   It is justified by 0.9 to 3.1 µs p50 up to 100 clients and by 200,000/s. Do not build a cross-host Aeron request/response helper before the AWS run.
-
-**Latency verdicts need the two-host AWS run.** It is DEFERRED: see below.
-
 ## Reproduce
 
-**DEFERRED: the two-host latency verdict.** It needs two AWS hosts in one cluster placement group, and no AWS credentials were available for this run.
+**Two-host latency verdict.** It needs two AWS hosts in one cluster placement group; this page has no such run.
 

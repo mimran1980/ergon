@@ -23,6 +23,12 @@ by hand, its hash or the manifest disagree, a generated page lies outside the
 export's paths, or `SUMMARY.md` drifted. It cannot tell whether a page is
 out of date with its source.
 
+Also before tagging, run `./scripts/check-book-diagrams.sh`. It names each
+diagram in `book/diagrams.tsv` whose verified sources changed since its stamp. For each one, re-check every label and number against
+the code, update the diagram, then run
+`./scripts/check-book-diagrams.sh --restamp <diagram>`. Step 8/9 runs the same
+check and fails on any diagram left stale.
+
 `just release` and `just release-verified` run each gate once on the
 release commit:
 

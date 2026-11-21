@@ -1,20 +1,20 @@
-// Generated file: edits here are overwritten by the next export. sha256:f6a11f8d1aa8d3caa2128f261bdded255dc3e179aea1980752e556fe82151713
+// Generated file: edits here are overwritten by the next export. sha256:a13c98a158e4c4e3377df1059ad5de90632637cd7efee6da4af0c87a45bfaba6
 // UDP batching: one poll drains up to rx_batch datagrams a receive call, and
 // the handler replies inline or queues for the send pass.
 // Sources: every counter and slot below comes from a port of this code, run in order.
-//   ergon-io/src/driver/mod.rs:2047-2105  recv_batch: want = min(left, rx_batch); short call ends the burst
-//   ergon-io/src/sys.rs:882-901           arm_rx: slot k at k * max_datagram, at most rx_batch entries
-//   ergon-io/src/sys.rs:949-978           recvmmsg: MSG_DONTWAIT, Ok(None) on EAGAIN
-//   ergon-io/src/driver/epoll.rs:300-339  recv_index: datagram_burst per ready socket per poll
-//   ergon-io/src/driver/epoll.rs:394-400  wait: epoll_wait_calls
-//   ergon-io/src/driver/mod.rs:1359-1388  poll: receive pass, then the send pass
-//   ergon-io/src/driver/mod.rs:1733-1793  send_datagrams: two or more in one sendmmsg, one alone
-//   ergon-io/src/driver/mod.rs:1549-1568  flush: ConnMut::send replies queued after poll leave here
-//   ergon-io/src/udp.rs:105-132           UdpTx::send: nothing queued, one send now; else queued behind
-//   ergon-io/src/udp.rs:335-343           receive buffer rx_batch x max_datagram, written at build
-//   ergon-io/src/udp.rs:516-527           on_datagram_at: slice of slot, rx += 1 after the handler
-//   ergon-io/src/backend.rs:279-284       datagram_burst: 16 by default
-// Figures: book/src/ergon-io/udp.md:67-97 (32 datagrams queued, rx_batch 1 to 32)
+//   io/net/src/driver/mod.rs:2047-2105  recv_batch: want = min(left, rx_batch); short call ends the burst
+//   io/net/src/sys.rs:882-901           arm_rx: slot k at k * max_datagram, at most rx_batch entries
+//   io/net/src/sys.rs:949-978           recvmmsg: MSG_DONTWAIT, Ok(None) on EAGAIN
+//   io/net/src/driver/epoll.rs:300-339  recv_index: datagram_burst per ready socket per poll
+//   io/net/src/driver/epoll.rs:394-400  wait: epoll_wait_calls
+//   io/net/src/driver/mod.rs:1359-1388  poll: receive pass, then the send pass
+//   io/net/src/driver/mod.rs:1733-1793  send_datagrams: two or more in one sendmmsg, one alone
+//   io/net/src/driver/mod.rs:1549-1568  flush: ConnMut::send replies queued after poll leave here
+//   io/net/src/udp.rs:105-132           UdpTx::send: nothing queued, one send now; else queued behind
+//   io/net/src/udp.rs:335-343           receive buffer rx_batch x max_datagram, written at build
+//   io/net/src/udp.rs:516-527           on_datagram_at: slice of slot, rx += 1 after the handler
+//   io/net/src/backend.rs:279-284       datagram_burst: 16 by default
+// Figures: book/src/io/net/udp.md:67-97 (32 datagrams queued, rx_batch 1 to 32)
 // and :141-156 (queued, inline and mio replies, bursts of 8).
 // Illustrative: datagram arrival, burst sizes, 64-byte payloads.
 (() => {
@@ -382,7 +382,7 @@
     });
   }
 
-  // book/src/ergon-io/udp.md:74-78, µs: p50 bars, p50 / p99 / max as printed.
+  // book/src/io/net/udp.md:74-78, µs: p50 bars, p50 / p99 / max as printed.
   const SWEEP = [
     ['1', 2.0, '2.0 / 2.2 / 7–21', 34.5, '34.5 / 37.6 / 48–77', 33],
     ['4', 3.1, '3.1 / 3.3–3.4 / 8–16', 18.4, '18.4 / 21.1–21.2 / 29–35', 9],
@@ -435,7 +435,7 @@
     });
   }
 
-  // book/src/ergon-io/udp.md:146, µs p50 / p99 / max, median of 3 reps.
+  // book/src/io/net/udp.md:146, µs p50 / p99 / max, median of 3 reps.
   const REPLY = [
     ['queued (ConnMut::send)', '46.34', '57.95', '191.57'],
     ['inline (UdpTx::send)', '45.18', '56.96', '206.22'],

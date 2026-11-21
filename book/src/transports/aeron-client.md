@@ -1,4 +1,4 @@
-<!-- Generated page: edits here are overwritten by the next export. sha256:0d8a18b0046169f8006a6c9524e442f51c16fd2534ecf72ba08e32dd561fab37 -->
+<!-- Generated page: edits here are overwritten by the next export. sha256:6744691c7e5e48ade27cefcd25158ff2f20b66a5b22e7c0fd1d8577bac58b727 -->
 # Aeron Client
 
 How an application talks to an Aeron media driver with
@@ -9,7 +9,7 @@ directory, `AERON_DIR`.
 
 ```toml
 [dependencies]
-rusteron-client = { version = "0.2.18", features = ["static"] }   # Aeron 1.54.0
+rusteron-client = { version = "0.2.21", features = ["static"] }   # Aeron 1.54.2
 ```
 
 | step | calls | where |
@@ -321,7 +321,7 @@ reps ([hugepages](comparison.md#hugepages)):
 
 ## Where next
 
-- One thread that polls Aeron and ergon-io together:
+- One thread that polls Aeron and ergon-net together:
   [busy-spin loop](../deploy/busy-spin-loop.md).
 - The driver in a pod, and a ping/pong that prints its latency:
   [low-latency-k8s sample](../samples/low-latency-k8s.md).
