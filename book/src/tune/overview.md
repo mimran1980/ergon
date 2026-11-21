@@ -182,7 +182,7 @@ caller should run.
 | caller | checks | when |
 |---|---|---|
 | a network I/O loop (`Component::Io`) | T1 and T8 on the loop's CPU (and an SQPOLL CPU); T7 on the calling thread; T9, T10; T3 as info; T24 on DPDK; K1–K6 inside a pod; T2, N1, N2, N3 on each connection's egress NIC; T19 on the polling thread | at start; the NIC checks again after a NIC reset; T19 every few seconds from housekeeping |
-| a media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10, T22, T23; T24 on a DPDK transport; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset |
+| a media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10, T22, T23; T24 on a DPDK port; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset |
 | your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18, T21, T22; K1–K7 inside a pod; on a kernel NIC also T2, T20, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping |
 
 {{#include ../diagrams/host-checks.html}}

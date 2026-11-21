@@ -18,9 +18,8 @@ fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 
 const PCI: &str = "RUSTERON_DPDK_SENDER_PCI";
 const CIDR: &str = "RUSTERON_DPDK_SENDER_IPV4_CIDR";
 const GATEWAY: &str = "RUSTERON_DPDK_SENDER_GATEWAY";
-const FSTACK: &str =
-    "fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0";
-const SMOLTCP: &str = "port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0";
+const ADDR_GATEWAY_LINE: &str = "addr=10.0.1.20,gateway=10.0.1.1,port=0000:00:06.0";
+const PORT_IP_EAL_LINE: &str = "port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0";
 const PAIR: [(&str, &str); 3] = [
     (PCI, "0000:00:06.0"),
     (CIDR, "10.0.1.20/24"),
@@ -35,7 +34,7 @@ fn t24_is_ok_when_the_process_does_not_run_on_dpdk() {
     assert_eq!(v.id, "T24");
     assert_eq!(v.status, Status::Ok, "{v}");
     assert!(!v.is_unknown(), "{v}");
-    assert!(v.message.contains("not a DPDK network backend"), "{v}");
+    assert!(v.message.contains("not on a DPDK port"), "{v}");
     assert!(!v.message.contains("10.0.1."), "{v}");
 }
 
@@ -71,8 +70,8 @@ fn t24_warns_with_the_exact_keys_still_empty() {
     assert!(v.is_warning(), "{v}");
     assert!(v.message.contains(PCI), "{v}");
     // No copy lines while a key is empty.
-    assert!(!v.message.contains(FSTACK), "{v}");
-    assert!(!v.message.contains(SMOLTCP), "{v}");
+    assert!(!v.message.contains(ADDR_GATEWAY_LINE), "{v}");
+    assert!(!v.message.contains(PORT_IP_EAL_LINE), "{v}");
 }
 
 #[test]
@@ -88,7 +87,7 @@ fn t24_warns_on_an_inconsistent_value() {
     assert!(gateway.is_warning(), "{gateway}");
     assert!(gateway.message.contains(GATEWAY), "{gateway}");
     assert!(gateway.message.contains("not-an-ip"), "{gateway}");
-    assert!(!gateway.message.contains(FSTACK), "{gateway}");
+    assert!(!gateway.message.contains(ADDR_GATEWAY_LINE), "{gateway}");
 
     let cidr = t24_dpdk_nic_pair(
         true,
@@ -125,8 +124,8 @@ fn t24_prints_the_two_shortest_lines_when_the_pair_is_set() {
     );
     assert!(!v.is_unknown(), "{v}");
     assert_eq!(v.severity, Severity::Info, "{v}");
-    assert!(v.message.contains(FSTACK), "{v}");
-    assert!(v.message.contains(SMOLTCP), "{v}");
+    assert!(v.message.contains(ADDR_GATEWAY_LINE), "{v}");
+    assert!(v.message.contains(PORT_IP_EAL_LINE), "{v}");
     // Read only: the lines are printed, not exported.
     assert!(v.message.contains("copies nothing"), "{v}");
 }
@@ -153,14 +152,44 @@ fn t24_accepts_a_dpdk_device_name_and_a_real_pci_address() {
         ]),
     );
     assert_eq!(upper.status, Status::Finding, "{upper}");
-    assert!(upper.message.contains("fstack_pci=0000:81:00.4"), "{upper}");
+    assert!(upper.message.contains("port=0000:81:00.4"), "{upper}");
+}
+
+/// The line carries the prefix length only when it is not 24, and a DPDK
+/// device name is a `port` like a PCI address.
+#[test]
+fn the_addr_gateway_line_keeps_a_prefix_other_than_24() -> Result<(), String> {
+    use ergon_tune::DpdkNicPair;
+
+    let wide = DpdkNicPair::from_env(env(&[
+        (PCI, "0000:00:06.0"),
+        (CIDR, "10.0.16.20/20"),
+        (GATEWAY, "10.0.1.1"),
+    ]))?
+    .ok_or("a complete pair parses")?;
+    assert_eq!(
+        wide.addr_gateway_line(),
+        "addr=10.0.16.20,gateway=10.0.1.1,port=0000:00:06.0,prefix_len=20"
+    );
+
+    let tap = DpdkNicPair::from_env(env(&[
+        (PCI, "net_tap0"),
+        (CIDR, "10.0.1.20/24"),
+        (GATEWAY, "10.0.1.1"),
+    ]))?
+    .ok_or("a complete pair parses")?;
+    assert_eq!(
+        tap.addr_gateway_line(),
+        "addr=10.0.1.20,gateway=10.0.1.1,port=net_tap0"
+    );
+    Ok(())
 }
 
 /// `DpdkNicPair::from_env`: the same pair T24 reports, parsed once for
-/// DPDK network backends to take. None when no pair was granted; an
+/// a DPDK-driven process to take. None when no pair was granted; an
 /// error naming every empty or unparsable key otherwise.
 #[test]
-fn the_pair_parses_once_for_the_backends_to_take() -> Result<(), String> {
+fn the_pair_parses_once_for_a_dpdk_process_to_take() -> Result<(), String> {
     use ergon_tune::DpdkNicPair;
 
     assert_eq!(DpdkNicPair::from_env(env(&[]))?, None);
@@ -170,8 +199,8 @@ fn the_pair_parses_once_for_the_backends_to_take() -> Result<(), String> {
     assert_eq!(pair.addr, std::net::Ipv4Addr::new(10, 0, 1, 20));
     assert_eq!(pair.prefix_len, 24);
     assert_eq!(pair.gateway, std::net::Ipv4Addr::new(10, 0, 1, 1));
-    assert_eq!(pair.fstack_line(), FSTACK);
-    assert_eq!(pair.smoltcp_line(), SMOLTCP);
+    assert_eq!(pair.addr_gateway_line(), ADDR_GATEWAY_LINE);
+    assert_eq!(pair.port_ip_eal_line(), PORT_IP_EAL_LINE);
 
     let e = DpdkNicPair::from_env(env(&[(CIDR, "10.0.1.20/24"), (GATEWAY, "x")]))
         .err()

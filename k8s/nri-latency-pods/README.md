@@ -90,7 +90,7 @@ device plugin (not shipped here) already injected into this container
 
 | env the app sees | value from the granted pair |
 |---|---|
-| `ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP` | the copy lines `ergon_tune::DpdkNicPair` builds from the pair |
+| `ERGON_NIC_PAIR_ADDR_GATEWAY`, `ERGON_NIC_PAIR_PORT_IP_EAL` | the copy lines `ergon_tune::DpdkNicPair` builds from the pair |
 | `ERGON_DPDK_PCI` | `0000:00:06.0` |
 | `ERGON_DPDK_ADDR` | `10.0.1.20`, the address parsed out of the cidr |
 | `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
@@ -208,7 +208,7 @@ scheduling policy.
 | annotation | value | env the app sees |
 |---|---|---|
 | `hugepages.ergon.io/<ctr>` | `2M` | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE`, `AERON_TERM_BUFFER_SPARSE_FILE` (the app sets `AERON_DIR`) |
-| `dpdk.ergon.io/<ctr>` | `ena-pair` | `ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY` (copied from a NIC device plugin's pair; default off) |
+| `dpdk.ergon.io/<ctr>` | `ena-pair` | `ERGON_NIC_PAIR_ADDR_GATEWAY`, `ERGON_NIC_PAIR_PORT_IP_EAL`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY` (copied from a NIC device plugin's pair; default off) |
 | `cpu-partition.ergon.io/<ctr>` | `isolated` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | `seccomp.ergon.io/<ctr>` | `io-uring` or `runtime-default` | `ERGON_SECCOMP` |
 | `ptp.ergon.io/<ctr>` | `off`, `auto`, or `/dev/ptpN` | `ERGON_PTP_DEVICE`, `ERGON_NODE_FACTS` |

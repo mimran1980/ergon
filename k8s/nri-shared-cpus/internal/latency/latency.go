@@ -541,19 +541,20 @@ func DpdkEnaPair(ask string, env map[string]string) ([]KV, error) {
 	if strings.ContainsAny(pci, " \t,=") {
 		return nil, grantErr("dpdk", "dpdk.ergon.io: %s=%q is not a PCI address or a DPDK device name", senderPCI, pci)
 	}
-	// The same lines ergon_tune::DpdkNicPair builds from the pair:
-	// F-Stack's prefix defaults to 24, and a DPDK device name is a vdev, not a PCI port.
-	fstackPort, ealArgs := ",fstack_pci="+pci, "-a "+pci
+	// The same lines ergon_tune::DpdkNicPair builds from the pair: the
+	// address-and-gateway line leaves the prefix out when it is 24, and a DPDK
+	// device name is a vdev, not a PCI port, in the EAL arguments.
+	ealArgs := "-a " + pci
 	if !strings.Contains(pci, ":") {
-		fstackPort, ealArgs = ",fstack_vdev="+pci, "--vdev "+pci
+		ealArgs = "--vdev " + pci
 	}
-	fstackPrefix := ""
+	prefixKey := ""
 	if n != 24 {
-		fstackPrefix = ",fstack_prefix_len=" + strconv.Itoa(n)
+		prefixKey = ",prefix_len=" + strconv.Itoa(n)
 	}
 	return []KV{
-		{EnvIOFstack, "fstack-spin,fstack_addr=" + addr + ",fstack_gateway=" + gateway + fstackPort + fstackPrefix},
-		{EnvIOSmoltcp, "port=" + pci + ",ip=" + cidr + ",eal=" + ealArgs},
+		{EnvNicPairAddrGateway, "addr=" + addr + ",gateway=" + gateway + ",port=" + pci + prefixKey},
+		{EnvNicPairPortIPEAL, "port=" + pci + ",ip=" + cidr + ",eal=" + ealArgs},
 		{EnvDpdkPCI, pci},
 		{EnvDpdkAddr, addr},
 		{EnvDpdkGateway, gateway},
@@ -582,25 +583,25 @@ type PartitionGrant struct {
 // Env names this package sets. They are the contract; changing one is a
 // breaking change (see names.go).
 const (
-	EnvRlimitMemlock  = "ERGON_RLIMIT_MEMLOCK"
-	EnvRlimitNofile   = "ERGON_RLIMIT_NOFILE"
-	EnvRlimitRtPrio   = "ERGON_RLIMIT_RTPRIO"
-	EnvSeccomp        = "ERGON_SECCOMP"
-	EnvNumaNodes      = "ERGON_NUMA_NODES"
-	EnvPtpDevice      = "ERGON_PTP_DEVICE"
-	EnvIsolatedCgroup = "ERGON_ISOLATED_CGROUP"
-	EnvHugepagesDir   = "ERGON_HUGEPAGES_DIR"
-	EnvHugepageSize   = "ERGON_HUGEPAGE_SIZE"
-	EnvCpuDmaLatency  = "ERGON_CPU_DMA_LATENCY"
-	EnvNodeFacts      = "ERGON_NODE_FACTS"
-	EnvAeronDir       = "AERON_DIR"
-	EnvAeronPageSize  = "AERON_FILE_PAGE_SIZE"
-	EnvAeronSparse    = "AERON_TERM_BUFFER_SPARSE_FILE"
-	EnvIOFstack       = "ERGON_IO_FSTACK"
-	EnvIOSmoltcp      = "ERGON_IO_SMOLTCP"
-	EnvDpdkPCI        = "ERGON_DPDK_PCI"
-	EnvDpdkAddr       = "ERGON_DPDK_ADDR"
-	EnvDpdkGateway    = "ERGON_DPDK_GATEWAY"
+	EnvRlimitMemlock      = "ERGON_RLIMIT_MEMLOCK"
+	EnvRlimitNofile       = "ERGON_RLIMIT_NOFILE"
+	EnvRlimitRtPrio       = "ERGON_RLIMIT_RTPRIO"
+	EnvSeccomp            = "ERGON_SECCOMP"
+	EnvNumaNodes          = "ERGON_NUMA_NODES"
+	EnvPtpDevice          = "ERGON_PTP_DEVICE"
+	EnvIsolatedCgroup     = "ERGON_ISOLATED_CGROUP"
+	EnvHugepagesDir       = "ERGON_HUGEPAGES_DIR"
+	EnvHugepageSize       = "ERGON_HUGEPAGE_SIZE"
+	EnvCpuDmaLatency      = "ERGON_CPU_DMA_LATENCY"
+	EnvNodeFacts          = "ERGON_NODE_FACTS"
+	EnvAeronDir           = "AERON_DIR"
+	EnvAeronPageSize      = "AERON_FILE_PAGE_SIZE"
+	EnvAeronSparse        = "AERON_TERM_BUFFER_SPARSE_FILE"
+	EnvNicPairAddrGateway = "ERGON_NIC_PAIR_ADDR_GATEWAY"
+	EnvNicPairPortIPEAL   = "ERGON_NIC_PAIR_PORT_IP_EAL"
+	EnvDpdkPCI            = "ERGON_DPDK_PCI"
+	EnvDpdkAddr           = "ERGON_DPDK_ADDR"
+	EnvDpdkGateway        = "ERGON_DPDK_GATEWAY"
 )
 
 // EnvGrant is the grant set one container got. A zero field means "not

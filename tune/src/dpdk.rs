@@ -1,5 +1,5 @@
 //! T24: the NIC pair the device plugin grants, reported as the two shortest
-//! lines a DPDK network backend takes. The pair is copied, never guessed,
+//! lines a process on a DPDK port takes. The pair is copied, never guessed,
 //! and nothing here binds a NIC.
 
 use std::net::Ipv4Addr;
@@ -28,8 +28,8 @@ const GATEWAY_BAD: &str = "is not an IPv4 address";
 /// T24: a process on DPDK has the device plugin's NIC pair complete and
 /// consistent.
 ///
-/// `on_dpdk` is whether this process runs on DPDK: the media driver's
-/// DPDK transport, or a DPDK network backend.
+/// `on_dpdk` is whether this process drives a DPDK port: a media driver on
+/// a DPDK UDP transport, or a network I/O loop on a DPDK stack.
 /// `env` looks a variable up (`|n| std::env::var(n).ok()` for this process).
 /// Off the pair, or with all three sender values unset, the check is ok and
 /// the message says the device plugin has not granted a pair, not a guessed
@@ -49,9 +49,7 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
             id,
             sev,
             T24_EVIDENCE,
-            "this process is not a DPDK network backend and not a media driver on a DPDK transport, \
-             so the NIC pair does not apply here"
-                .to_owned(),
+            "this process is not on a DPDK port, so the NIC pair does not apply here".to_owned(),
         );
     }
     let pair = match DpdkNicPair::from_env(env) {
@@ -89,8 +87,8 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
         format!(
             "the NIC pair is set; the two shortest lines built from it (copied, not guessed): \
              {}; {}. This check copies nothing, binds no NIC and sets no AERON_DIR",
-            pair.fstack_line(),
-            pair.smoltcp_line()
+            pair.addr_gateway_line(),
+            pair.port_ip_eal_line()
         ),
     )
 }
@@ -182,28 +180,26 @@ impl DpdkNicPair {
         }
     }
 
-    /// The shortest `fstack-spin` configuration string for this NIC.
+    /// The shortest address-and-gateway line for this NIC:
+    /// `addr=<ip>,gateway=<ip>,port=<pci or device name>`, and
+    /// `,prefix_len=<n>` only when the prefix is not 24.
     #[must_use]
-    pub fn fstack_line(&self) -> String {
+    pub fn addr_gateway_line(&self) -> String {
         let prefix = if self.prefix_len == 24 {
             String::new()
         } else {
-            format!(",fstack_prefix_len={}", self.prefix_len)
-        };
-        let port = if self.is_pci_address() {
-            "fstack_pci"
-        } else {
-            "fstack_vdev"
+            format!(",prefix_len={}", self.prefix_len)
         };
         format!(
-            "fstack-spin,fstack_addr={},fstack_gateway={},{port}={}{prefix}",
+            "addr={},gateway={},port={}{prefix}",
             self.addr, self.gateway, self.pci
         )
     }
 
-    /// The shortest `smoltcp-spin` stack line for this NIC.
+    /// The shortest port-ip-eal line for this NIC: `port`, `ip` (with its
+    /// prefix length) and the `eal` arguments that give DPDK the one port.
     #[must_use]
-    pub fn smoltcp_line(&self) -> String {
+    pub fn port_ip_eal_line(&self) -> String {
         format!(
             "port={},ip={}/{},eal={}",
             self.pci,

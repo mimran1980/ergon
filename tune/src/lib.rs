@@ -27,7 +27,7 @@
 //! | T21 | [`t21_tcp_autocorking`] | io (a warning: its connections send latency-sensitive TCP) |
 //! | T22 | [`t22_aeron_affinity_names`] | md |
 //! | T23 | [`t23_aeron_hugepage_env`] | md |
-//! | T24 | [`t24_dpdk_nic_pair`] | io (DPDK backends), md (DPDK transport) |
+//! | T24 | [`t24_dpdk_nic_pair`] | io (on DPDK), md (on a DPDK port) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | a caller that names its NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |

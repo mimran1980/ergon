@@ -479,7 +479,7 @@ func TestResolveGrantsDpdkAnnotationOffKeepsKeysUnset(t *testing.T) {
 	}
 	env := kvMapOf(GrantEnv(g, cfg))
 	for _, k := range []string{
-		latency.EnvIOFstack, latency.EnvIOSmoltcp,
+		latency.EnvNicPairAddrGateway, latency.EnvNicPairPortIPEAL,
 		latency.EnvDpdkPCI, latency.EnvDpdkAddr, latency.EnvDpdkGateway,
 	} {
 		if _, ok := env[k]; ok {
@@ -527,11 +527,11 @@ func TestResolveGrantsDpdkPairCopiesTheTwoLines(t *testing.T) {
 	}
 	env := kvMapOf(GrantEnv(g, cfg))
 	want := map[string]string{
-		latency.EnvIOFstack:    "fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0",
-		latency.EnvIOSmoltcp:   "port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0",
-		latency.EnvDpdkPCI:     "0000:00:06.0",
-		latency.EnvDpdkAddr:    "10.0.1.20",
-		latency.EnvDpdkGateway: "10.0.1.1",
+		latency.EnvNicPairAddrGateway: "addr=10.0.1.20,gateway=10.0.1.1,port=0000:00:06.0",
+		latency.EnvNicPairPortIPEAL:   "port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0",
+		latency.EnvDpdkPCI:            "0000:00:06.0",
+		latency.EnvDpdkAddr:           "10.0.1.20",
+		latency.EnvDpdkGateway:        "10.0.1.1",
 	}
 	for k, v := range want {
 		if env[k] != v {
@@ -594,17 +594,28 @@ func kvMapOf(kvs []latency.KV) map[string]string {
 	return m
 }
 
-// A subnet other than /24 keeps its prefix in the fstack-spin line (F-Stack
-// defaults to 24), and a DPDK device name is a vdev, not a PCI port: the
-// same lines ergon_tune::DpdkNicPair builds from the pair.
+// The two line variables are a contract with the apps in the pod: their names
+// match ergon_tune::DpdkNicPair::addr_gateway_line and port_ip_eal_line.
+func TestNicPairLineEnvNames(t *testing.T) {
+	if latency.EnvNicPairAddrGateway != "ERGON_NIC_PAIR_ADDR_GATEWAY" {
+		t.Errorf("EnvNicPairAddrGateway = %q", latency.EnvNicPairAddrGateway)
+	}
+	if latency.EnvNicPairPortIPEAL != "ERGON_NIC_PAIR_PORT_IP_EAL" {
+		t.Errorf("EnvNicPairPortIPEAL = %q", latency.EnvNicPairPortIPEAL)
+	}
+}
+
+// A subnet other than /24 keeps its prefix in the address-and-gateway line
+// (the prefix defaults to 24 there), and a DPDK device name takes the port
+// key like a PCI address does: the same lines ergon_tune::DpdkNicPair builds from the pair.
 func TestResolveGrantsDpdkPairKeepsPrefixAndVdev(t *testing.T) {
 	cfg := grantConfig(t)
-	for _, tc := range []struct{ pci, cidr, fstack, smoltcp string }{
+	for _, tc := range []struct{ pci, cidr, addrGateway, portIPEAL string }{
 		{"0000:00:06.0", "10.0.16.20/20",
-			"fstack-spin,fstack_addr=10.0.16.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0,fstack_prefix_len=20",
+			"addr=10.0.16.20,gateway=10.0.1.1,port=0000:00:06.0,prefix_len=20",
 			"port=0000:00:06.0,ip=10.0.16.20/20,eal=-a 0000:00:06.0"},
 		{"net_tap0", "10.0.1.20/24",
-			"fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_vdev=net_tap0",
+			"addr=10.0.1.20,gateway=10.0.1.1,port=net_tap0",
 			"port=net_tap0,ip=10.0.1.20/24,eal=--vdev net_tap0"},
 	} {
 		r := baseRequest()
@@ -617,11 +628,11 @@ func TestResolveGrantsDpdkPairKeepsPrefixAndVdev(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := kvMapOf(GrantEnv(g, cfg))
-		if env[latency.EnvIOFstack] != tc.fstack {
-			t.Errorf("fstack line = %q, want %q", env[latency.EnvIOFstack], tc.fstack)
+		if env[latency.EnvNicPairAddrGateway] != tc.addrGateway {
+			t.Errorf("address-and-gateway line = %q, want %q", env[latency.EnvNicPairAddrGateway], tc.addrGateway)
 		}
-		if env[latency.EnvIOSmoltcp] != tc.smoltcp {
-			t.Errorf("smoltcp line = %q, want %q", env[latency.EnvIOSmoltcp], tc.smoltcp)
+		if env[latency.EnvNicPairPortIPEAL] != tc.portIPEAL {
+			t.Errorf("port-ip-eal line = %q, want %q", env[latency.EnvNicPairPortIPEAL], tc.portIPEAL)
 		}
 	}
 }

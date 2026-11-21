@@ -14,7 +14,14 @@
 - `ergon-tune` findings explain each check by its kernel or hardware mechanism and
   cite kernel and driver documentation instead of lab runs.
 
-- Breaking: rusteron 0.3.0 throughout, from 0.2.18, and the `aeron` submodule,
+- `ergon-tune` `DpdkNicPair::fstack_line()` and `smoltcp_line()` are
+  now `addr_gateway_line()` and `port_ip_eal_line()`, and the NRI plugin's
+  `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP` are now
+  `ERGON_NIC_PAIR_ADDR_GATEWAY` and `ERGON_NIC_PAIR_PORT_IP_EAL`. The first
+  line is now `addr=..,gateway=..,port=..[,prefix_len=..]`; the second line is
+  unchanged.
+
+- rusteron 0.3.0 throughout, from 0.2.18, and the `aeron` submodule,
   pin and jars at Aeron 1.54.2, from 1.54.0 (Aeron's Gradle is now 9.9.1).
   `ergo-aeron-cluster` re-exports rusteron 0.3's `Aeron`, `AeronContext` and
   publication and subscription types, so callers follow rusteron's
@@ -23,10 +30,10 @@
   schemas stay at Aeron 1.54.0's v17 (1.54.2's v18 only adds an optional
   `termBaseLogPosition` to `ClusterActionRequest` and `SnapshotMarker`, which
   a client never sends or reads).
-- Breaking: `AeronCluster::try_claim` returns `ClusterClaim<'_>`, which
+- `AeronCluster::try_claim` returns `ClusterClaim<'_>`, which
   borrows the client until it is committed, aborted or dropped, as rusteron
   0.3's `AeronClaim<'_>` borrows its publication.
-- Breaking: `ergo-aeron-cluster` `ClusterError::AuthRejected` is now a struct
+- `ergo-aeron-cluster` `ClusterError::AuthRejected` is now a struct
   variant `{ detail: String }` carrying the cluster's rejection detail from
   `SessionEvent(AUTHENTICATION_REJECTED)` (stripped of control characters and
   capped at 256 bytes), and fails the connect immediately.
