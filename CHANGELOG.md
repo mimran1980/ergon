@@ -4,6 +4,8 @@
 
 ## [0.1.40] — 2026-11-22
 
+The `ergon-shared-cpus` image and chart are published as 0.1.5.
+
 ### Added
 
 - `ergo-aeron-cluster` `AeronCluster::controlled_poll_egress`,

@@ -1,21 +1,21 @@
 # Release gate
 
-## Current release: 0.1.4
+## Current release: 0.1.5
 
 | what | value |
 |---|---|
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4` (and `:latest`) |
-| image digest | index `sha256:e1f7e1dd3cc7e1e4c7b3a76893de59fe2d4dcbb673a9892214830f357a73fa2f` (amd64 `sha256:2f64a0523df1aa7663d5736512cbdb514a0beb1f3b4cc29b7dac7f0ddb039fbd`, arm64 `sha256:9c3b00d5ba78cba3db9ddd17a0da3d2b4feec867b64995566ea90e767617c2f3`); the index carries the description, source and licence annotations |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4`, appVersion `0.1.4` |
-| chart digest | `sha256:65f0defe4aae8a895f71fc1ac197f07a924f056bfce2740e22e0fbd960f374c0` |
-| source | `7a7ae382`, Actions run [42954024180](https://github.com/mimran1980/ergon/actions/runs/42954024180) (unit, vet, static build, helm lint and template, push) |
-| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.4 7a7ae3826b166a128a9af7cff1b70fa935bdfafa nri=v0.12.3` |
-| checked | `helm template` of the OCI chart renders image `:0.1.4`; `--version` pulled on amd64 and arm64; at that source the Go lane and the cgroup kernel lane (an x86 Linux host) and the kind e2e (`test/e2e.sh` on Docker Desktop, 10 CPUs: 18 steps, 0 failed), 2026-11-11 |
-| changed since 0.1.2 | 0.1.3: the `dpdk.ergon.io` NIC pair exports, Aeron's hugepage variables, and Aeron 1.54's cpuset-offsets name in `ergon-cpus`. 0.1.4: `ergon-cpus --ready-addr` (a readiness probe that also requires a `cpu-partition` pod's partition to be valid) and the opt-in SCHED_FIFO grant removed. CPU placement and the hooks are unchanged, so the EKS lane and the benchmarks below, done at 0.1.2, still describe it; EKS was not re-run at 0.1.4 |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.5` (and `:latest`) |
+| image digest | index `sha256:e52d38f8ffa87627a52d72307a25211b67f243fbf7e61c4b55a18e6512e853e2` (amd64 `sha256:ec3116cc1def1c5a0c8b2290bf96c41de98cceccd23f8aeb5ec896f56f10b0e7`, arm64 `sha256:7a0de9430a9fd3476dbd90daf1cbb39d971a43578f0a9f288f71bc76699786e6`); the index carries the description, source and licence annotations |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.5`, appVersion `0.1.5` |
+| chart digest | `sha256:0e38d621cb87c0428fefe201c0d9e8657bbd684c709f245134de26558a51f66b` |
+| source | `df9c4dc7`, Actions run [45031159176](https://github.com/mimran1980/ergon/actions/runs/45031159176) (unit, vet, static build, helm lint and template, push) |
+| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.5 df9c4dc77e3c489c36aabcc9f089c4ed0d3eee18 nri=v0.12.3` |
+| checked | `helm template` of the OCI chart renders image `:0.1.5`; `--version` pulled on amd64 and arm64 (2026-11-22); the publish run's unit, vet and static-build job passed at that source. The Go lane on an x86 host, the cgroup kernel lane and the kind e2e (18 steps, 0 failed) last ran at the 0.1.4 source, 2026-11-11 |
+| changed since 0.1.2 | 0.1.3: the `dpdk.ergon.io` NIC pair exports, Aeron's hugepage variables, and Aeron 1.54's cpuset-offsets name in `ergon-cpus`. 0.1.4: `ergon-cpus --ready-addr` (a readiness probe that also requires a `cpu-partition` pod's partition to be valid) and the opt-in SCHED_FIFO grant removed. 0.1.5: the NIC-pair variables are `ERGON_NIC_PAIR_ADDR_GATEWAY` and `ERGON_NIC_PAIR_PORT_IP_EAL`, from `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP`. CPU placement and the hooks are unchanged, so the EKS lane and the benchmarks below, done at 0.1.2, still describe it; EKS was not re-run at 0.1.5 |
 | verified on EKS (0.1.2) | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, the same plugin and chart source as published 0.1.2 (`85098f8b`), built from that source and pushed to the run's ECR (not the GHCR image), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed; `create refused ... reason node-contract` in the plugin log) |
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 
-The EKS lane is verified for 0.1.2; 0.1.3 and 0.1.4 leave CPU placement unchanged. Do not invent the figures of
+The EKS lane is verified for 0.1.2; 0.1.3 to 0.1.5 leave CPU placement unchanged. Do not invent the figures of
 any benchmark row still open below.
 
 ## 1. Code defects

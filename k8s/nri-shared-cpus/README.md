@@ -17,14 +17,14 @@ is one containerd NRI approach; choose whichever fits your cluster.
 
 | item | state |
 |---|---|
-| tag | 0.1.4 (and `latest`) |
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`. Anyone can pull it; no image pull secret |
-| image digest | `sha256:e1f7e1dd3cc7e1e4c7b3a76893de59fe2d4dcbb673a9892214830f357a73fa2f` (`docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.4`) |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4` |
-| chart digest | `sha256:65f0defe4aae8a895f71fc1ac197f07a924f056bfce2740e22e0fbd960f374c0` |
+| tag | 0.1.5 (and `latest`) |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.5`. Anyone can pull it; no image pull secret |
+| image digest | `sha256:e52d38f8ffa87627a52d72307a25211b67f243fbf7e61c4b55a18e6512e853e2` (`docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.5`) |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.5` |
+| chart digest | `sha256:0e38d621cb87c0428fefe201c0d9e8657bbd684c709f245134de26558a51f66b` |
 | platforms | `linux/amd64`, `linux/arm64` |
-| checked | `helm template` of the OCI chart renders image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4` with `--kubelet-config`. `--version` on amd64 and arm64: `ergon-shared-cpus 0.1.4 7a7ae3826b166a128a9af7cff1b70fa935bdfafa nri=v0.12.3`. The kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-11-11) |
-| verified on EKS | AL2023 `c8g.xlarge`, Kubernetes 1.36, containerd 2.3.5, the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 and 0.1.4 leave CPU placement unchanged, not re-run on EKS), built from that source and pushed to the run's ECR (the GHCR image itself not pulled there): NRI socket, nodeadm TOML merge, kubelet drop-in merge, `/opt` writable, `system-node-critical` outside `kube-system` ([RELEASE.md](RELEASE.md)) |
+| checked | `helm template` of the OCI chart renders image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.5` with `--kubelet-config`. `--version` on amd64 and arm64: `ergon-shared-cpus 0.1.5 df9c4dc77e3c489c36aabcc9f089c4ed0d3eee18 nri=v0.12.3`. The kind e2e (`test/e2e.sh`) at the 0.1.4 source: 18 steps, 0 failed (2026-11-11); not re-run at 0.1.5 |
+| verified on EKS | AL2023 `c8g.xlarge`, Kubernetes 1.36, containerd 2.3.5, the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 to 0.1.5 leave CPU placement unchanged, not re-run on EKS), built from that source and pushed to the run's ECR (the GHCR image itself not pulled there): NRI socket, nodeadm TOML merge, kubelet drop-in merge, `/opt` writable, `system-node-critical` outside `kube-system` ([RELEASE.md](RELEASE.md)) |
 | measured | one Azure Cobalt VM, helpers on the shared CPU, with the [node settings](#quiet-isolated-cpus): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps of 60 s, 0 involuntary switches; 3.5 to 5.5 µs is the hypervisor's floor. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | not measured | how often node events reach isolated CPUs in production ([BENCHMARKS.md](BENCHMARKS.md#remaining-risk-node-events)) |
 | release gate | [`RELEASE.md`](RELEASE.md) |
@@ -73,7 +73,7 @@ admission policy, not another image:
 
    ```sh
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-     --version 0.1.4 \
+     --version 0.1.5 \
      --namespace ergon-system --create-namespace \
      --set-string config.sharedCpus=0 \
      --set 'config.namespaces={trading}' \
@@ -90,7 +90,7 @@ admission policy, not another image:
 
    ```sh
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-     --version 0.1.4 \
+     --version 0.1.5 \
      --namespace ergon-system --create-namespace \
      --set-string config.sharedCpus=0 \
      --set 'config.namespaces={trading}' \
@@ -163,7 +163,7 @@ admission policy, not another image:
    proves the layout.
 
 **Flux:** `HelmRepository` type `oci`, url `oci://ghcr.io/mimran1980/charts`,
-chart `ergon-shared-cpus` version `0.1.4`, the same values (the three
+chart `ergon-shared-cpus` version `0.1.5`, the same values (the three
 `hostContract` ones included). Copy the two admission files into
 the repo Flux applies. Do not point a Kustomization at all of `admission/`.
 
@@ -344,7 +344,7 @@ rejects unknown keys. `config.*` keys become
 | `config.hugepagesAeronDir` | empty | opt-in hugepages: an absolute `AERON_DIR`; empty omits it |
 | `config.nodeProfileLabel`, `config.profiles` | unset | named layouts, below |
 | `image.repository` | `ghcr.io/mimran1980/ergon-shared-cpus` | |
-| `image.tag` | empty: the chart's `appVersion` (`0.1.4`) | ignored when `image.digest` is set |
+| `image.tag` | empty: the chart's `appVersion` (`0.1.5`) | ignored when `image.digest` is set |
 | `image.digest` | empty | `sha256:…` renders `repository@digest`; empty keeps `repository:tag` |
 | `image.pullPolicy` | `IfNotPresent` | |
 | `layoutRevision` | empty | a ConfigMap edit does not roll the DaemonSet. Drain trading workloads, then set a new revision, before changing `sharedCpus` |

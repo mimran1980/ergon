@@ -18,9 +18,9 @@ every helper on it.
 
 Source: `k8s/nri-shared-cpus/`.
 
-Status: published as tag `0.1.4`. Anyone can pull the image and the chart.
+Status: published as tag `0.1.5`. Anyone can pull the image and the chart.
 The kind e2e passed at its source. **Verified on EKS AL2023** (Kubernetes
-1.36, `c8g.xlarge`) with the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 and 0.1.4 leave CPU placement unchanged, not re-run on EKS), built from that source and pushed to the run's ECR: the NRI socket, nodeadm's TOML
+1.36, `c8g.xlarge`) with the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 to 0.1.5 leave CPU placement unchanged, not re-run on EKS), built from that source and pushed to the run's ECR: the NRI socket, nodeadm's TOML
 merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical`
 outside `kube-system`. Latency of the spin loop is measured on one Azure VM.
 AKS cannot run it.
@@ -42,7 +42,7 @@ the node, and it does not install the hot-pod admission policy.
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.4 \
+  --version 0.1.5 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -51,7 +51,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (verified at 0.1.2 on EKS 1.36 `c8g.xlarge`, containerd 2.3.5, with the same plugin and chart source as published 0.1.2 (`85098f8b`), built from that source and pushed to the run's ECR; 0.1.3 and 0.1.4 leave CPU placement unchanged and were not re-run there). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
+**EKS AL2023** (verified at 0.1.2 on EKS 1.36 `c8g.xlarge`, containerd 2.3.5, with the same plugin and chart source as published 0.1.2 (`85098f8b`), built from that source and pushed to the run's ECR; 0.1.3 to 0.1.5 leave CPU placement unchanged and were not re-run there). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
 the `NodeConfig` kubelet settings in the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory. `kubeletConfigDir` mounts
@@ -60,7 +60,7 @@ kubelet does (lexical order, JSON merge patch):
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.4 \
+  --version 0.1.5 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -75,16 +75,16 @@ Without `kubeletConfigDir` every hot pod is refused on AL2023. The drop-in direc
 sets `spec.kubelet.config`; without it the plugin pod does not start.
 
 Check the pulled image. This prints the index digest
-`sha256:e1f7e1dd3cc7e1e4c7b3a76893de59fe2d4dcbb673a9892214830f357a73fa2f`:
+`sha256:e52d38f8ffa87627a52d72307a25211b67f243fbf7e61c4b55a18e6512e853e2`:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.4
+docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.5
 ```
 
 Chart digest
-`sha256:65f0defe4aae8a895f71fc1ac197f07a924f056bfce2740e22e0fbd960f374c0`.
+`sha256:0e38d621cb87c0428fefe201c0d9e8657bbd684c709f245134de26558a51f66b`.
 `image.digest` renders `repository@digest`; an empty digest keeps
-`repository:tag`, and the default tag is image `0.1.4`.
+`repository:tag`, and the default tag is image `0.1.5`.
 
 The chart renders every field `config.File` accepts, with
 `seccomp.ioUring` and `ptp` quoted `"off"`. The plugin leaves
@@ -123,7 +123,7 @@ or no `priorityClassName`.
 
 Flux: a `HelmRepository` of type `oci` at
 `oci://ghcr.io/mimran1980/charts`, chart `ergon-shared-cpus` version
-`0.1.4`, `targetNamespace: ergon-system`, and the same `config` and
+`0.1.5`, `targetNamespace: ergon-system`, and the same `config` and
 `hostContract` values.
 Copy the two admission files into the Git repo Flux already applies.
 Do not point Flux at the whole `admission/` directory: that directory
@@ -293,13 +293,13 @@ The plugin is public. No image pull secret.
 
 | what | address |
 |---|---|
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.4` (and `:latest`) |
-| digest of `0.1.4` and `latest` | `sha256:e1f7e1dd3cc7e1e4c7b3a76893de59fe2d4dcbb673a9892214830f357a73fa2f` |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.4` |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.5` (and `:latest`) |
+| digest of `0.1.5` and `latest` | `sha256:e52d38f8ffa87627a52d72307a25211b67f243fbf7e61c4b55a18e6512e853e2` |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.5` |
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.4 \
+  --version 0.1.5 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \

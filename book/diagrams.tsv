@@ -4,7 +4,7 @@
 # re-verify the diagram against it, then run `scripts/check-book-diagrams.sh --restamp <diagram>`.
 # diagram	source	blob
 book/src/diagrams/cpu-quota.html	tune/src/quota.rs	1c890ef83a87118d948a93f7294aabba9dbf8ce2
-book/src/diagrams/cpu-quota.html	book/src/deploy/kubernetes.md	b12dc8c83235637823d4200cebb9520b588b6689
+book/src/diagrams/cpu-quota.html	book/src/deploy/kubernetes.md	fafd1520e1f96e53c6d259ede34da26ef616a9d3
 book/src/diagrams/host-checks.html	tune/src/report.rs	0155ceffb7e00d2be1bc520650bce068375f2d7a
 book/src/diagrams/host-checks.html	tune/src/bin/ergon-tune.rs	784883919ddc79c6679d926711cfb0f19aa13e09
 book/src/diagrams/host-checks.html	tune/src/k8s.rs	bd268cc2931676a34d57f7d94010758f10a3b097
@@ -35,7 +35,7 @@ book/src/diagrams/ergon-release.html	cluster/Cargo.toml	a9fd5b1dad5c1dc4007769d0
 book/src/diagrams/ergon-release.html	tune/Cargo.toml	62a3a44cbfade1be65a9e59550621fd94d2fe7ad
 book/src/diagrams/ergon-release.html	cluster-test-harness/Cargo.toml	770794ce1e01fd45a8080b688403370202ab3efa
 book/src/diagrams/ergon-release.html	sbe/benchmarks/Cargo.toml	6742686018dc8de91a3a60db1f4e2a325d94e6b4
-book/src/diagrams/ergon-release.html	k8s/nri-shared-cpus/charts/ergon-shared-cpus/Chart.yaml	65b42a2ba8f733465dced3f88c26eabb4ffb8022
+book/src/diagrams/ergon-release.html	k8s/nri-shared-cpus/charts/ergon-shared-cpus/Chart.yaml	566b6ca4b87fc41afd3a6d9325b8baa7e88a36d8
 book/src/diagrams/ergon-release.html	scripts/run-fuzz-replay.sh	0162bbfceeb288b44acab19e784cafd289566e41
 book/src/diagrams/ergon-release.html	scripts/package-bench-artifacts.sh	780efb1610dbe1404b18a82b1f59c62ed068a671
 book/src/diagrams/ergon-release.html	book/src/project/verification.md	bed0a0ce44f01247b901b1b4837aa7f5372513a6
