@@ -40,6 +40,27 @@ impl Host {
 
     /// A tree standing for a host's `/` (fixtures, a captured host).
     /// `Host::at("/")` is [`Host::system`].
+    ///
+    /// The checks read such a tree on any OS:
+    ///
+    /// ```
+    /// use ergon_tune::{Component, Host, Status, t3_thp};
+    ///
+    /// # fn main() -> std::io::Result<()> {
+    /// // A host's `/`, cut down to the one file T3 reads.
+    /// let root = std::env::temp_dir().join(format!("ergon-tune-host-at-{}", std::process::id()));
+    /// let thp = root.join("sys/kernel/mm/transparent_hugepage");
+    /// std::fs::create_dir_all(&thp)?;
+    /// std::fs::write(thp.join("enabled"), "always [madvise] never\n")?;
+    ///
+    /// let found = t3_thp(&Host::at(&root), Component::Md);
+    /// assert_eq!(found[0].status, Status::Finding);
+    /// assert!(found[0].is_warning());
+    /// assert!(found[0].message.contains("echo never > /sys/kernel/mm/transparent_hugepage/enabled"));
+    ///
+    /// std::fs::remove_dir_all(&root)
+    /// # }
+    /// ```
     #[must_use]
     pub fn at(root: impl Into<PathBuf>) -> Self {
         let root = root.into();

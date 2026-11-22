@@ -615,6 +615,7 @@ fn bench_encode_connect_request_ergo(c: &mut Criterion) {
 // fields. Neither parses or validates template_id / schema_id / version.
 // Ergo wrap() is extent-only; sbe-tool wrap(body_offset, acting_*) matches
 // that — MessageHeaderDecoder + identity checks would be extra work.
+// Decode fixtures carry header version 17 (0x11): frames from a pre-1.54.2 sender.
 
 const MSG_HDR_FIXTURE: [u8; 32] = [
     0x18, 0x00, 0x01, 0x00, 0x6f, 0x00, 0x11, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x00, 0x00,

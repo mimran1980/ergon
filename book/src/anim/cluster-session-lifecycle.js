@@ -24,7 +24,7 @@
 //   cluster/src/poller.rs:61       parse_event; :129 parse_leader_endpoint picks leader_member_id
 //   cluster/src/fragment.rs:24     Fragment: SessionEvent, NewLeader, Challenge
 //   cluster/src/endpoints.rs:23    parse_ingress_endpoints: "id=host:port,..." ordered by member id
-//   cluster/schemas/aeron-cluster-codecs.xml:179  SessionKeepAlive: 8-byte SBE header + two int64 (16-byte block)
+//   cluster/schemas/aeron-cluster-codecs.xml:181  SessionKeepAlive: 8-byte SBE header + two int64 (16-byte block)
 // Endpoints (m0:9002 ...) and the S / T / T' field values are illustrative.
 // Timeouts are configuration and are shown symbolically; this book records no
 // cluster timings, so none are shown.

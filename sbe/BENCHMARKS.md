@@ -142,6 +142,13 @@ reads the same fields as the staged consuming arm. Lane-to-lane cost is
 `just bench-cluster` call it with `--run-id`, so results from another run fail
 closed. Both profiles block.
 
+Passing the gate is not a claim that ergon is at or below 1.00. A run that stays
+inside a documented exception (1.01, 1.05) or whose over-ceiling pair is
+INCONCLUSIVE also passes. `scripts/check-bench-claim.py --suite sbe|cluster
+--run-id ID <lto-dir> <no-lto-dir>` refuses that claim unless every pair is at
+or below 1.00 with its confidence envelope, no exception applies, both
+profiles are present and the A/A control is measured. It changes no ceiling.
+
 | Step | What the gate does | Source |
 |---|---|---|
 | Repeat | Each profile runs 5 times (`BENCH_REPEATS`) | `scripts/run-sbe-bench.sh:183`, `justfile:536` |

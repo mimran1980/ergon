@@ -517,6 +517,21 @@ const BUF: usize = 4096;
 /// that grew ([`ThrottleWatch::sample`]): no open, no allocation unless it
 /// reports. Call it from housekeeping or idle-deferred work, never inside the
 /// loop's hot path: once every few seconds is enough.
+///
+/// ```
+/// use ergon_tune::{Host, ThrottleWatch, t9_cpu_quota};
+///
+/// let host = Host::system();
+/// let t9 = t9_cpu_quota(&host); // before the loop
+/// if t9.is_finding() {
+///     eprintln!("{t9}");
+/// }
+/// let mut watch = ThrottleWatch::open(&host).ok(); // before the loop
+/// // From housekeeping, every few seconds; never inside the hot path:
+/// if let Some(f) = watch.as_mut().and_then(ThrottleWatch::check) {
+///     eprintln!("{f}"); // `T9 warn: this process's cgroup (...) was throttled ...`
+/// }
+/// ```
 #[derive(Debug)]
 pub struct ThrottleWatch {
     version: CgroupVersion,

@@ -44,6 +44,7 @@ policy:
         'bash scripts/tests/test-packaged-cluster-features.sh' \
         'bash scripts/tests/test-bench-historic.sh' \
         'bash scripts/tests/test-bench-ab.sh' \
+        'bash scripts/tests/test-bench-claim.sh' \
         'bash scripts/tests/test-stale-deny-ignores.sh' \
         'bash scripts/tests/test-no-grep-q-pipefail.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
@@ -336,7 +337,7 @@ _release-post:
     @echo "=== tag ==="
     just _tag
     @echo "=== GitHub release (with bench archives) ==="
-    gh release create v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md release-assets/*.tar.gz
+    gh release create --repo mimran1980/ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') --title "ergon v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version')" --notes-file /tmp/ergon-release-notes.md release-assets/*.tar.gz
     @echo "=== release v$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name == "ergo-sbe") | .version') complete ==="
 
 _tag:

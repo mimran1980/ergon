@@ -3440,7 +3440,7 @@ impl<'a> CarDecoder<'a> {
         Ok(self.manufacturer()?.len())
     }
     ///Generated method `manufacturer`.
-    #[inline]
+    #[inline(always)]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2::<false>()?;
         if offset + 4 > self.buf.len() {
@@ -3491,7 +3491,7 @@ impl<'a> CarDecoder<'a> {
         Ok(self.model()?.len())
     }
     ///Generated method `model`.
-    #[inline]
+    #[inline(always)]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3::<false>()?;
         if offset + 4 > self.buf.len() {
@@ -3540,7 +3540,7 @@ impl<'a> CarDecoder<'a> {
         Ok(self.activation_code()?.len())
     }
     ///Generated method `activation_code`.
-    #[inline]
+    #[inline(always)]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4::<false>()?;
         if offset + 4 > self.buf.len() {

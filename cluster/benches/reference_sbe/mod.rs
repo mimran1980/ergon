@@ -2,6 +2,8 @@
 // sbe-tool 1.39.0's generated output, kept as it generated it: the bench's
 // other arm, so not ours to restyle (the workspace's pedantic, nursery and
 // unwrap/expect/panic lints included)
+// Deliberately pinned at schema v17 (production is v18): the benched messages'
+// layouts are identical across the two, and the benches compare body bytes only.
 #![allow(clippy::all, clippy::pedantic, clippy::nursery, clippy::restriction)]
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]

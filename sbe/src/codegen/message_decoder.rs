@@ -1307,8 +1307,11 @@ pub(crate) fn generate_message_decoder(
         let vd_slot_lit = syn::LitInt::new(&vd_idx.to_string(), proc_macro2::Span::call_site());
         let vd_cache_hit = proc_macro2::TokenStream::new();
         let vd_cache_publish = proc_macro2::TokenStream::new();
+        // `always`: the walk to a late field makes the body large enough that
+        // plain `#[inline]` left it a call, and the caller spilled its live
+        // registers around it on every message.
         impl_body.extend(quote::quote! {
-            #[inline]
+            #[inline(always)]
             pub fn #vd_snake_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                 #version_check
                 let offset = self.#vd_tail_call?;

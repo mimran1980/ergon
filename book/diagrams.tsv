@@ -3,14 +3,14 @@
 # scripts/check-book-diagrams.sh fails, naming the diagram, when a source changes:
 # re-verify the diagram against it, then run `scripts/check-book-diagrams.sh --restamp <diagram>`.
 # diagram	source	blob
-book/src/diagrams/cpu-quota.html	tune/src/quota.rs	d27850e02e1eb616a92c44647e5edd8c5b2eaa0e
+book/src/diagrams/cpu-quota.html	tune/src/quota.rs	1c890ef83a87118d948a93f7294aabba9dbf8ce2
 book/src/diagrams/cpu-quota.html	book/src/deploy/kubernetes.md	b12dc8c83235637823d4200cebb9520b588b6689
 book/src/diagrams/host-checks.html	tune/src/report.rs	0155ceffb7e00d2be1bc520650bce068375f2d7a
 book/src/diagrams/host-checks.html	tune/src/bin/ergon-tune.rs	784883919ddc79c6679d926711cfb0f19aa13e09
 book/src/diagrams/host-checks.html	tune/src/k8s.rs	bd268cc2931676a34d57f7d94010758f10a3b097
-book/src/diagrams/host-checks.html	tune/src/quota.rs	d27850e02e1eb616a92c44647e5edd8c5b2eaa0e
+book/src/diagrams/host-checks.html	tune/src/quota.rs	1c890ef83a87118d948a93f7294aabba9dbf8ce2
 book/src/diagrams/host-checks.html	tune/src/faults.rs	5e6f507ff92cc9eb326b6efaf377d3914ed30dc1
-book/src/diagrams/host-checks.html	tune/src/time/watch.rs	a74fd1701ee42c35b285d9164f2b4c117a7151e7
+book/src/diagrams/host-checks.html	tune/src/time/watch.rs	a781ebc1197422142506dd0d2655d18ade864f30
 book/src/diagrams/host-checks.html	tune/src/net.rs	46b7d4a4de870ae2cbc5390e35a34fc2ce5ad30b
 book/src/diagrams/host-checks.html	tune/src/finding.rs	d40a3c6412fbc6e10a664d8122fde3965e29fd26
 book/src/diagrams/host-checks.html	book/src/tune/overview.md	0476d848fb13d1e81c6f036cd98babd7dcc04a28

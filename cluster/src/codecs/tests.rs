@@ -2,9 +2,11 @@
 //! sbe-tool trees remain for head-to-head benches only.
 
 use super::session::{
-    ChallengeEncoder, ChallengeFixedFields, EventCode, NewLeaderEventEncoder, NewLeaderEventFixedFields,
+    ChallengeEncoder, ChallengeFixedFields, ClusterAction, ClusterActionRequestDecoder, ClusterActionRequestEncoder,
+    ClusterActionRequestFixedFields, ClusterTimeUnit, EventCode, NewLeaderEventEncoder, NewLeaderEventFixedFields,
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields, SessionEventEncoder, SessionEventFixedFields,
-    SessionMessageHeaderDecoder, SessionMessageHeaderEncoder, SessionMessageHeaderFixedFields,
+    SessionMessageHeaderDecoder, SessionMessageHeaderEncoder, SessionMessageHeaderFixedFields, SnapshotMark,
+    SnapshotMarkerDecoder, SnapshotMarkerEncoder, SnapshotMarkerFixedFields,
 };
 
 #[test]
@@ -200,5 +202,126 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
         }
         _other => panic!("expected SessionKeepAlive"),
     }
+    Ok(())
+}
+
+// Schema 111 v18 (Aeron 1.54.2) adds the optional `termBaseLogPosition`
+// (`position_t`, null -1) to ClusterActionRequest and SnapshotMarker. These
+// goldens are the Java 1.54.2 encoders' output (aeron-all-1.54.2.jar) for the
+// same inputs as the tests below.
+const JAVA_CLUSTER_ACTION_REQUEST: [u8; 48] = [
+    0x28, 0x00, 0x17, 0x00, 0x6f, 0x00, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf1, 0x53, 0x65, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+// flags and termBaseLogPosition null: i32::MIN and -1, not zero.
+const JAVA_CLUSTER_ACTION_REQUEST_NULLS: [u8; 48] = [
+    0x28, 0x00, 0x17, 0x00, 0x6f, 0x00, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf1, 0x53, 0x65, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+];
+const JAVA_SNAPSHOT_MARKER: [u8; 56] = [
+    0x30, 0x00, 0x64, 0x00, 0x6f, 0x00, 0x12, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+fn cluster_action_request_fields(flags: Option<i32>, term_base: Option<i64>) -> ClusterActionRequestFixedFields {
+    ClusterActionRequestFixedFields {
+        leadership_term_id: 3,
+        log_position: 1024,
+        timestamp: 1_700_000_000,
+        action: ClusterAction::SNAPSHOT,
+        flags,
+        term_base_log_position: term_base,
+    }
+}
+
+/// Rewrites the header as an older sender's (block length, version) and drops
+/// the fields that sender never wrote.
+fn as_older_sender(frame: &[u8], block_length: u16, version: u16) -> Vec<u8> {
+    let mut old = frame[..8 + usize::from(block_length)].to_vec();
+    old[0..2].copy_from_slice(&block_length.to_le_bytes());
+    old[6..8].copy_from_slice(&version.to_le_bytes());
+    old
+}
+
+#[test]
+fn cluster_action_request_v18_matches_java_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let mut data = [0u8; 64];
+    let enc = ClusterActionRequestEncoder::wrap_and_apply_header(&mut data, 0)
+        .fixed(&cluster_action_request_fields(Some(0), Some(512)));
+    assert_eq!(enc.as_bytes_with_header(), &JAVA_CLUSTER_ACTION_REQUEST[..]);
+
+    let dec = ClusterActionRequestDecoder::decode(&JAVA_CLUSTER_ACTION_REQUEST, 0)?;
+    assert_eq!(dec.leadership_term_id(), 3);
+    assert_eq!(dec.log_position(), 1024);
+    assert_eq!(dec.action(), ClusterAction::SNAPSHOT);
+    assert_eq!(dec.flags(), Some(0));
+    assert_eq!(dec.term_base_log_position(), Some(512));
+    Ok(())
+}
+
+#[test]
+fn cluster_action_request_absent_term_base_writes_java_null() -> Result<(), Box<dyn std::error::Error>> {
+    let mut data = [0u8; 64];
+    let enc = ClusterActionRequestEncoder::wrap_and_apply_header(&mut data, 0)
+        .fixed(&cluster_action_request_fields(None, None));
+    assert_eq!(enc.as_bytes_with_header(), &JAVA_CLUSTER_ACTION_REQUEST_NULLS[..]);
+
+    let dec = ClusterActionRequestDecoder::decode(&JAVA_CLUSTER_ACTION_REQUEST_NULLS, 0)?;
+    assert_eq!(dec.flags(), None);
+    assert_eq!(dec.term_base_log_position(), None);
+
+    // 0 is a real position, not the null.
+    let mut zero = JAVA_CLUSTER_ACTION_REQUEST;
+    zero[40..48].copy_from_slice(&0_i64.to_le_bytes());
+    assert_eq!(
+        ClusterActionRequestDecoder::decode(&zero, 0)?.term_base_log_position(),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn cluster_action_request_from_v17_sender_has_no_term_base() -> Result<(), Box<dyn std::error::Error>> {
+    let old = as_older_sender(&JAVA_CLUSTER_ACTION_REQUEST, 32, 17);
+    let dec = ClusterActionRequestDecoder::decode(&old, 0)?;
+    assert_eq!(dec.leadership_term_id(), 3);
+    assert_eq!(dec.log_position(), 1024);
+    assert_eq!(dec.timestamp(), 1_700_000_000);
+    assert_eq!(dec.action(), ClusterAction::SNAPSHOT);
+    assert_eq!(dec.flags(), Some(0));
+    assert_eq!(dec.term_base_log_position(), None);
+    Ok(())
+}
+
+#[test]
+fn snapshot_marker_v18_matches_java_and_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let mut data = [0u8; 64];
+    let enc = SnapshotMarkerEncoder::wrap_and_apply_header(&mut data, 0).fixed(&SnapshotMarkerFixedFields {
+        type_id: 2,
+        log_position: 4096,
+        leadership_term_id: 7,
+        index: 0,
+        mark: SnapshotMark::BEGIN,
+        time_unit: Some(ClusterTimeUnit::NANOS),
+        app_version: Some(1),
+        term_base_log_position: Some(2048),
+    });
+    assert_eq!(enc.as_bytes_with_header(), &JAVA_SNAPSHOT_MARKER[..]);
+
+    let dec = SnapshotMarkerDecoder::decode(&JAVA_SNAPSHOT_MARKER, 0)?;
+    assert_eq!(dec.term_base_log_position(), Some(2048));
+
+    let old = as_older_sender(&JAVA_SNAPSHOT_MARKER, 40, 17);
+    let dec = SnapshotMarkerDecoder::decode(&old, 0)?;
+    assert_eq!(dec.type_id(), 2);
+    assert_eq!(dec.log_position(), 4096);
+    assert_eq!(dec.leadership_term_id(), 7);
+    assert_eq!(dec.mark(), SnapshotMark::BEGIN);
+    assert_eq!(dec.time_unit(), Some(ClusterTimeUnit::NANOS));
+    assert_eq!(dec.app_version(), Some(1));
+    assert_eq!(dec.term_base_log_position(), None);
     Ok(())
 }

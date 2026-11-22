@@ -75,6 +75,21 @@ struct Key {
 /// under a few hundred bytes, which std converts on the stack). When
 /// something does, it renders the findings again: every T11 finding when
 /// the T11 judgement changed, the T12 finding when the clock source did.
+///
+/// ```
+/// use ergon_tune::{ClockWatch, Host, TimeSyncProbe};
+///
+/// let host = Host::system();
+/// let (mut watch, findings) = ClockWatch::open(&host, &TimeSyncProbe::default()); // before the loop
+/// for f in &findings {
+///     eprintln!("{f}"); // `T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock ...`
+/// }
+/// // From housekeeping, every few seconds; never inside the hot path:
+/// for f in watch.check() {
+///     eprintln!("{f}"); // none unless T11's judgement or the clock source changed
+/// }
+/// let _ = (watch.verdict(), watch.bound(), watch.leap_pending());
+/// ```
 #[derive(Debug)]
 pub struct ClockWatch {
     probe: TimeSyncProbe,

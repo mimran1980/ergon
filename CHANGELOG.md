@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.40] — 2026-11-22
+
 ### Added
 
 - `ergo-aeron-cluster` `AeronCluster::controlled_poll_egress`,
@@ -13,23 +15,18 @@
 
 - `ergon-tune` findings explain each check by its kernel or hardware mechanism and
   cite kernel and driver documentation instead of lab runs.
-
 - `ergon-tune` `DpdkNicPair::fstack_line()` and `smoltcp_line()` are
   now `addr_gateway_line()` and `port_ip_eal_line()`, and the NRI plugin's
   `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP` are now
   `ERGON_NIC_PAIR_ADDR_GATEWAY` and `ERGON_NIC_PAIR_PORT_IP_EAL`. The first
   line is now `addr=..,gateway=..,port=..[,prefix_len=..]`; the second line is
   unchanged.
-
 - rusteron 0.3.0 throughout, from 0.2.18, and the `aeron` submodule,
   pin and jars at Aeron 1.54.2, from 1.54.0 (Aeron's Gradle is now 9.9.1).
   `ergo-aeron-cluster` re-exports rusteron 0.3's `Aeron`, `AeronContext` and
   publication and subscription types, so callers follow rusteron's
   0.2-to-0.3 migration: `close()` consumes the handle, `AeronSubscription` is
-  not `Clone`, and thread traits follow Aeron C per type. The vendored cluster
-  schemas stay at Aeron 1.54.0's v17 (1.54.2's v18 only adds an optional
-  `termBaseLogPosition` to `ClusterActionRequest` and `SnapshotMarker`, which
-  a client never sends or reads).
+  not `Clone`, and thread traits follow Aeron C per type.
 - `AeronCluster::try_claim` returns `ClusterClaim<'_>`, which
   borrows the client until it is committed, aborted or dropped, as rusteron
   0.3's `AeronClaim<'_>` borrows its publication.
@@ -37,6 +34,17 @@
   variant `{ detail: String }` carrying the cluster's rejection detail from
   `SessionEvent(AUTHENTICATION_REJECTED)` (stripped of control characters and
   capped at 256 bytes), and fails the connect immediately.
+- The vendored cluster session schema (id 111) is Aeron 1.54.2's SBE version
+  18, from 17: every message the client sends carries version 18 in its
+  header, and `ClusterActionRequest` and `SnapshotMarker` gain the optional
+  `termBaseLogPosition` (null -1). Decoding a version 17 message still works;
+  its `termBaseLogPosition` reads as absent.
+- The `ergon-tune` crate documentation is a short overview with one example
+  and links to the book chapter and the README, no longer the whole README. The
+  other examples moved onto `Host::at`, `ThrottleWatch` and `ClockWatch`.
+- A message's var-data getters are `#[inline(always)]`: a getter for a late
+  field (one reached by walking the earlier ones) was left as a call, around
+  which the caller saved and reloaded its live registers on every message.
 
 ### Docs
 

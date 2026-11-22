@@ -1,4 +1,39 @@
-#![doc = include_str!("../README.md")]
+//! # ergon-tune
+//!
+//! Checks of a Linux host's low-latency settings, for start-up and
+//! housekeeping. A busy-spinning thread loses latency to whatever takes its
+//! CPU: a timer tick, an interrupt, `khugepaged`, a busy hyperthread, a
+//! container's CPU quota. Each check reads the host and returns a
+//! [`Finding`]: what is wrong, the exact fix and the evidence. Nothing is
+//! changed, and no check needs more than the standard library and
+//! [rustix](https://crates.io/crates/rustix).
+//!
+//! At start-up, name the CPUs that busy-spin and log what the checks find:
+//!
+//! ```
+//! use ergon_tune::{Component, Host, HotSet, Role, t1_isolation, t3_thp};
+//!
+//! let host = Host::system();
+//! let hot = HotSet::new().with(3, Role::Loop); // the loop runs on CPU 3
+//! for f in t1_isolation(&host, &hot).iter().chain(&t3_thp(&host, Component::Rt)) {
+//!     // One line each: `T1 warn: <what, its measured effect, the fix> (evidence: <where>)`.
+//!     if f.is_finding() {
+//!         eprintln!("{f}");
+//!     }
+//! }
+//! ```
+//!
+//! Before deploying, run the same checks on a node with the `ergon-tune`
+//! command (`cargo install ergon-tune`). Feature `nic` adds N1-N4.
+//!
+//! # Documentation
+//!
+//! - [The ergon-tune book chapter](https://mimran1980.github.io/ergon/tune/overview.html):
+//!   each setting in plain English, the evidence per check and a
+//!   symptom-to-fix table.
+//! - [Crate README](https://github.com/mimran1980/ergon/blob/main/tune/README.md):
+//!   the `ERGON_HOST_CHECKS` switch, the guarantees and limits and the command's
+//!   options.
 //!
 //! ## The checks
 //!

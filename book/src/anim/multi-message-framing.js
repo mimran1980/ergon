@@ -22,8 +22,8 @@
 //   sbe/src/codegen/runtime.rs:3239   FrameCursor: offset = frame_end; any error parks offset at buf.len()
 //   sbe/src/codegen/schema_dispatch.rs:224  AnySchemaMessage::decode keeps the whole slice as one frame
 //   sbe/tests/schema_dispatch_test.rs:113   unknown schema -> Other { template_id: 77, .. }
-//   cluster/schemas/aeron-cluster-codecs.xml:132  SessionMessageHeader: 3 x int64 (block 24), fixed-only
-//   cluster/schemas/aeron-cluster-codecs.xml:179  SessionKeepAlive: 2 x int64 (block 16)
+//   cluster/schemas/aeron-cluster-codecs.xml:134  SessionMessageHeader: 3 x int64 (block 24), fixed-only
+//   cluster/schemas/aeron-cluster-codecs.xml:181  SessionKeepAlive: 2 x int64 (block 16)
 //   sbe/src/codegen/runtime.rs:3268   try_decode arm calls try_wrap itself: the extent check happens before it returns
 //   sbe/src/codegen/tail_stages.rs:229 into_*: prefix-fits check, maxValue check (feature-tour.xml:31), checked_var_data_bounds
 //   sbe/src/codegen/tail_cache.rs:8   base decoder re-walks tails on every access; memoized() walks each boundary once
