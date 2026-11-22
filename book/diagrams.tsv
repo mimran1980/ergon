@@ -20,7 +20,7 @@ book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/nriplugin
 book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/names/names.go	5ab4498376289222e5aa865b89659136a69171a6
 book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/test/cgroup/kernel_test.go	8f466eef78dd47eddc6f1e22764530bff8e8f32b
 book/src/diagrams/isolated-partition.html	k8s/nri-shared-cpus/internal/latency/latency.go	c492cd3b43410f253ab1b010e1cb89a63b58dbac
-book/src/diagrams/cluster-session.html	cluster/src/client.rs	e65a9dc05bbc3a97de76f311894d8c728057cbcc
+book/src/diagrams/cluster-session.html	cluster/src/client.rs	5547edb9d08b33ae63630df3467dec6e715b68da
 book/src/diagrams/cluster-session.html	cluster/src/protocol.rs	a1f60988e0572e6d3eb9bf1e42ac501806d5c5b5
 book/src/diagrams/cluster-session.html	cluster/src/state.rs	4c1f80f95a08c33e0c35129c72d28ebf25743493
 book/src/diagrams/cluster-session.html	cluster/src/config.rs	5c6f3045e9cfd9e9fbe65c57a0bb47b74fe7d5f7
@@ -44,7 +44,7 @@ book/src/diagrams/bench-ab.html	scripts/bench-ab.sh	dbbf2fb942529233aac66ea87307
 book/src/diagrams/bench-ab.html	scripts/bench-ab-judge.py	e5d9eb5a5f7afef56f3d932e0e7c52ac0054f4b5
 book/src/diagrams/bench-ab.html	book/src/sbe/benchmarks/methodology.md	6a4b269a97ec1faf7afbeb20506c2a18f42bafb8
 book/src/diagrams/cluster-boundary.html	cluster/README.md	4653dcecdfa04a7c48cd3768500578a28d12aab3
-book/src/diagrams/cluster-boundary.html	cluster/src/client.rs	e65a9dc05bbc3a97de76f311894d8c728057cbcc
+book/src/diagrams/cluster-boundary.html	cluster/src/client.rs	5547edb9d08b33ae63630df3467dec6e715b68da
 book/src/diagrams/cluster-boundary.html	cluster/build.rs	a71d17b455199d07eb1fb50b170d30621fb4dc6c
 book/src/diagrams/cluster-boundary.html	cluster/Cargo.toml	a9fd5b1dad5c1dc4007769d088105a40d585bc13
 book/src/diagrams/cluster-boundary.html	book/src/cluster/overview.md	cf06745bc45d45d14c361fa4e7510d016e7fcb78
