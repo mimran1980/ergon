@@ -19,10 +19,10 @@ use std::time::{Duration, Instant};
 /// its request type and message.
 #[derive(Default)]
 struct Rec {
-    admin_cid: Option<i64>,
-    admin_code: Option<AdminResponseCode>,
-    admin_request_type: Option<AdminRequestType>,
-    admin_message: String,
+    cid: Option<i64>,
+    code: Option<AdminResponseCode>,
+    request_type: Option<AdminRequestType>,
+    message: String,
 }
 
 impl EgressListener for Rec {
@@ -39,11 +39,11 @@ impl EgressListener for Rec {
         msg: &str,
         _payload: &[u8],
     ) {
-        if self.admin_cid.is_none() {
-            self.admin_cid = Some(correlation_id);
-            self.admin_code = Some(response_code);
-            self.admin_request_type = Some(request_type);
-            msg.clone_into(&mut self.admin_message);
+        if self.cid.is_none() {
+            self.cid = Some(correlation_id);
+            self.code = Some(response_code);
+            self.request_type = Some(request_type);
+            msg.clone_into(&mut self.message);
         }
     }
 }
@@ -70,14 +70,14 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     while Instant::now() < deadline {
         let _ = client.send_keep_alive();
         client.poll(&mut listener, 10)?;
-        if listener.admin_cid.is_some() {
+        if listener.cid.is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    let got_cid = listener.admin_cid;
-    let got_code = listener.admin_code;
+    let got_cid = listener.cid;
+    let got_code = listener.code;
     // The round-trip is the parity point: the cluster MUST reply on
     // on_admin_response with the matching correlation id. The response CODE
     // depends on cluster auth: the default single-node test cluster denies
@@ -114,7 +114,7 @@ fn connect(
 fn await_admin_response(client: &mut AeronCluster) -> Result<Rec, Box<dyn std::error::Error>> {
     let mut listener = Rec::default();
     let deadline = Instant::now() + Duration::from_secs(15);
-    while listener.admin_cid.is_none() {
+    while listener.cid.is_none() {
         if Instant::now() >= deadline {
             return Err("no admin response".into());
         }
@@ -134,17 +134,11 @@ fn an_unauthorised_snapshot_request_is_refused() -> Result<(), Box<dyn std::erro
     let mut client = connect(&cluster)?;
     client.send_admin_request_to_take_snapshot(41)?;
     let response = await_admin_response(&mut client)?;
-    assert_eq!(response.admin_cid, Some(41));
+    assert_eq!(response.cid, Some(41));
+    assert_eq!(response.request_type, Some(AdminRequestType::SNAPSHOT));
+    assert_eq!(response.code, Some(AdminResponseCode::UNAUTHORISEDACCESS));
     assert_eq!(
-        response.admin_request_type,
-        Some(AdminRequestType::SNAPSHOT)
-    );
-    assert_eq!(
-        response.admin_code,
-        Some(AdminResponseCode::UNAUTHORISEDACCESS)
-    );
-    assert_eq!(
-        response.admin_message,
+        response.message,
         "Execution of the SNAPSHOT request was not authorised"
     );
     client.close()?;
@@ -160,9 +154,9 @@ fn an_authorised_snapshot_request_is_answered_ok() -> Result<(), Box<dyn std::er
     let mut client = connect(&cluster)?;
     client.send_admin_request_to_take_snapshot(42)?;
     let response = await_admin_response(&mut client)?;
-    assert_eq!(response.admin_cid, Some(42));
-    assert_eq!(response.admin_code, Some(AdminResponseCode::OK));
-    assert_eq!(response.admin_message, "");
+    assert_eq!(response.cid, Some(42));
+    assert_eq!(response.code, Some(AdminResponseCode::OK));
+    assert_eq!(response.message, "");
     client.close()?;
     Ok(())
 }
@@ -205,10 +199,10 @@ fn an_invalid_admin_request_is_answered_with_an_error() -> Result<(), Box<dyn st
         std::thread::sleep(Duration::from_millis(1));
     }
     let response = await_admin_response(&mut client)?;
-    assert_eq!(response.admin_cid, Some(43));
-    assert_eq!(response.admin_request_type, Some(AdminRequestType::NullVal));
-    assert_eq!(response.admin_code, Some(AdminResponseCode::ERROR));
-    assert_eq!(response.admin_message, "Unknown request type: NULL_VAL");
+    assert_eq!(response.cid, Some(43));
+    assert_eq!(response.request_type, Some(AdminRequestType::NullVal));
+    assert_eq!(response.code, Some(AdminResponseCode::ERROR));
+    assert_eq!(response.message, "Unknown request type: NULL_VAL");
     client.close()?;
     Ok(())
 }
