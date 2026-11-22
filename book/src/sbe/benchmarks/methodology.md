@@ -11,5 +11,8 @@ Two rules to keep in mind:
   instruction counts agree.
 - Compare against your own previous release as well as against sbe-tool.
   Two releases can both pass the sbe-tool ceiling while the second is slower.
+  `just bench-ab <base> <branch>` compares two commits on one host:
+
+{{#include ../../diagrams/bench-ab.html}}
 
 Gate summary: [Benchmarks](../benchmarks.md).

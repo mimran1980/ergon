@@ -11,6 +11,10 @@ protocol.
 
 {{#include ../../../cluster/README.md:scope}}
 
+Where the crate sits between your loop and the Java cluster:
+
+{{#include ../diagrams/cluster-boundary.html}}
+
 ## Session lifecycle
 
 <div class="ergon-anim" data-anim="cluster-session-lifecycle" data-title="Cluster client session: connect, keep alive, fail over, close"></div>

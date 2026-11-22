@@ -35,6 +35,11 @@ release commit:
 a release recipe skips `_release-pre`, or if either path stops reaching the
 dry runs.
 
+What the workspace publishes, what it takes from crates.io, and the order of
+the steps:
+
+{{#include ../diagrams/ergon-release.html}}
+
 `just policy` and the cheap gates in `just preflight` run at the same time
 (`scripts/run-parallel.sh`); every script runs to the end and any failure
 fails the recipe. The coverage ratchet runs ergo-sbe tests at default threads.
