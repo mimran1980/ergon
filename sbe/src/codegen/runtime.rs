@@ -861,20 +861,25 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                         max_length: usize::MAX as u64,
                     }
                 })?;
-                let data_start = offset.checked_add(prefix_size).ok_or(
-                    DecodeError::BufferTooShort {
-                        field,
-                        needed: usize::MAX,
-                        available: buffer_length.saturating_sub(offset),
-                    },
-                )?;
-                let data_end = data_start.checked_add(length).ok_or(
-                    DecodeError::BufferTooShort {
-                        field,
-                        needed: usize::MAX,
-                        available: buffer_length.saturating_sub(offset),
-                    },
-                )?;
+                // No overflow arm for `offset + prefix_size`: every caller
+                // proves that sum fits the buffer first (the typed prefix
+                // check before its read, or a successful `read_bytes`), so
+                // the sum neither overflows nor exceeds `buffer_length`.
+                let data_start = offset + prefix_size;
+                // `match`, not `ok_or`: `ok_or` would build the error —
+                // including its `saturating_sub` — on every call, not only
+                // on the cold overflow arm.
+                let data_end = match data_start.checked_add(length) {
+                    Some(end) => end,
+                    None => {
+                        cold();
+                        return Err(DecodeError::BufferTooShort {
+                            field,
+                            needed: usize::MAX,
+                            available: buffer_length.saturating_sub(offset),
+                        });
+                    }
+                };
                 if data_end > buffer_length {
                     cold();
                     return Err(DecodeError::BufferTooShort {
@@ -1723,7 +1728,12 @@ pub(crate) fn find_matching_end(
     tokens.len() - 1
 }
 
-pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
+/// Emit the enum type and its inherent impls.
+///
+/// `labels_shadow_as_str` is set when the variant-labels knob replaces the
+/// built-in `as_str` for this enum (its labels impl, emitted by the caller,
+/// defines the method); `Display` delegates to whichever `as_str` exists.
+pub(crate) fn generate_enum(src: &mut String, tokens: &[Token], labels_shadow_as_str: bool) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);
     let encoding_type = tokens[0]
@@ -1860,6 +1870,25 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
         quote::quote! {}
     };
 
+    // Omitted when the variant-labels knob's labels impl defines `as_str`
+    // for this enum: one definition, and `Display` below delegates to it.
+    let as_str_method = if labels_shadow_as_str {
+        quote::quote! {}
+    } else {
+        quote::quote! {
+            /// Variant name as a `&'static str` — no allocation, unlike
+            /// `.to_string()` through [`core::fmt::Display`].
+            #[must_use = "discarding this value is almost always a mistake"]
+            #[inline]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    #(Self::#variant_names => stringify!(#variant_names),)*
+                    Self::NullVal => "NullVal",
+                }
+            }
+        }
+    };
+
     // NullVal discriminant: use the schema's nullValue if set.
     // null_value is stored as u64 — reinterpret for signed encoding types.
     let null_disc: syn::LitInt = tokens[0]
@@ -1953,16 +1982,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
                 if matches!(self, Self::NullVal) { None } else { Some(self) }
             }
 
-            /// Variant name as a `&'static str` — no allocation, unlike
-            /// `.to_string()` through [`core::fmt::Display`].
-            #[must_use = "discarding this value is almost always a mistake"]
-            #[inline]
-            pub const fn as_str(self) -> &'static str {
-                match self {
-                    #(Self::#variant_names => stringify!(#variant_names),)*
-                    Self::NullVal => "NullVal",
-                }
-            }
+            #as_str_method
 
             #as_bool_method
         }
@@ -3705,6 +3725,26 @@ pub(crate) fn canonical_token_fingerprint(
         }
         if e.deprecated.is_some() {
             let _ = write!(fp, "dep:");
+        }
+    }
+    fp
+}
+
+/// [`canonical_token_fingerprint`] plus every token's extension marks.
+///
+/// Used for types shared across schemas: a consumer skips its own definition
+/// and reuses the owner's, so marks that differ would be silently replaced
+/// (labels, hook output). Kept apart so the message-header layout check, which
+/// compares wire layout only, is unaffected.
+pub(crate) fn canonical_shared_type_fingerprint(
+    tokens: &[crate::ir::Token],
+    byte_order: crate::ir::ByteOrder,
+) -> String {
+    use std::fmt::Write;
+    let mut fp = canonical_token_fingerprint(tokens, byte_order);
+    for t in tokens {
+        if !t.extensions.is_empty() {
+            let _ = write!(fp, "|{}:{:?}", t.name, t.extensions);
         }
     }
     fp

@@ -35,6 +35,7 @@ pub(crate) fn structural(
         signal,
         encoding: Encoding::default(),
         span,
+        extensions: Default::default(),
     }
 }
 
@@ -42,9 +43,13 @@ pub(crate) fn element_children<'a, 'input>(
     node: Node<'a, 'input>,
 ) -> impl Iterator<Item = Node<'a, 'input>> {
     // Skip <description> and <comment> children: collect_description() reads
-    // their text from node.children() directly.
+    // their text from node.children() directly. Skip foreign-namespace
+    // extension elements: grammar loops never see them (capture is separate).
     node.children().filter(|c| {
-        c.is_element() && c.tag_name().name() != "description" && c.tag_name().name() != "comment"
+        c.is_element()
+            && c.tag_name().name() != "description"
+            && c.tag_name().name() != "comment"
+            && !super::ext::is_extension_element(*c)
     })
 }
 

@@ -8,6 +8,40 @@ The `ergon-shared-cpus` image and chart are published as 0.1.5.
 
 ### Added
 
+- `ergo-sbe` `GenerationConfig::with_field_extension_defaults(default_attr,
+  omit_attr)` emits stringly `{FIELD}_SCHEMA_DEFAULT: Option<&'static str>`
+  and `{FIELD}_SCHEMA_OMIT_NULL: bool` consts for fixed fields carrying
+  either extension attribute — message fields on `{Name}Schema`, group-entry
+  fields on the group decoder. Values are the schema's own strings; hooks
+  read the consts and build whatever layer they want. Nothing is emitted
+  without the marks.
+- `ergo-sbe` `GenerationConfig::with_exponent_links(attr)` emits a
+  `{field}_with_exponent()` helper on the owning decoder for each fixed
+  field whose extension attribute names a sibling exponent field; the
+  helper returns the pair of the two accessors' values, so domain types,
+  `Option` and fixed integer arrays (`[u8; 16]` magnitudes) pass through
+  untouched. A dangling or type-invalid reference fails generation with
+  the new `GenerateError::ExtensionReference` instead of being skipped;
+  a group field whose target lives in the enclosing message is recognised
+  and skipped instead — the pair spans two decoders. Decode side only.
+- `ergo-sbe` `GenerationConfig::with_variant_labels(attr, method)` emits a
+  total label method (`&'static str`) on every enum/set at least one of whose
+  values carries the schema extension attribute: the value's label when it
+  carries one, the enum's variant name (what the built-in `as_str` returns)
+  or the set's raw schema name otherwise. The method name is config and
+  validated as a Rust identifier (`InvalidConfiguration` if not); `as_str`
+  replaces the enum's built-in one, so `Display` follows. Nothing is emitted
+  without the marks, and no encoder or wire path changes.
+- `ergo-sbe` retains foreign-namespace schema annotations at parse time:
+  public `Extensions` / `ExtensionAttr` / `ExtensionElement` on `Token.extensions`
+  and `Ir.extensions`, with local-name and exact-namespace accessors. Capture
+  is parse-time only; generated code is unchanged without an opt-in.
+- `ergo-sbe` `ConversionSelector::ExtensionAttr` (constructors
+  `extension_attr` / `extension_attr_value`) selects message and group fields
+  by a schema extension mark; precedence is `FieldPath` > `SemanticType` >
+  `ExtensionAttr` > `NamedType`, the Rust type still comes from `build.rs`,
+  and two extension domain selectors tying on one field with different types
+  fail generation instead of falling back to registration order.
 - `ergo-aeron-cluster` `AeronCluster::controlled_poll_egress`,
   `AeronCluster::egress_position`, `ControlledEgressListener`, and
   `ControlledAction` (`Abort`, `Break`, `Commit`, `Continue`), matching Java's
@@ -32,6 +66,12 @@ The `ergon-shared-cpus` image and chart are published as 0.1.5.
 - `AeronCluster::try_claim` returns `ClusterClaim<'_>`, which
   borrows the client until it is committed, aborted or dropped, as rusteron
   0.3's `AeronClaim<'_>` borrows its publication.
+- `ergo-sbe` `Token` and `Ir` gain a public `extensions` field;
+  struct literals must set it (use `Default::default()`).
+- `ergo-sbe` hook surfaces gain a public `extensions` field —
+  every `ItemContext` variant plus `FieldInfo`, `EnumVariantInfo` and
+  `SetChoiceInfo` — and `ConversionSelector` gains an `ExtensionAttr` variant;
+  struct literals and exhaustive matches must be updated.
 - `ergo-aeron-cluster` `ClusterError::AuthRejected` is now a struct
   variant `{ detail: String }` carrying the cluster's rejection detail from
   `SessionEvent(AUTHENTICATION_REJECTED)` (stripped of control characters and
@@ -47,10 +87,55 @@ The `ergon-shared-cpus` image and chart are published as 0.1.5.
 - A message's var-data getters are `#[inline(always)]`: a getter for a late
   field (one reached by walking the earlier ones) was left as a call, around
   which the caller saved and reloaded its live registers on every message.
+- Generated decoders prove each var-data length prefix once instead of two
+  or three times, keep the var-data length-overflow error on a cold path,
+  and drop a redundant poison test from group `next()`. Truncated or
+  corrupt frames report the same errors, except where the block-length
+  floor below now rejects them first.
+- The random-access decoder's var-data tail walk bounds each length prefix
+  with a checked add, which retires fewer instructions per message than the
+  saturating form. Errors are unchanged.
+- `ergo-sbe` accepts a child element in a foreign namespace (neither the SBE
+  namespace nor the document root's) on any schema element and skips it,
+  where it was rejected as an unexpected element. An element in the SBE
+  namespace is never skipped, so a misspelt `sbe:` name still fails.
+- `ergo-sbe` `try_wrap` reports a too-small declared block length as
+  `BufferTooShort { field: "blockLength", needed: <floor>, available: <declared> }`.
+- Generated composite, enum, set and bool encoder setters write unchecked
+  after the constructor's extent proof, as primitive setters already did.
+
+### Fixed
+
+- `ergo-sbe` `try_wrap` and `verify` floor the declared block length at the
+  wire's acting version: `try_wrap` rejects a block length below that
+  version's readable fixed extent (a long buffer no longer hides it), and
+  `verify` accepts an older-version frame `try_wrap` accepts instead of
+  flooring at the compiled `BLOCK_LENGTH`. At the current version the
+  compiled `BLOCK_LENGTH` stays the floor, and so it does for a frame
+  claiming a newer version, since extensions only append.
+- `ergo-sbe` `generate_multi` with a shared module fails with
+  `IncompatibleSharedType` when a consumer's enum, set or composite carries
+  different extension marks from the owner's, instead of silently using the
+  owner's (labels and hook output no longer depend on schema order).
+- Generated var-data getters bound-check the length prefix without an
+  overflowing add before the unchecked read.
+- `ergo-aeron-cluster` connect reassembles a handshake event that spans
+  several fragments, as Java's `EgressPoller` does, instead of failing with
+  `ProtocolError` on an event larger than one MTU.
+- `ergo-aeron-cluster` `send_admin_request_to_take_snapshot` tries a
+  back-pressured claim up to three times, as Java's
+  `sendAdminRequestToTakeASnapshot` does, before returning the retryable
+  error.
 
 ### Docs
 
 - Book: one sidebar part per module, light pages before deep ones.
+- Book: an Extension XML page (ergo-sbe in depth, Configuration) with the
+  exchange-example sample as its worked example; the feature tour links to
+  it and to Code-generation hooks.
+- Book: an unknown-enum-values recipe, and the trust-boundary page states
+  the version-aware block-length floor.
+- `just book-serve` listens on all interfaces (`--hostname 0.0.0.0`).
 
 ## [0.1.39] — 2026-11-11
 

@@ -12,10 +12,12 @@ use super::attr::{
     string_attr, u16_attr,
 };
 use super::error::{Fault, FaultKind, IncludeCause};
+use super::ext::{extension_content, merge_extensions};
 use super::message::parse_message;
 use super::registry::TypeRegistry;
 use super::types::parse_types_node;
 use super::warn::WarnState;
+use crate::ir::Extensions;
 
 /// DFS include graph: the stack is the in-flight visit path; `finished` files
 /// are skipped (diamond/shared includes), not treated as cycles.
@@ -85,6 +87,7 @@ pub(crate) fn parse_schema(
 
     let mut registry = initial_registry;
     let mut tokens = Vec::new();
+    let mut extensions = extension_content(root);
 
     // First pass: Parse all types, including included files
     for child in element_children(root) {
@@ -99,10 +102,12 @@ pub(crate) fn parse_schema(
                     &mut tokens,
                     warn_state,
                     dependencies,
+                    &mut extensions,
                 )?;
             }
         } else if child.tag_name().name() == "types" {
             parse_types_node(child, &mut registry, &mut tokens, warn_state)?;
+            merge_extensions(&mut extensions, extension_content(child));
         } else if child.tag_name().name() == "message" {
             // messages are parsed in second pass
         } else {
@@ -146,6 +151,7 @@ pub(crate) fn parse_schema(
         header_type,
         tokens,
         sources: Vec::new(),
+        extensions,
     })
 }
 
@@ -242,6 +248,7 @@ fn ingest_include(
     tokens: &mut Vec<Token>,
     warn_state: &WarnState,
     dependencies: &mut Vec<PathBuf>,
+    extensions: &mut Extensions,
 ) -> Result<(), Fault> {
     let (resolved, included_content) = match read_include_file(href, base_dir, walk) {
         Ok(IncludeHit::Skip) => return Ok(()),
@@ -267,6 +274,7 @@ fn ingest_include(
         tokens,
         warn_state,
         dependencies,
+        extensions,
     );
     walk.stack.pop();
     walk.finished.insert(resolved);
@@ -283,6 +291,7 @@ fn ingest_included_document(
     tokens: &mut Vec<Token>,
     warn_state: &WarnState,
     dependencies: &mut Vec<PathBuf>,
+    extensions: &mut Extensions,
 ) -> Result<(), Fault> {
     let included_doc = Document::parse(included_content).map_err(|e| Fault {
         kind: FaultKind::Invalid {
@@ -294,6 +303,7 @@ fn ingest_included_document(
     let Some(inc_node) = included_doc.root().children().find(Node::is_element) else {
         return Ok(());
     };
+    merge_extensions(extensions, extension_content(inc_node));
     match inc_node.tag_name().name() {
         "types" => {
             parse_types_node(inc_node, registry, tokens, warn_state)?;
@@ -328,10 +338,14 @@ fn ingest_included_document(
                         tokens,
                         warn_state,
                         dependencies,
+                        extensions,
                     )?;
                 }
             }
-            "types" => parse_types_node(sub_child, registry, tokens, warn_state)?,
+            "types" => {
+                parse_types_node(sub_child, registry, tokens, warn_state)?;
+                merge_extensions(extensions, extension_content(sub_child));
+            }
             _ => {}
         }
     }

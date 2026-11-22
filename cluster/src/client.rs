@@ -275,6 +275,27 @@ fn track_ingress_error(
 /// Java `AeronCluster.SEND_ATTEMPTS`.
 const SEND_ATTEMPTS: usize = 3;
 
+/// Runs `send` up to [`SEND_ATTEMPTS`] times while it is refused with a
+/// retryable error and `connected` still holds, and returns the last refusal
+/// when every attempt fails. Java makes the same number of attempts but keeps
+/// going while the session is not connected; this stops early instead.
+fn with_send_attempts<C, T>(
+    ctx: &mut C,
+    mut send: impl FnMut(&mut C) -> Result<T, ClusterError>,
+    connected: impl Fn(&C) -> bool,
+) -> Result<T, ClusterError> {
+    let mut attempt = 1;
+    loop {
+        match send(ctx) {
+            Err(error) if error.is_retryable() && connected(ctx) && attempt < SEND_ATTEMPTS => {
+                attempt += 1;
+                std::hint::spin_loop();
+            }
+            result => return result,
+        }
+    }
+}
+
 /// `offer_parts` accepts at most this many slices, header included.
 const MAX_OFFER_PARTS: usize = 8;
 
@@ -567,13 +588,18 @@ fn take_connected(
     Some((member.endpoint.clone(), publication))
 }
 
+/// Reads one egress fragment during connect. `assembler` rebuilds an event
+/// that spans several fragments, as Java's `EgressPoller` does, so a long
+/// REDIRECT endpoint list or detail still parses.
 fn poll_subscription(
     egress: &AeronSubscription,
+    assembler: &mut AeronFragmentClosureAssembler,
 ) -> Result<Option<(crate::poller::EgressEvent, Option<i32>)>, ClusterError> {
     let mut event = None;
     let mut error = None;
-    egress
-        .poll_fn(
+    assembler
+        .poll(
+            egress,
             |data, header| {
                 if event.is_none() && error.is_none() {
                     match crate::poller::parse_event(data) {
@@ -781,7 +807,7 @@ impl AeronCluster {
             .iter()
             .map(|endpoint| open_member(&aeron, builder, &endpoint.endpoint))
             .collect::<Result<Vec<_>, _>>()?;
-        let regular_assembler = AeronFragmentClosureAssembler::new()
+        let mut regular_assembler = AeronFragmentClosureAssembler::new()
             .map_err(|error| ClusterError::aeron("AeronFragmentClosureAssembler", error))?;
         let controlled_assembler = AeronControlledFragmentClosureAssembler::new()
             .map_err(|error| ClusterError::aeron("AeronControlledFragmentClosureAssembler", error))?;
@@ -817,7 +843,7 @@ impl AeronCluster {
                 }
             }
             if let Some(subscription) = &egress
-                && let Some((event, image_session_id)) = poll_subscription(subscription)?
+                && let Some((event, image_session_id)) = poll_subscription(subscription, &mut regular_assembler)?
                 && let Some(correlation_id) = attempt.correlation_id
             {
                 match protocol::classify_handshake(event, correlation_id, image_session_id)? {
@@ -904,7 +930,7 @@ impl AeronCluster {
             if attempt.challenge_bytes.is_some() {
                 let _ = attempt.offer_challenge(&self.ingress)?;
             }
-            if let Some((event, image_session_id)) = poll_subscription(&self.egress)?
+            if let Some((event, image_session_id)) = poll_subscription(&self.egress, &mut self.regular_assembler)?
                 && let Some(correlation_id) = attempt.correlation_id
             {
                 match protocol::classify_handshake(event, correlation_id, image_session_id)? {
@@ -1157,7 +1183,8 @@ impl AeronCluster {
         )
     }
 
-    /// Sends an `AdminRequest` such as a snapshot on the ingress publication.
+    /// Sends an `AdminRequest` such as a snapshot on the ingress publication,
+    /// trying up to [`SEND_ATTEMPTS`] times while back pressured, as Java does.
     ///
     /// The response reaches the egress listener through
     /// [`crate::EgressListener::on_admin_response`].
@@ -1171,6 +1198,20 @@ impl AeronCluster {
             std::hint::cold_path();
             return Err(ClusterError::NotConnected);
         }
+        with_send_attempts(
+            self,
+            |client| client.try_admin_request(correlation_id, request_type, payload),
+            |client| client.state == SessionState::Connected,
+        )
+    }
+
+    /// One attempt of [`Self::send_admin_request`].
+    fn try_admin_request(
+        &mut self,
+        correlation_id: i64,
+        request_type: AdminRequestType,
+        payload: &[u8],
+    ) -> Result<i64, ClusterError> {
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
         let mut claim = match self.ingress.try_claim_owned(len) {
             Ok(claim) => claim,
@@ -1592,10 +1633,15 @@ impl AeronCluster {
     /// `sendAdminRequestToTakeASnapshot`). The response reaches the egress
     /// listener through [`crate::EgressListener::on_admin_response`].
     ///
+    /// A back-pressured claim is tried up to three times, as Java's
+    /// `SEND_ATTEMPTS`.
+    ///
     /// # Errors
     ///
     /// [`ClusterError::NotConnected`] outside `Connected`, and
-    /// [`ClusterError::Publication`] when Aeron refuses the offer.
+    /// [`ClusterError::Publication`] when Aeron refuses the claim: at once when
+    /// the refusal is not retryable or the session leaves `Connected`, else
+    /// after the third back-pressured attempt.
     pub fn send_admin_request_to_take_snapshot(&mut self, correlation_id: i64) -> Result<i64, ClusterError> {
         self.send_admin_request(correlation_id, AdminRequestType::SNAPSHOT, &[])
     }
@@ -1833,6 +1879,8 @@ pub struct AsyncClusterConnect {
     aeron: Option<Aeron>,
     ingress: Option<AeronExclusivePublication>,
     egress: Option<AeronSubscription>,
+    /// Reassembles fragmented handshake events; made on the first egress poll.
+    connect_assembler: Option<AeronFragmentClosureAssembler>,
     /// Every member while `ingressEndpoints` is set. Empty for one channel.
     members: Vec<MemberIngress>,
     builder: crate::SessionBuilder,
@@ -1882,6 +1930,7 @@ impl AsyncClusterConnect {
             aeron: None,
             ingress: None,
             egress: None,
+            connect_assembler: None,
             members: Vec::new(),
             builder,
             aeron_dir,
@@ -2200,8 +2249,18 @@ impl AsyncClusterConnect {
     }
 
     /// Polls one egress event, with the session id of the image that delivered it.
-    fn poll_one_event(&self) -> Result<Option<(crate::poller::EgressEvent, Option<i32>)>, ClusterError> {
-        self.egress.as_ref().map_or(Ok(None), poll_subscription)
+    fn poll_one_event(&mut self) -> Result<Option<(crate::poller::EgressEvent, Option<i32>)>, ClusterError> {
+        let Some(egress) = self.egress.as_ref() else {
+            return Ok(None);
+        };
+        let assembler = match &mut self.connect_assembler {
+            Some(assembler) => assembler,
+            empty @ None => empty.insert(
+                AeronFragmentClosureAssembler::new()
+                    .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?,
+            ),
+        };
+        poll_subscription(egress, assembler)
     }
 }
 
@@ -2415,5 +2474,41 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// A send refused by `failures` in turn, then landing at position 64.
+    fn refusing(failures: Vec<PublicationFailure>) -> (usize, impl FnMut(&mut usize) -> Result<i64, ClusterError>) {
+        (0, move |calls: &mut usize| {
+            *calls += 1;
+            failures.get(*calls - 1).map_or(Ok(64), |&failure| {
+                Err(ClusterError::Publication {
+                    failure,
+                    context: "admin_request",
+                })
+            })
+        })
+    }
+
+    /// Java's `sendAdminRequestToTakeASnapshot` tries `SEND_ATTEMPTS` times
+    /// while back pressured, and stops at once on a refusal it cannot retry.
+    #[test]
+    fn test_send_attempts_retry_back_pressure_up_to_three_times() {
+        let back_pressured = PublicationFailure::BackPressured;
+        let (mut calls, send) = refusing(vec![back_pressured, back_pressured]);
+        assert_eq!(with_send_attempts(&mut calls, send, |_| true).ok(), Some(64));
+        assert_eq!(calls, 3);
+
+        let (mut calls, send) = refusing(vec![back_pressured; 4]);
+        assert!(with_send_attempts(&mut calls, send, |_| true).is_err_and(|e| e.is_retryable()));
+        assert_eq!(calls, SEND_ATTEMPTS);
+
+        let (mut calls, send) = refusing(vec![PublicationFailure::Closed]);
+        assert!(with_send_attempts(&mut calls, send, |_| true).is_err());
+        assert_eq!(calls, 1);
+
+        // A refusal that moved the session out of `Connected` ends the loop.
+        let (mut calls, send) = refusing(vec![PublicationFailure::NotConnected]);
+        assert!(with_send_attempts(&mut calls, send, |_| false).is_err());
+        assert_eq!(calls, 1);
     }
 }

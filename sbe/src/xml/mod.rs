@@ -30,6 +30,7 @@
 mod attr;
 mod entry;
 mod error;
+mod ext;
 mod message;
 mod registry;
 mod schema;
@@ -41,6 +42,7 @@ mod tests;
 
 pub use entry::{SchemaSource, parse};
 pub use error::{IncludeCause, ParseError};
+pub(crate) use ext::is_extension_element as ext_is_extension_element;
 pub(crate) use registry::parse_sbe_float;
 
 // Test-visible re-exports of parse internals (xml is already #[doc(hidden)]).

@@ -90,6 +90,12 @@ const SHAPES: &[(&str, &str, &str)] = &[
     // their null image on `add()` at both group locations.
     ("a_opt", "[u16; 2]", "[u16; 2]"),
     ("c_opt", "Option<Pair>", "Option<Pair>"),
+    // Extension exponent link: the pair helper mirrors the version-gated
+    // accessor, so the v1 cell is `Option`.
+    ("x_link", "u64", "Option<u64>"),
+    // Extension field defaults: the consts ride the Schema unit / group
+    // decoders, but the DTO cell is still the wire type.
+    ("x_def", "i64", "Option<i64>"),
 ];
 
 const VERSIONS: &[u16] = &[0, 1];
@@ -354,6 +360,95 @@ const VARIANTS: &[Variant] = &[
             const _: () = assert!(Model::HOOKED.len() == 5);
         "#,
         expect_src: &[],
+    },
+    Variant {
+        name: "extension_variant_labels",
+        domain_impls: false,
+        build: |c| c.with_variant_labels("jsonValue", "as_str"),
+        // `as_str` already exists on every enum: the knob's labels impl
+        // replaces it (and `Display`, which delegates), so a duplicate
+        // definition or a missing label fails here at compile time.
+        module_suffix: r#"
+            const _: () = assert!(Model::A.as_str().len() == 5);
+            const _: () = assert!(BooleanType::T.as_str().len() == 7);
+        "#,
+        expect_src: &[r#""alpha""#],
+    },
+    Variant {
+        name: "extension_exponent_links",
+        domain_impls: false,
+        build: |c| c.with_exponent_links("exponent"),
+        // The pair helpers must exist at all three codegen locations with
+        // the accessors' exact return types; a missing helper or a wrong
+        // tuple element fails this compile.
+        module_suffix: r#"
+            fn _ext_link_msg(d: &FlatDecoder<'_>) -> (u64, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_link_msg_v1(d: &FlatDecoder<'_>) -> (Option<u64>, i8) { d.x_link_v1_with_exponent() }
+            fn _ext_link_row(d: &NestedRowsEntryDecoder<'_>) -> (u64, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_link_cell(d: &NestedRowsCellsEntryDecoder<'_>) -> (u64, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_link_cell_v1(d: &NestedRowsCellsEntryDecoder<'_>) -> (Option<u64>, i8) { d.x_link_v1_with_exponent() }
+        "#,
+        expect_src: &["with_exponent"],
+    },
+    Variant {
+        // `pair_member`'s domain branch: every marked mantissa is domain-typed,
+        // so the pair helper must call the domain getter and declare exactly
+        // its `Result`-wrapped return type at all three codegen locations.
+        name: "extension_exponent_links_domain",
+        domain_impls: false,
+        build: |c| {
+            c.with_exponent_links("exponent")
+                .with_manual_domain_type(ConversionSelector::extension_attr("exponent"), "u128")
+        },
+        module_suffix: r#"
+            impl TryFromSbe<u64> for u128 {
+                type Error = &'static str;
+                fn try_from_sbe(wire: u64) -> Result<Self, Self::Error> { Ok(u128::from(wire)) }
+            }
+            impl TryToSbe<u64> for u128 {
+                type Error = &'static str;
+                fn try_to_sbe(&self) -> Result<u64, Self::Error> { Ok(*self as u64) }
+            }
+            fn _ext_dom_msg(d: &FlatDecoder<'_>) -> (Result<u128, &'static str>, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_dom_msg_v1(d: &FlatDecoder<'_>) -> (Result<Option<u128>, &'static str>, i8) { d.x_link_v1_with_exponent() }
+            fn _ext_dom_row(d: &NestedRowsEntryDecoder<'_>) -> (Result<u128, &'static str>, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_dom_cell(d: &NestedRowsCellsEntryDecoder<'_>) -> (Result<u128, &'static str>, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_dom_cell_v1(d: &NestedRowsCellsEntryDecoder<'_>) -> (Result<Option<u128>, &'static str>, i8) { d.x_link_v1_with_exponent() }
+        "#,
+        expect_src: &["x_link_v0_wire"],
+    },
+    Variant {
+        // `pair_member`'s `*_wire` branch: a conversion on the marked field
+        // renames the raw accessor, so the helper must call `{snake}_wire`.
+        name: "extension_exponent_links_conversion",
+        domain_impls: false,
+        build: |c| {
+            c.with_exponent_links("exponent")
+                .with_conversion(ConversionSelector::extension_attr("exponent"))
+        },
+        module_suffix: r#"
+            fn _ext_wire_msg(d: &FlatDecoder<'_>) -> (u64, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_wire_msg_v1(d: &FlatDecoder<'_>) -> (Option<u64>, i8) { d.x_link_v1_with_exponent() }
+            fn _ext_wire_row(d: &NestedRowsEntryDecoder<'_>) -> (u64, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_wire_cell(d: &NestedRowsCellsEntryDecoder<'_>) -> (u64, i8) { d.x_link_v0_with_exponent() }
+            fn _ext_wire_cell_v1(d: &NestedRowsCellsEntryDecoder<'_>) -> (Option<u64>, i8) { d.x_link_v1_with_exponent() }
+        "#,
+        expect_src: &["x_link_v0_wire"],
+    },
+    Variant {
+        name: "extension_field_defaults",
+        domain_impls: false,
+        build: |c| c.with_field_extension_defaults("jsonDefaultValue", "jsonOmitNull"),
+        // The consts must exist on the message's Schema unit and on both
+        // group decoders; a missing one fails this compile.
+        module_suffix: r#"
+            const _: () = assert!(FlatSchema::X_DEF_V0_SCHEMA_DEFAULT.is_some());
+            const _: () = assert!(FlatSchema::X_DEF_V0_SCHEMA_OMIT_NULL);
+            const _: () = assert!(NestedRowsDecoder::X_DEF_V0_SCHEMA_DEFAULT.is_some());
+            const _: () = assert!(NestedRowsCellsDecoder::X_DEF_V0_SCHEMA_DEFAULT.is_some());
+            const _: () = assert!(NestedRowsCellsDecoder::X_DEF_V1_SCHEMA_OMIT_NULL);
+        "#,
+        expect_src: &["SCHEMA_DEFAULT"],
     },
 ];
 

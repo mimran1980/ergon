@@ -12,6 +12,7 @@ use super::attr::{
     string_attr, structural, validate_sbe_name,
 };
 use super::error::Fault;
+use super::ext::extension_content;
 use super::registry::{
     TypeRegistry, compute_type_size, estimate_composite_member_size, parse_u64_val,
     resolve_type_to_tokens, value_in_declared_range,
@@ -268,6 +269,7 @@ pub(crate) fn parse_composite(
             ..Encoding::default()
         },
         span: None,
+        extensions: extension_content(node),
     });
 
     // Occupied exclusive ranges [start, end) for explicit member offsets.
@@ -294,7 +296,7 @@ pub(crate) fn parse_composite(
                 parse_enum(child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            if let Some(resolved) = resolve_type_to_tokens(
+            if let Some(mut resolved) = resolve_type_to_tokens(
                 &enum_name,
                 &enum_name,
                 None,
@@ -303,6 +305,9 @@ pub(crate) fn parse_composite(
                 Some(child.range()),
                 None,
             ) {
+                if let Some(first) = resolved.first_mut() {
+                    first.extensions = extension_content(child);
+                }
                 composite_tokens.extend(resolved);
             }
             continue;
@@ -313,7 +318,7 @@ pub(crate) fn parse_composite(
                 parse_set(child, registry, tokens)?;
             }
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-            if let Some(resolved) = resolve_type_to_tokens(
+            if let Some(mut resolved) = resolve_type_to_tokens(
                 &set_name,
                 &set_name,
                 None,
@@ -322,6 +327,9 @@ pub(crate) fn parse_composite(
                 Some(child.range()),
                 None,
             ) {
+                if let Some(first) = resolved.first_mut() {
+                    first.extensions = extension_content(child);
+                }
                 composite_tokens.extend(resolved);
             }
             continue;
@@ -355,7 +363,7 @@ pub(crate) fn parse_composite(
                 }
                 occupied_offsets.push((off, end));
             }
-            if let Some(resolved) = resolve_type_to_tokens(
+            if let Some(mut resolved) = resolve_type_to_tokens(
                 &nested_name,
                 &nested_name,
                 None,
@@ -366,14 +374,14 @@ pub(crate) fn parse_composite(
             ) {
                 // Apply explicit member offset onto the BeginField wrapper.
                 if let Some(off) = opt_usize_attr(child, "offset", "offset")? {
-                    let mut resolved = resolved;
                     if let Some(first) = resolved.first_mut() {
                         first.encoding.offset = Some(off);
                     }
-                    composite_tokens.extend(resolved);
-                } else {
-                    composite_tokens.extend(resolved);
                 }
+                if let Some(first) = resolved.first_mut() {
+                    first.extensions = extension_content(child);
+                }
+                composite_tokens.extend(resolved);
             }
             continue;
         }
@@ -411,7 +419,7 @@ pub(crate) fn parse_composite(
                 }
                 occupied_offsets.push((off, end));
             }
-            if let Some(resolved) = resolve_type_to_tokens(
+            if let Some(mut resolved) = resolve_type_to_tokens(
                 &member_name,
                 ref_name,
                 None,
@@ -420,6 +428,9 @@ pub(crate) fn parse_composite(
                 Some(child.range()),
                 None,
             ) {
+                if let Some(first) = resolved.first_mut() {
+                    first.extensions = extension_content(child);
+                }
                 composite_tokens.extend(resolved);
             }
             // Forward-ref `<ref type="LaterEnum"/>`: leave expansion to field
@@ -501,6 +512,7 @@ pub(crate) fn parse_composite(
                         signal: Signal::BeginField,
                         encoding: encoding.clone(),
                         span: None,
+                        extensions: extension_content(child),
                     });
                     composite_tokens.push(Token {
                         id: None,
@@ -508,8 +520,9 @@ pub(crate) fn parse_composite(
                         signal: Signal::EndField,
                         encoding: Encoding::default(),
                         span: None,
+                        extensions: Default::default(),
                     });
-                } else if let Some(resolved) = resolve_type_to_tokens(
+                } else if let Some(mut resolved) = resolve_type_to_tokens(
                     &member_name,
                     t_name,
                     None,
@@ -518,6 +531,9 @@ pub(crate) fn parse_composite(
                     Some(child.range()),
                     None,
                 ) {
+                    if let Some(first) = resolved.first_mut() {
+                        first.extensions = extension_content(child);
+                    }
                     composite_tokens.extend(resolved);
                 } else {
                     let mut encoding = parse_type_element(child, registry, warn_state)?;
@@ -530,6 +546,7 @@ pub(crate) fn parse_composite(
                         signal: Signal::BeginField,
                         encoding: encoding.clone(),
                         span: None,
+                        extensions: extension_content(child),
                     });
                     composite_tokens.push(Token {
                         id: None,
@@ -537,6 +554,7 @@ pub(crate) fn parse_composite(
                         signal: Signal::EndField,
                         encoding: Encoding::default(),
                         span: None,
+                        extensions: Default::default(),
                     });
                 }
             } else {
@@ -550,6 +568,7 @@ pub(crate) fn parse_composite(
                     signal: Signal::BeginField,
                     encoding: encoding.clone(),
                     span: None,
+                    extensions: extension_content(child),
                 });
                 composite_tokens.push(Token {
                     id: None,
@@ -557,6 +576,7 @@ pub(crate) fn parse_composite(
                     signal: Signal::EndField,
                     encoding: Encoding::default(),
                     span: None,
+                    extensions: Default::default(),
                 });
             }
         }
@@ -637,6 +657,7 @@ pub(crate) fn parse_enum(
             ..Encoding::default()
         },
         span: None,
+        extensions: extension_content(node),
     });
 
     let mut seen_names = HashSet::new();
@@ -699,6 +720,7 @@ pub(crate) fn parse_enum(
                     ..Encoding::default()
                 },
                 span: None,
+                extensions: extension_content(child),
             });
         }
     }
@@ -755,6 +777,7 @@ pub(crate) fn parse_set(
             ..Encoding::default()
         },
         span: None,
+        extensions: extension_content(node),
     });
 
     let mut seen_choice_names = HashSet::new();
@@ -814,6 +837,7 @@ pub(crate) fn parse_set(
                     ..Encoding::default()
                 },
                 span: None,
+                extensions: extension_content(child),
             });
         }
     }

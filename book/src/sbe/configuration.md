@@ -4,6 +4,7 @@
 - [with_conversion vs with_domain_type](configuration/conversion-vs-domain.md)
 - [GenerationConfig options](configuration/generation-config.md)
 - [Code-generation hooks](configuration/hooks.md)
+- [Extension XML](configuration/extension-xml.md)
 
 ## Wire type vs app type
 

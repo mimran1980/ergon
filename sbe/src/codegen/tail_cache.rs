@@ -163,7 +163,9 @@ pub(crate) fn emit_tail_offsets(
             #[inline]
             fn #walk_ident<const CHECK_MAX: bool>(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
-                if #prefix_size_lit > self.buf.len().saturating_sub(start) {
+                // Checked add, not the `saturating_sub` form: the instruction
+                // probes retire fewer instructions on the random-access lane.
+                if start.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
                     sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #vd_name_lit,
@@ -171,8 +173,11 @@ pub(crate) fn emit_tail_offsets(
                         available: self.buf.len().saturating_sub(start),
                     });
                 }
-                let bytes: [u8; #prefix_size_lit] =
-                    read_bytes::<#prefix_size_lit>(self.buf, start);
+                // SAFETY: the typed check above proves
+                // `start + prefix_size <= buf.len()` without overflow.
+                let bytes: [u8; #prefix_size_lit] = unsafe {
+                    read_bytes_unchecked::<#prefix_size_lit>(self.buf, start)
+                };
                 let header = #vd_type_ident(bytes);
                 let wire_length = header.#vd_len_field_ident() as u64;
                 let (_, data_end) = sbe_rt::checked_var_data_bounds::<CHECK_MAX, #max_lit>(

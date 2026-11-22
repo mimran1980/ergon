@@ -87,6 +87,12 @@ fn local_name(tag: &str) -> &str {
     tag.rsplit(':').next().unwrap_or(tag)
 }
 
+/// Skip foreign-namespace extension elements: same predicate as the parser's
+/// grammar loops, so the validator never becomes stricter than `parse`.
+fn is_extension(child: roxmltree::Node<'_, '_>) -> bool {
+    crate::xml::ext_is_extension_element(child)
+}
+
 /// Validate `xml` against the SBE XSD element model (structural, pure Rust).
 ///
 /// This is **not** a full XSD processor. It catches schema-shape mistakes
@@ -135,6 +141,9 @@ pub fn validate_against_sbe_xsd(xml: &str) -> Result<(), XsdValidationError> {
     check_attrs("messageSchema", root, crate::schema_attrs::MESSAGE_SCHEMA)?;
 
     for child in root.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "types" => validate_types(child)?,
@@ -184,6 +193,9 @@ fn validate_types(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationErro
     // accepts it (it scopes generated types for that block).
     check_attrs("types", node, &["package"])?;
     for child in node.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "type" => check_attrs(
@@ -238,6 +250,9 @@ fn validate_composite(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidation
         ],
     )?;
     for child in node.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "type" | "enum" | "set" | "ref" | "composite" => {}
@@ -256,6 +271,9 @@ fn validate_composite(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidation
 fn validate_enum(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
     check_attrs("enum", node, crate::schema_attrs::ENUM)?;
     for child in node.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "validValue" => check_attrs(
@@ -296,6 +314,9 @@ fn validate_set(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError>
         ],
     )?;
     for child in node.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "choice" => check_attrs(
@@ -325,6 +346,9 @@ fn validate_set(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError>
 fn validate_message(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
     check_attrs("message", node, crate::schema_attrs::MESSAGE)?;
     for child in node.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "field" => check_attrs("field", child, crate::schema_attrs::FIELD_LIKE)?,
@@ -345,6 +369,9 @@ fn validate_message(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationEr
 fn validate_group(node: roxmltree::Node<'_, '_>) -> Result<(), XsdValidationError> {
     check_attrs("group", node, crate::schema_attrs::GROUP)?;
     for child in node.children().filter(|n| n.is_element()) {
+        if is_extension(child) {
+            continue;
+        }
         let name = local_name(child.tag_name().name());
         match name {
             "field" | "group" | "data" | "description" | "comment" => {}

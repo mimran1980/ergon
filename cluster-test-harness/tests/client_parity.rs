@@ -224,6 +224,73 @@ fn fan_out_connect_sends_one_connect_request() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A `SessionEvent(OK)` whose detail spans several MTU-sized fragments.
+fn answer_ok_fragmented(
+    cluster: &FakeCluster,
+    member: usize,
+    correlation: i64,
+) -> Result<rusteron_client::AeronExclusivePublication, Box<dyn Error>> {
+    let egress = cluster.egress()?;
+    let detail = "x".repeat(3 * egress.get_constants()?.max_payload_length());
+    offer(
+        &egress,
+        &session_event(EventCode::OK, i32::try_from(member)?, &detail, correlation)?,
+    )?;
+    Ok(egress)
+}
+
+/// Java's `EgressPoller` reassembles fragments during connect, so an event
+/// larger than one MTU (a long REDIRECT endpoint list or detail) still
+/// completes the handshake.
+#[test]
+#[serial]
+fn async_connect_reassembles_a_fragmented_event() -> Result<(), Box<dyn Error>> {
+    let client_driver = launch_own_driver("parity-assemble-async")?;
+    let cluster = FakeCluster::launch()?;
+    let mut connecting = fake_builder(CONNECT_TIMEOUT)?.connect_async(client_driver.dir.as_str());
+    let (member, correlation) = await_request(&cluster, &[0], || {
+        connecting.poll()?;
+        Ok(())
+    })?;
+    let _egress = answer_ok_fragmented(&cluster, member, correlation)?;
+    let client = finish(connecting)?;
+    assert_eq!(client.cluster_session_id(), fake::CLUSTER_SESSION_ID);
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn blocking_connect_reassembles_a_fragmented_event() -> Result<(), Box<dyn Error>> {
+    let client_driver = launch_own_driver("parity-assemble-blocking")?;
+    let cluster = FakeCluster::launch()?;
+    let connecting = connect_on_thread(|| fake_builder(CONNECT_TIMEOUT), &client_driver.dir);
+    let (member, correlation) = await_request(&cluster, &[0], || Ok(()))?;
+    let _egress = answer_ok_fragmented(&cluster, member, correlation)?;
+    let session = connecting.join().map_err(|_| "connect thread panicked")??;
+    assert_eq!(session, fake::CLUSTER_SESSION_ID);
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn fan_out_connect_reassembles_a_fragmented_event() -> Result<(), Box<dyn Error>> {
+    let client_driver = launch_own_driver("parity-assemble-fanout")?;
+    let cluster = FakeCluster::launch()?;
+    let builder = || {
+        SessionBuilder::default()
+            .ingress_channel("aeron:udp")?
+            .ingress_endpoints(fake::ENDPOINTS)?
+            .egress_channel(CLIENT_EGRESS)?
+            .message_timeout(CONNECT_TIMEOUT)
+    };
+    let connecting = connect_on_thread(builder, &client_driver.dir);
+    let (member, correlation) = await_request(&cluster, &[0, 1], || Ok(()))?;
+    let _egress = answer_ok_fragmented(&cluster, member, correlation)?;
+    let session = connecting.join().map_err(|_| "connect thread panicked")??;
+    assert_eq!(session, fake::CLUSTER_SESSION_ID);
+    Ok(())
+}
+
 /// Java's `AsyncConnect` throws `ClusterException(detail)` on a
 /// `SessionEvent(ERROR)` for its request, rather than wait out the message
 /// timeout.
@@ -302,6 +369,83 @@ fn the_session_limit_rejects_a_second_client_at_once() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// The publication-limit (type 1) and subscriber-position (type 4) counters
+/// on `aeron`'s driver: one per publication and subscription it holds.
+fn transport_counters(aeron: &rusteron_client::Aeron) -> usize {
+    let mut count = 0;
+    aeron
+        .counters_reader()
+        .foreach_counter_fn(|_, _, type_id, _, _| {
+            if type_id == 1 || type_id == 4 {
+                count += 1;
+            }
+        });
+    count
+}
+
+/// Waits until `aeron`'s driver holds no publication or subscription.
+fn await_transport_released(
+    aeron: &rusteron_client::Aeron,
+    what: &str,
+) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while transport_counters(aeron) > 0 {
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{what}: {} transport counters left",
+                transport_counters(aeron)
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+/// Java's `AsyncConnect.close()` removes the egress subscription and every
+/// member's ingress publication, whether still being added or added
+/// (`AeronClusterAsyncConnectTest.shouldClose*`). Dropping an
+/// `AsyncClusterConnect` on a shared Aeron client must release them too.
+#[test]
+#[serial]
+fn dropping_an_async_connect_releases_its_transport() -> Result<(), Box<dyn Error>> {
+    let client_driver = launch_own_driver("parity-async-drop")?;
+    let cluster = FakeCluster::launch()?;
+    let aeron = fake::connect(&client_driver.dir)?;
+    let builder = || -> Result<SessionBuilder, ergo_aeron_cluster::ClusterError> {
+        Ok(SessionBuilder::default()
+            .ingress_channel("aeron:udp")?
+            .ingress_endpoints(fake::ENDPOINTS)?
+            .egress_channel(CLIENT_EGRESS)?
+            .message_timeout(CONNECT_TIMEOUT)?
+            .aeron(aeron.clone()))
+    };
+
+    // Dropped while the adds are in flight.
+    let mut connecting = builder()?.connect_async(client_driver.dir.as_str());
+    connecting.poll()?;
+    drop(connecting);
+    // Long enough for the driver to finish an add the drop failed to cancel.
+    thread::sleep(Duration::from_secs(1));
+    await_transport_released(&aeron, "dropped while adding")?;
+
+    // Dropped once every member's publication and the egress are up.
+    let mut connecting = builder()?.connect_async(client_driver.dir.as_str());
+    let _ = await_request(&cluster, &[0, 1], || {
+        connecting.poll()?;
+        Ok(())
+    })?;
+    // The egress subscription and at least the member that heard the request.
+    assert!(
+        transport_counters(&aeron) >= 2,
+        "{}",
+        transport_counters(&aeron)
+    );
+    drop(connecting);
+    await_transport_released(&aeron, "dropped while awaiting the answer")?;
+    Ok(())
+}
+
 /// Java's `AeronCluster.close()` sends one `SessionCloseRequest` with the
 /// session's term and id, and is closed when it returns.
 #[test]
@@ -349,6 +493,54 @@ fn close_after_losing_the_leader_sends_no_close_request() -> Result<(), Box<dyn 
     client.close()?;
     assert_eq!(client.state(), ergo_aeron_cluster::SessionState::Closed);
     assert_eq!(cluster.close_requests(0, Duration::from_secs(1))?, []);
+    Ok(())
+}
+
+/// Java's `trackIngressPublicationResult` closes the client once its ingress
+/// publication reaches its maximum position: the offer reports it, and the
+/// next poll leaves the session closed. The ingress starts 4 KiB short of the
+/// maximum position (Aeron's `MaxPositionPublicationTest` channel settings).
+#[test]
+#[serial]
+fn reaching_the_ingress_max_position_closes_the_session() -> Result<(), Box<dyn Error>> {
+    const TERM_LENGTH: i64 = 64 * 1024;
+    const INITIAL_TERM_ID: i32 = -777;
+    let start = TERM_LENGTH * (i64::from(i32::MAX) + 1) - 4096;
+    let term_id = INITIAL_TERM_ID.wrapping_add(i32::try_from(start / TERM_LENGTH)?);
+    let term_offset = start % TERM_LENGTH;
+    let ingress = format!(
+        "{}|term-length=64k|init-term-id={INITIAL_TERM_ID}|term-id={term_id}|term-offset={term_offset}",
+        MEMBER_INGRESS[0]
+    );
+    let client_driver = launch_own_driver("parity-max-position")?;
+    let cluster = FakeCluster::launch()?;
+    let builder = SessionBuilder::default()
+        .ingress_channel(ingress)?
+        .egress_channel(CLIENT_EGRESS)?
+        .message_timeout(Duration::from_secs(10))?;
+    let (mut client, _egress) = cluster.connect(builder, &client_driver.dir)?;
+
+    let payload = [7u8; 1000];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let error = loop {
+        match client.offer(&payload) {
+            Err(error) if !error.is_retryable() => break error,
+            _ if Instant::now() >= deadline => return Err("the ingress never filled".into()),
+            _ => thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    assert!(
+        matches!(
+            error,
+            ClusterError::Publication {
+                failure: ergo_aeron_cluster::PublicationFailure::MaxPositionExceeded,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    client.poll(&mut ergo_aeron_cluster::NullListener, 0)?;
+    assert_eq!(client.state(), SessionState::Closed);
     Ok(())
 }
 

@@ -11,3 +11,8 @@ Runnable examples pull live source from `sbe-feature-tour` (compiled by
 - [Trust boundaries](feature-tour/trust-boundaries.md): `try_*` returns `Result`; `wrap` panics if short; `decode` is hybrid
 - [Domain objects (DTOs)](feature-tour/domain-objects.md): owned snapshots (never on the hot path)
 - [Multi-template dispatch](feature-tour/multi-template.md): `AnyMessage` routes by template ID
+- [Code-generation hooks](configuration/hooks.md): append Rust tokens (serde, custom validation) after each generated item
+
+Schema annotations the grammar does not own — captured marks, hook
+contexts, `ExtensionAttr` selectors and the three knobs — are on
+[Extension XML](configuration/extension-xml.md).

@@ -797,8 +797,16 @@ pub(crate) fn generate_message_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #abs_offset;
-                        self.buf[offset..offset + #comp_size_lit]
-                            .copy_from_slice(&val.0);
+                        // SAFETY: wrap/wrap_and_apply_header validates
+                        // buf.len() >= msg_offset + HEADER + BLOCK, and the
+                        // composite extent is within BLOCK_LENGTH by
+                        // construction (same argument as the primitive
+                        // setters).
+                        unsafe {
+                            self.buf
+                                .get_unchecked_mut(offset..offset + #comp_size_lit)
+                                .copy_from_slice(&val.0);
+                        }
                         self
                     }
                 });
@@ -807,8 +815,13 @@ pub(crate) fn generate_message_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #raw_abs;
-                        self.buf[offset..offset + #comp_size_lit]
-                            .copy_from_slice(&val.0);
+                        // SAFETY: same wrap proof as the message setter; the
+                        // raw offset only drops the header term.
+                        unsafe {
+                            self.buf
+                                .get_unchecked_mut(offset..offset + #comp_size_lit)
+                                .copy_from_slice(&val.0);
+                        }
                         self
                     }
                 });
@@ -829,7 +842,15 @@ pub(crate) fn generate_message_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #abs_offset;
-                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
+                        // SAFETY: wrap/wrap_and_apply_header validates
+                        // buf.len() >= msg_offset + HEADER + BLOCK, and the
+                        // enum extent is within BLOCK_LENGTH by construction
+                        // (same argument as the primitive setters).
+                        unsafe {
+                            self.buf
+                                .get_unchecked_mut(offset..offset + #prim_size_lit)
+                                .copy_from_slice(&(val as #r_type).#to_endian());
+                        }
                         self
                     }
                 });
@@ -838,7 +859,13 @@ pub(crate) fn generate_message_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #raw_abs;
-                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&(val as #r_type).#to_endian());
+                        // SAFETY: same wrap proof as the message setter; the
+                        // raw offset only drops the header term.
+                        unsafe {
+                            self.buf
+                                .get_unchecked_mut(offset..offset + #prim_size_lit)
+                                .copy_from_slice(&(val as #r_type).#to_endian());
+                        }
                         self
                     }
                 });
@@ -848,14 +875,25 @@ pub(crate) fn generate_message_encoder(
                     impl_contents.extend(quote::quote! {
                         #[inline]
                         pub const fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            self.buf[#abs_offset] = val as u8;
+                            // SAFETY: wrap/wrap_and_apply_header validates
+                            // buf.len() >= msg_offset + HEADER + BLOCK, and a
+                            // single bool byte sits within BLOCK_LENGTH (same
+                            // argument as the primitive setters). Raw-pointer
+                            // form keeps this setter `const`.
+                            unsafe {
+                                *self.buf.as_mut_ptr().add(#abs_offset) = val as u8;
+                            }
                             self
                         }
                     });
                     raw_impl_contents.extend(quote::quote! {
                         #[inline]
                         pub const fn #f_name_bool(&mut self, val: bool) -> &mut Self {
-                            self.buf[#raw_abs] = val as u8;
+                            // SAFETY: same wrap proof as the message setter;
+                            // the raw offset only drops the header term.
+                            unsafe {
+                                *self.buf.as_mut_ptr().add(#raw_abs) = val as u8;
+                            }
                             self
                         }
                     });
@@ -873,7 +911,15 @@ pub(crate) fn generate_message_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #abs_offset;
-                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
+                        // SAFETY: wrap/wrap_and_apply_header validates
+                        // buf.len() >= msg_offset + HEADER + BLOCK, and the
+                        // set extent is within BLOCK_LENGTH by construction
+                        // (same argument as the primitive setters).
+                        unsafe {
+                            self.buf
+                                .get_unchecked_mut(offset..offset + #prim_size_lit)
+                                .copy_from_slice(&val.0.#to_endian());
+                        }
                         self
                     }
                 });
@@ -882,7 +928,13 @@ pub(crate) fn generate_message_encoder(
                     #[inline]
                     pub fn #f_ident(&mut self, val: #target_type) -> &mut Self {
                         let offset = #raw_abs;
-                        self.buf[offset..offset + #prim_size_lit].copy_from_slice(&val.0.#to_endian());
+                        // SAFETY: same wrap proof as the message setter; the
+                        // raw offset only drops the header term.
+                        unsafe {
+                            self.buf
+                                .get_unchecked_mut(offset..offset + #prim_size_lit)
+                                .copy_from_slice(&val.0.#to_endian());
+                        }
                         self
                     }
                 });

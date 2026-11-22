@@ -220,6 +220,17 @@ impl TestCluster {
         single_node_with("auth", None)
     }
 
+    /// One echo node that authorises every admin request
+    /// (`AuthorisationService.ALLOW_ALL`). Other nodes keep Java's default,
+    /// which refuses them as `UNAUTHORISED_ACCESS`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::single_node`].
+    pub fn single_node_admin_allowed() -> Result<Self, ClusterError> {
+        single_node_with("admin-allow", None)
+    }
+
     /// Launch a 3-node static cluster. Node 0 is the leader.
     ///
     /// # Errors

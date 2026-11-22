@@ -24,11 +24,11 @@ test-harness = [
 ergo-sbe = { path = "../../sbe" }
 
 [dependencies.rusteron-media-driver]
-version = "0.3.0"
+version = "=0.3.0" # exact: fresh locks must match scripts/aeron-pin.txt
 optional = true
 
 [dependencies.rusteron-client]
-version = "0.3.0"
+version = "=0.3.0"
 optional = true
 
 [dependencies.serial_test]

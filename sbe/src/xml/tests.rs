@@ -570,6 +570,7 @@ fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Erro
             signal: Signal::BeginComposite,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -582,6 +583,7 @@ fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Erro
                 ..Encoding::default()
             },
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -589,6 +591,7 @@ fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Erro
             signal: Signal::EndField,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -596,6 +599,7 @@ fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Erro
             signal: Signal::EndComposite,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
     ];
     registry.registry.insert("C".into(), ct);
@@ -610,6 +614,7 @@ fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Erro
             ..Encoding::default()
         },
         span: None,
+        extensions: Default::default(),
     }];
     registry.registry.insert("E".into(), et);
     assert_eq!(compute_type_size("E", &registry), Some(1));
@@ -623,6 +628,7 @@ fn compute_type_size_composite_enum_set() -> Result<(), Box<dyn std::error::Erro
             ..Encoding::default()
         },
         span: None,
+        extensions: Default::default(),
     }];
     registry.registry.insert("S".into(), st);
     assert_eq!(compute_type_size("S", &registry), Some(2));
@@ -1034,6 +1040,7 @@ fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::err
             signal: Signal::BeginComposite,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -1046,6 +1053,7 @@ fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::err
                 ..Encoding::default()
             },
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -1053,6 +1061,7 @@ fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::err
             signal: Signal::EndField,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -1065,6 +1074,7 @@ fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::err
                 ..Encoding::default()
             },
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -1072,6 +1082,7 @@ fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::err
             signal: Signal::EndField,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -1079,6 +1090,7 @@ fn compute_type_size_array_and_constant_members() -> Result<(), Box<dyn std::err
             signal: Signal::EndComposite,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
     ];
     registry.registry.insert("C".into(), ct);
@@ -1096,6 +1108,7 @@ fn compute_type_size_unknown_signal() -> Result<(), Box<dyn std::error::Error>> 
         signal: Signal::Encoding,
         encoding: Encoding::default(),
         span: None,
+        extensions: Default::default(),
     }];
     registry.registry.insert("X".into(), tokens);
     assert_eq!(compute_type_size("X", &registry), None);
@@ -1164,6 +1177,7 @@ fn structural(name: &str, signal: Signal) -> Token {
         signal,
         encoding: Encoding::default(),
         span: None,
+        extensions: Default::default(),
     }
 }
 
@@ -1187,6 +1201,7 @@ fn field(
             signal: Signal::BeginField,
             encoding,
             span: None,
+            extensions: Default::default(),
         },
         Token {
             id: None,
@@ -1194,6 +1209,7 @@ fn field(
             signal: Signal::EndField,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         },
     ]
 }
@@ -1237,6 +1253,7 @@ fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn st
             ..Encoding::default()
         },
         span: None,
+        extensions: Default::default(),
     });
     expected.extend(field(
         "serialNumber",
@@ -1258,6 +1275,7 @@ fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn st
         header_type: "messageHeader".to_string(),
         tokens: expected,
         sources: Vec::new(),
+        extensions: Default::default(),
     };
     crate::resolve::resolve_schema(&mut expected_ir, None).unwrap();
 
@@ -4339,4 +4357,477 @@ fn uint8_null_value_255_is_accepted() -> Result<(), Box<dyn std::error::Error>> 
         Some(255)
     );
     Ok(())
+}
+
+// ── extension capture (Layer 0) ──────────────────────────────────────────
+
+#[test]
+fn retains_extension_content_on_every_token_kind() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:ex="urn:example:ext" ex:rootMark="r" package="t" id="1" version="0"
+               byteOrder="littleEndian">
+  <ex:meta kind="root">root foreign</ex:meta>
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+    </enum>
+    <ex:typesNote>types foreign</ex:typesNote>
+  </types>
+  <message name="M" id="1" ex:msgMark="m">
+    <ex:msgNote>hi</ex:msgNote>
+    <field name="side" id="1" type="Side" ex:fieldMark="f"/>
+    <group name="g" id="2" dimensionType="groupSizeEncoding" ex:groupMark="g">
+      <field name="inG" id="3" type="uint32" ex:inG="1"/>
+    </group>
+    <data name="d" id="4" type="varStringEncoding" ex:dataMark="d"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
+
+    // Root-level: namespaced attr + foreign element.
+    assert_eq!(ir.extensions.attr("rootMark"), Some("r"));
+    let meta = ir.extensions.child("meta").expect("root foreign element");
+    assert_eq!(meta.attr("kind"), Some("root"));
+    assert_eq!(meta.text(), Some("root foreign"));
+
+    // <types> section content merges at schema level.
+    assert!(
+        ir.extensions.child("typesNote").is_some(),
+        "types-level foreign child lands on Ir.extensions"
+    );
+
+    let begin_msg = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginMessage)
+        .expect("BeginMessage");
+    assert_eq!(begin_msg.extensions.attr("msgMark"), Some("m"));
+    let msg_note = begin_msg.extensions.child("msgNote").expect("msg foreign");
+    assert_eq!(msg_note.text(), Some("hi"));
+
+    let field = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginField && t.name == "side")
+        .expect("side field");
+    assert_eq!(field.extensions.attr("fieldMark"), Some("f"));
+    // Grammar attributes stay off `Extensions` (extension-xml page): `attr`
+    // finds namespaced marks only, never `name`/`id`/`type`.
+    assert!(field.extensions.attr("name").is_none());
+    assert!(field.extensions.attr("id").is_none());
+    assert!(field.extensions.attr("type").is_none());
+
+    let group = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginGroup)
+        .expect("group");
+    assert_eq!(group.extensions.attr("groupMark"), Some("g"));
+
+    let ing = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginField && t.name == "inG")
+        .expect("inG field");
+    assert_eq!(ing.extensions.attr("inG"), Some("1"));
+
+    let data = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginVarData)
+        .expect("var data");
+    assert_eq!(data.extensions.attr("dataMark"), Some("d"));
+
+    // enum / validValue / set / choice
+    let enum_tok = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginEnum && t.name == "Side")
+        .expect("enum");
+    assert!(enum_tok.extensions.is_empty());
+    let buy = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::Encoding && t.name == "Buy")
+        .expect("validValue");
+    assert!(buy.extensions.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn retains_extension_attrs_on_enum_set_and_composite() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:ex="urn:example:ext" package="t" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <enum name="Side" encodingType="uint8" ex:enumMark="e">
+      <validValue name="Buy" ex:jsonValue="buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+    </enum>
+    <set name="Flags" encodingType="uint8" ex:setMark="s">
+      <choice name="Firm" ex:jsonValue="firm">0</choice>
+    </set>
+    <composite name="C" ex:compMark="c">
+      <type name="x" primitiveType="uint32" ex:memberMark="m"/>
+    </composite>
+    <type name="u32" primitiveType="uint32"/>
+  </types>
+  <message name="M" id="1">
+    <field name="side" id="1" type="Side"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
+
+    let enum_tok = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginEnum)
+        .expect("enum");
+    assert_eq!(enum_tok.extensions.attr("enumMark"), Some("e"));
+
+    let buy = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::Encoding && t.name == "Buy")
+        .expect("Buy");
+    assert_eq!(buy.extensions.attr("jsonValue"), Some("buy"));
+
+    let set_tok = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginSet)
+        .expect("set");
+    assert_eq!(set_tok.extensions.attr("setMark"), Some("s"));
+
+    let firm = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::Encoding && t.name == "Firm")
+        .expect("Firm");
+    assert_eq!(firm.extensions.attr("jsonValue"), Some("firm"));
+
+    let comp = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginComposite && t.name == "C")
+        .expect("composite");
+    assert_eq!(comp.extensions.attr("compMark"), Some("c"));
+
+    let member = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == Signal::BeginField && t.name == "x" && t.id.is_none())
+        .expect("composite member");
+    assert_eq!(member.extensions.attr("memberMark"), Some("m"));
+
+    Ok(())
+}
+
+#[test]
+fn extension_matching_is_prefix_independent() -> Result<(), Box<dyn std::error::Error>> {
+    fn schema(prefix: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?>
+<messageSchema xmlns:{p}="urn:example:ext" package="t" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy" {p}:jsonValue="buy">1</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="side" id="1" type="Side" {p}:exponent="priceExponent"/>
+  </message>
+</messageSchema>"#,
+            p = prefix
+        )
+    }
+
+    for prefix in ["a", "mbx", "zz"] {
+        let ir = parse(crate::SchemaSource::xml(&schema(prefix)))?;
+        let field = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::BeginField && t.name == "side")
+            .expect("field");
+        assert_eq!(
+            field.extensions.attr("exponent"),
+            Some("priceExponent"),
+            "prefix {prefix}"
+        );
+        assert_eq!(
+            field.extensions.attr_in("urn:example:ext", "exponent"),
+            Some("priceExponent"),
+            "prefix {prefix}"
+        );
+        let buy = ir
+            .tokens
+            .iter()
+            .find(|t| t.signal == Signal::Encoding && t.name == "Buy")
+            .expect("Buy");
+        assert_eq!(
+            buy.extensions.attr("jsonValue"),
+            Some("buy"),
+            "prefix {prefix}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rejects_unnamespaced_unknown_attribute_and_element() -> Result<(), Box<dyn std::error::Error>> {
+    let base = |extra: &str| {
+        format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">{extra}</message>
+</messageSchema>"#
+        )
+    };
+
+    // Unnamespaced unknown attribute on a field: still rejected.
+    let err = parse(crate::SchemaSource::xml(&base(
+        r#"<field name="x" id="1" type="uint32" surprise="1"/>"#,
+    )))
+    .expect_err("unknown unnamespaced attr");
+    assert!(format!("{err:?}").contains("unknown"), "{err:?}");
+
+    // Unnamespaced unknown child under message: still rejected.
+    let err = parse(crate::SchemaSource::xml(&base(r#"<notAField name="x"/>"#)))
+        .expect_err("unknown unnamespaced element");
+    assert!(format!("{err:?}").contains("notAField"), "{err:?}");
+
+    // Unknown local name in the root's own namespace (declared xmlns): still rejected.
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0"
+               byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1"><sbe:feild xmlns:sbe="http://fixprotocol.io/2016/sbe" name="x"/></message>
+</messageSchema>"#;
+    let err = parse(crate::SchemaSource::xml(xml)).expect_err("same-ns unknown element");
+    assert!(format!("{err:?}").contains("feild"), "{err:?}");
+
+    Ok(())
+}
+
+#[test]
+fn xmlns_declarations_are_never_captured() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:ex="urn:example:ext" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xsi:noNamespaceSchemaLocation="sbe.xsd"
+               package="t" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="uint32"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
+    for a in &ir.extensions.attributes {
+        assert!(
+            !a.local_name.starts_with("xmlns"),
+            "xmlns* must not be yielded: {:?}",
+            a.local_name
+        );
+    }
+    // The namespaced xsi attribute is retained; xmlns is not.
+    assert_eq!(
+        ir.extensions.attr("noNamespaceSchemaLocation"),
+        Some("sbe.xsd")
+    );
+    assert!(ir.extensions.attr("xmlns").is_none());
+    assert!(ir.extensions.attr("xmlns:ex").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn foreign_prefixed_grammar_elements_still_parse_as_grammar()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Local-name-first: ns2:message is grammar, not extension content.
+    let xml = r#"<?xml version="1.0"?>
+<ns2:messageSchema xmlns:ns2="http://fixprotocol.io/2016/sbe"
+                   package="t" id="1" version="0" byteOrder="littleEndian">
+  <ns2:types>
+    <ns2:composite name="messageHeader">
+      <ns2:type name="blockLength" primitiveType="uint16"/>
+      <ns2:type name="templateId" primitiveType="uint16"/>
+      <ns2:type name="schemaId" primitiveType="uint16"/>
+      <ns2:type name="version" primitiveType="uint16"/>
+    </ns2:composite>
+  </ns2:types>
+  <ns2:message name="M" id="1">
+    <ns2:field name="x" id="1" type="uint32"/>
+  </ns2:message>
+</ns2:messageSchema>"#;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
+    assert_eq!(ir.package, "t");
+    assert!(
+        ir.tokens
+            .iter()
+            .any(|t| t.signal == Signal::BeginMessage && t.name == "M")
+    );
+    // Grammar elements are not extension content even when foreign-prefixed.
+    assert!(ir.extensions.elements.is_empty());
+    assert!(ir.extensions.attributes.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn xsd_accepts_foreign_elements_the_parser_accepts() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:ex="urn:example:ext" package="t" id="1" version="0" byteOrder="littleEndian">
+  <ex:meta>root</ex:meta>
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <ex:note>types</ex:note>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <ex:vn>valid</ex:vn>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <ex:mn>msg</ex:mn>
+    <field name="side" id="1" type="Side"/>
+    <ex:mf>field</ex:mf>
+  </message>
+</messageSchema>"#;
+    crate::xsd::validate_against_sbe_xsd(xml)?;
+    parse(crate::SchemaSource::xml(xml).with_xsd_validation())?;
+    Ok(())
+}
+
+#[test]
+fn extension_free_schema_has_empty_extensions() -> Result<(), Box<dyn std::error::Error>> {
+    let ir = parse(crate::SchemaSource::xml(MINIMAL_SCHEMA))?;
+    assert!(ir.extensions.is_empty());
+    for t in &ir.tokens {
+        assert!(
+            t.extensions.is_empty(),
+            "token {} should have empty extensions",
+            t.name
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn captures_recursive_foreign_subtree_verbatim() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:ex="urn:example:ext" package="t" id="1" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <ex:tree id="1">
+    mid text
+    <ex:leaf a="1">leaf text</ex:leaf>
+    <ex:branch>
+      <ex:leaf a="2">deep</ex:leaf>
+    </ex:branch>
+  </ex:tree>
+  <message name="M" id="1">
+    <field name="x" id="1" type="uint32"/>
+  </message>
+</messageSchema>"#;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
+    let tree = ir.extensions.child("tree").expect("tree");
+    assert_eq!(tree.attr("id"), Some("1"));
+    // Direct text includes whitespace between children (verbatim).
+    let text = tree.text().expect("text nodes");
+    assert!(text.contains("mid text"), "{text:?}");
+    let leaf = tree.child("leaf").expect("leaf");
+    assert_eq!(leaf.attr("a"), Some("1"));
+    assert_eq!(leaf.text(), Some("leaf text"));
+    let branch = tree.child("branch").expect("branch");
+    let deep = branch.child("leaf").expect("deep leaf");
+    assert_eq!(deep.attr("a"), Some("2"));
+    assert_eq!(deep.text(), Some("deep"));
+    // Document order: leaf before branch.
+    assert_eq!(tree.elements[0].local_name, "leaf");
+    assert_eq!(tree.elements[1].local_name, "branch");
+
+    Ok(())
+}
+
+#[test]
+fn sbe_namespace_misspelling_is_rejected_under_an_unnamespaced_root() {
+    // The SBE namespace is grammar everywhere: a misspelt `sbe:enumm` must
+    // fail even when the document root itself carries no namespace.
+    let xml = r#"<?xml version="1.0"?>
+<messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0"
+               byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <sbe:enumm name="E" encodingType="uint8"><validValue name="A">1</validValue></sbe:enumm>
+  </types>
+  <message name="M" id="1"><field name="x" id="1" type="uint32"/></message>
+</messageSchema>"#;
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "a misspelt element in the SBE namespace must not be dropped as extension content"
+    );
 }

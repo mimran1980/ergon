@@ -341,7 +341,10 @@ pub use config::{
     FieldInfo, FieldKind, GenerationConfig, GenerationProfile, ItemContext, ItemKind,
     SetChoiceInfo,
 };
-pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
+pub use ir::{
+    ByteOrder, Encoding, ExtensionAttr, ExtensionElement, Extensions, Ir, Presence, PrimitiveType,
+    Signal, Token,
+};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
 pub use xml::{IncludeCause, ParseError, SchemaSource, parse};

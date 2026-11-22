@@ -12,6 +12,7 @@ use super::attr::{
     validate_sbe_name,
 };
 use super::error::Fault;
+use super::ext::extension_content;
 use super::registry::{TypeRegistry, resolve_type_to_tokens};
 use super::warn::{WarnState, warn_once};
 
@@ -50,6 +51,7 @@ pub(crate) fn parse_message(
             ..Encoding::default()
         },
         span: None,
+        extensions: extension_content(node),
     });
 
     // Gap 3: pre-populate seen_ids with the header type's field IDs so that
@@ -388,6 +390,8 @@ pub(crate) fn parse_message_child(
                         first.encoding.semantic_type =
                             node.attribute("semanticType").map(str::to_string);
                     }
+                    // Field-level extension marks live on the BeginField wrapper only.
+                    first.extensions = extension_content(node);
                 }
                 tokens.extend(inlined);
             } else {
@@ -433,6 +437,7 @@ pub(crate) fn parse_message_child(
                     ..Encoding::default()
                 },
                 span: None,
+                extensions: extension_content(node),
             });
 
             if let Some(dim_tokens) = registry.registry.get(dimension_type) {
@@ -490,6 +495,7 @@ pub(crate) fn parse_message_child(
                     ..Encoding::default()
                 },
                 span: None,
+                extensions: extension_content(node),
             });
 
             if let Some(type_tokens) = registry.registry.get(type_name) {

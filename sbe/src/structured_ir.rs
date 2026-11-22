@@ -6,7 +6,7 @@
 //! directly.
 
 use crate::codegen::{find_matching_end, to_pascal_case, to_snake_case};
-use crate::ir::{Presence, PrimitiveType, Signal, Token};
+use crate::ir::{Extensions, Presence, PrimitiveType, Signal, Token};
 
 pub(crate) struct SchemaElements {
     pub(crate) composites: Vec<Vec<Token>>,
@@ -115,7 +115,9 @@ pub(crate) const fn is_boolean_value_pair(a: &str, b: &str) -> bool {
     (is_truthy_name(a) && is_falsy_name(b)) || (is_truthy_name(b) && is_falsy_name(a))
 }
 
-const fn is_truthy_name(s: &str) -> bool {
+/// Whether a schema spelling reads as "yes" (`true`/`yes`/`y`/`t`).
+/// Also feeds the extension omit-null flag's `bool` const.
+pub(crate) const fn is_truthy_name(s: &str) -> bool {
     s.eq_ignore_ascii_case("true")
         || s.eq_ignore_ascii_case("yes")
         || s.eq_ignore_ascii_case("y")
@@ -140,6 +142,8 @@ pub(crate) struct MessageStructure {
     pub(crate) fields: Vec<MessageField>,
     pub(crate) groups: Vec<MessageGroup>,
     pub(crate) var_data: Vec<MessageVarData>,
+    /// Extension content of the `<message>` element.
+    pub(crate) extensions: Extensions,
 }
 
 #[derive(Clone)]
@@ -179,6 +183,8 @@ pub(crate) struct MessageField {
     /// composite, enum or set field, whose name is in [`FieldType`].
     pub(crate) type_alias: Option<String>,
     pub(crate) field_type: FieldType,
+    /// Extension content of the `<field>` element.
+    pub(crate) extensions: Extensions,
 }
 
 #[derive(Clone)]
@@ -237,6 +243,8 @@ pub(crate) struct MessageGroup {
     pub(crate) groups: Vec<MessageGroup>,
     pub(crate) var_data: Vec<MessageVarData>,
     pub(crate) block_length: usize,
+    /// Extension content of the `<group>` element.
+    pub(crate) extensions: Extensions,
 }
 
 /// End of the last fixed field that takes wire space. A constant field takes
@@ -372,6 +380,8 @@ pub(crate) struct MessageVarData {
     pub(crate) type_name: String,
     pub(crate) max_length: Option<usize>,
     pub(crate) character_encoding: Option<String>,
+    /// Extension content of the `<data>` element.
+    pub(crate) extensions: Extensions,
 }
 
 pub(crate) fn parse_message_structure(
@@ -436,6 +446,7 @@ pub(crate) fn parse_message_structure(
         fields,
         groups,
         var_data,
+        extensions: begin_token.extensions.clone(),
     }
 }
 
@@ -547,6 +558,7 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
         character_encoding,
         type_alias,
         field_type,
+        extensions: begin.extensions.clone(),
     }
 }
 
@@ -604,6 +616,7 @@ pub(crate) fn parse_group_structure(tokens: &[Token], elements: &SchemaElements)
         groups,
         var_data,
         block_length,
+        extensions: begin.extensions.clone(),
     }
 }
 
@@ -645,6 +658,7 @@ pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
         type_name,
         max_length,
         character_encoding,
+        extensions: begin.extensions.clone(),
     }
 }
 
@@ -996,6 +1010,7 @@ mod tests {
             signal,
             encoding,
             span: None,
+            extensions: Default::default(),
         }
     }
 
@@ -1021,6 +1036,7 @@ mod tests {
             character_encoding: None,
             type_alias: None,
             field_type: FieldType::Primitive(PrimitiveType::Char, Some(size)),
+            extensions: Extensions::default(),
         }
     }
 

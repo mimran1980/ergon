@@ -105,11 +105,13 @@ jobs:
         run: cargo publish -p ergon-tune
 
       - name: Push to GitHub
-        uses: ad-m/github-push-action@v0.8.0
+        uses: ad-m/github-push-action@v1.3.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
           tags: true
+          # v1 defaults this to on-demand; the aeron and sbe submodules are upstream and never pushed from here.
+          push_to_submodules: "no"
 
       - name: Extract version
         id: version

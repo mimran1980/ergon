@@ -729,3 +729,137 @@ fn verify_walks_wire_block_length_and_acting_version() -> Result<(), Box<dyn std
     );
     Ok(())
 }
+
+/// `verify` must floor the block length at the wire's acting version, the
+/// same decision `try_wrap` makes: a frame whose block length is legal for
+/// an older version (below the compiled `BLOCK_LENGTH`) verifies, while a
+/// block length below that version's readable extent — and a short block at
+/// the current version, which drops schema-declared padding — are rejected.
+#[test]
+fn verify_floors_block_length_at_the_wire_version() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="verify_floor" id="12" version="1"
+                   byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="Msg" id="1" blockLength="8">
+    <field name="first" id="1" type="uint32" offset="0"/>
+    <field name="second" id="2" type="uint32" offset="4" sinceVersion="1"/>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
+    let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("verify_floor"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    compile_and_run(
+        "verify_floor",
+        &src,
+        r#"
+        // A version-0 frame: blockLength 4 is the whole fixed block at that
+        // version (`second` does not exist yet), so it is legal for its version.
+        let mut frame = [0u8; 12];
+        frame[0..2].copy_from_slice(&4u16.to_le_bytes()); // blockLength
+        frame[2..4].copy_from_slice(&1u16.to_le_bytes()); // templateId
+        frame[4..6].copy_from_slice(&MsgDecoder::SCHEMA_ID.to_le_bytes());
+        frame[6..8].copy_from_slice(&0u16.to_le_bytes()); // version 0
+        frame[8..12].copy_from_slice(&7u32.to_le_bytes());
+
+        // try_wrap accepts it (bounds and version floor are satisfied)...
+        let dec = MsgDecoder::try_wrap(&frame, 0, 4, 0)
+            .expect("a version-0 frame with a legal block length must wrap");
+        assert_eq!(dec.first(), 7);
+        // ...so verify must too. Today verify floors at the compiled
+        // BLOCK_LENGTH (8) before reading the wire version and rejects.
+        MsgDecoder::verify(&frame)
+            .expect("a frame try_wrap accepts must pass verify");
+
+        // Below the version-0 readable extent (4): both reject.
+        let mut short = frame;
+        short[0..2].copy_from_slice(&2u16.to_le_bytes());
+        assert!(MsgDecoder::verify(&short).is_err());
+        assert!(
+            MsgDecoder::try_wrap(&short, 0, 2, 0).is_err(),
+            "block length below the version floor must not wrap"
+        );
+
+        // At the current schema version the compiled BLOCK_LENGTH floor still
+        // applies, so missing padding (blockLength 4, version 1) is rejected.
+        let mut current = frame;
+        current[6..8].copy_from_slice(&MsgDecoder::SCHEMA_VERSION.to_le_bytes());
+        assert!(MsgDecoder::verify(&current).is_err());
+        assert!(MsgDecoder::try_wrap(&current, 0, 4, 1).is_err());
+        "#,
+    );
+    Ok(())
+}
+
+/// A frame claiming a version newer than the compiled schema must not lower
+/// the block-length floor: SBE extensions only append, so a newer block is
+/// never shorter than the compiled `BLOCK_LENGTH` (schema padding included).
+#[test]
+fn block_length_floor_holds_for_versions_above_the_compiled_one()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="floor_future" id="13" version="1"
+                   byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+  </types>
+  <sbe:message name="Msg" id="1" blockLength="12">
+    <field name="first" id="1" type="uint32" offset="0"/>
+    <field name="second" id="2" type="uint32" offset="4" sinceVersion="1"/>
+  </sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
+    let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("floor_future"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    compile_and_run(
+        "floor_future",
+        &src,
+        r#"
+        // blockLength 8 is the readable extent but short of the compiled 12
+        // (schema padding). It is rejected at the current version...
+        let mut frame = [0u8; 20];
+        frame[0..2].copy_from_slice(&8u16.to_le_bytes());
+        frame[2..4].copy_from_slice(&1u16.to_le_bytes());
+        frame[4..6].copy_from_slice(&MsgDecoder::SCHEMA_ID.to_le_bytes());
+        frame[6..8].copy_from_slice(&MsgDecoder::SCHEMA_VERSION.to_le_bytes());
+        assert!(MsgDecoder::verify(&frame).is_err());
+        assert!(MsgDecoder::try_wrap(&frame, 0, 8, MsgDecoder::SCHEMA_VERSION).is_err());
+
+        // ...and must be rejected identically when the header claims a newer one.
+        let newer = MsgDecoder::SCHEMA_VERSION + 1;
+        frame[6..8].copy_from_slice(&newer.to_le_bytes());
+        assert!(MsgDecoder::verify(&frame).is_err());
+        assert!(MsgDecoder::try_wrap(&frame, 0, 8, newer).is_err());
+
+        // A full-length newer block is still accepted.
+        frame[0..2].copy_from_slice(&12u16.to_le_bytes());
+        assert!(MsgDecoder::verify(&frame).is_ok());
+        assert!(MsgDecoder::try_wrap(&frame, 0, 12, newer).is_ok());
+        "#,
+    );
+    Ok(())
+}

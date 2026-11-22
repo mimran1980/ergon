@@ -1088,6 +1088,7 @@ mod tests {
                     signal: Signal::BeginMessage,
                     encoding: crate::ir::Encoding::default(),
                     span: None,
+                    extensions: Default::default(),
                 },
                 Token {
                     id: None,
@@ -1095,8 +1096,10 @@ mod tests {
                     signal: Signal::EndMessage,
                     encoding: crate::ir::Encoding::default(),
                     span: None,
+                    extensions: Default::default(),
                 },
             ],
+            extensions: Default::default(),
         };
         // The message has no id, so there is nothing to conflict with.
         assert!(resolve_schema(&mut ir, None).is_ok());
@@ -1114,6 +1117,7 @@ mod tests {
                 signal: Signal::BeginComposite,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
             Token {
                 id: None,
@@ -1121,6 +1125,7 @@ mod tests {
                 signal: Signal::BeginField,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
         ];
         // find_matching_end should return tokens.len() - 1 as fallback
@@ -1139,6 +1144,7 @@ mod tests {
             signal: Signal::EndField,
             encoding: crate::ir::Encoding::default(),
             span: None,
+            extensions: Default::default(),
         }];
         let (size, next) = get_token_block_size(&tokens, 0);
         assert_eq!(size, 0);
@@ -1157,6 +1163,7 @@ mod tests {
                 signal: Signal::BeginGroup,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
             // No BeginComposite: straight to a field.
             Token {
@@ -1168,6 +1175,7 @@ mod tests {
                     ..crate::ir::Encoding::default()
                 },
                 span: None,
+                extensions: Default::default(),
             },
             Token {
                 id: None,
@@ -1175,6 +1183,7 @@ mod tests {
                 signal: Signal::EndField,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
             Token {
                 id: None,
@@ -1182,6 +1191,7 @@ mod tests {
                 signal: Signal::EndGroup,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
         ];
         let src: Option<miette::NamedSource<String>> = None;
@@ -1202,6 +1212,7 @@ mod tests {
                 signal: Signal::BeginVarData,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
             // No BeginComposite: only EndVarData.
             Token {
@@ -1210,6 +1221,7 @@ mod tests {
                 signal: Signal::EndVarData,
                 encoding: crate::ir::Encoding::default(),
                 span: None,
+                extensions: Default::default(),
             },
         ];
         let src: Option<miette::NamedSource<String>> = None;

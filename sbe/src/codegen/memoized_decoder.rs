@@ -235,7 +235,7 @@ pub(crate) fn generate_memoized_decoder(
                 if let Some(end) = self.cache.end_of(#slot_lit) {
                     return Ok(&buf[offset + #prefix_lit..end]);
                 }
-                if offset + #prefix_lit > buf.len() {
+                if #prefix_lit > buf.len().saturating_sub(offset) {
                     sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_ident),
@@ -243,7 +243,10 @@ pub(crate) fn generate_memoized_decoder(
                         available: buf.len().saturating_sub(offset),
                     });
                 }
-                let bytes: [u8; #prefix_lit] = read_bytes::<#prefix_lit>(buf, offset);
+                // SAFETY: the saturating check above proves
+                // `offset + prefix <= buf.len()` without an overflowing add.
+                let bytes: [u8; #prefix_lit] =
+                    unsafe { read_bytes_unchecked::<#prefix_lit>(buf, offset) };
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
                 let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(

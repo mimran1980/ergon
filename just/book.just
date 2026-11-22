@@ -19,7 +19,7 @@ book-build: book-deps
 
 # Serve the book locally with live reload.
 book-serve: book-deps
-    cd book && mdbook serve --open
+    cd book && mdbook serve --hostname 0.0.0.0 --open
 
 # Test all Rust code blocks in the book, and build it.
 #

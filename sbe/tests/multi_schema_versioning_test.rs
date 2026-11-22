@@ -651,6 +651,41 @@ fn multi_schema_accepts_identical_shared_enum() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// A consumer's schema marks on a shared type would be silently replaced by the
+/// owner's (the consumer skips its own definition), so differing marks must
+/// fail like any other layout difference.
+#[test]
+fn multi_schema_rejects_shared_enum_with_different_extension_marks()
+-> Result<(), Box<dyn std::error::Error>> {
+    let owner = r#"
+      <type name="SideEnc" primitiveType="uint8"/>
+      <enum name="Side" encodingType="SideEnc">
+        <validValue name="Buy" jsonValue="B">1</validValue>
+        <validValue name="Sell" jsonValue="S">2</validValue>
+      </enum>"#;
+    let consumer = owner.replace("\"B\"", "\"BUY\"");
+    let a = mini_schema("a", 1, owner);
+    let b = mini_schema("b", 2, &consumer);
+    let config = GenerationConfig::new("multi")
+        .with_shared_module("common")
+        .with_variant_labels("jsonValue", "as_str");
+    let mut g = Generator::new(config);
+    let err = g
+        .generate_multi(&[(&a, "common"), (&b, "other")])
+        .expect_err("differing extension marks on a shared enum");
+    assert!(
+        matches!(err, ergo_sbe::GenerateError::IncompatibleSharedType { .. }),
+        "{err:?}"
+    );
+    // Identical marks still share.
+    let same = mini_schema("c", 3, owner);
+    let config = GenerationConfig::new("multi")
+        .with_shared_module("common")
+        .with_variant_labels("jsonValue", "as_str");
+    Generator::new(config).generate_multi(&[(&a, "common"), (&same, "other")])?;
+    Ok(())
+}
+
 #[test]
 fn multi_schema_rejects_shared_module_not_owner() -> Result<(), Box<dyn std::error::Error>> {
     let a = mini_schema("a", 1, "");

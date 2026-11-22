@@ -182,6 +182,7 @@ pub(crate) fn message_field_infos(
                 null_value: f.null_value,
                 deprecated: f.deprecated,
                 description: f.description.clone(),
+                extensions: f.extensions.clone(),
             }
         })
         .collect()
@@ -558,18 +559,25 @@ pub(crate) fn selector_matches(sel: &crate::ConversionSelector, field: &MessageF
             field.semantic_type.as_deref() == Some(st.as_str())
         }
         crate::ConversionSelector::NamedType(n) => selector_type_name(field) == Some(n.as_str()),
+        crate::ConversionSelector::ExtensionAttr { local_name, value } => {
+            field.extensions.attributes.iter().any(|a| {
+                a.local_name == *local_name && value.as_ref().is_none_or(|v| a.value == *v)
+            })
+        }
     }
 }
 
 /// Documented precedence when several selectors match one field
 /// (see [`ConversionSelector`](crate::ConversionSelector)): exact `FieldPath`,
-/// then `SemanticType`, then `NamedType`. Resolution used to be "first match in
-/// registration order", so precedence silently depended on call order.
-const fn selector_rank(sel: &crate::ConversionSelector) -> u8 {
+/// then `SemanticType`, then `ExtensionAttr`, then `NamedType`. Resolution
+/// used to be "first match in registration order", so precedence silently
+/// depended on call order.
+pub(crate) const fn selector_rank(sel: &crate::ConversionSelector) -> u8 {
     match sel {
         crate::ConversionSelector::FieldPath(_) => 0,
         crate::ConversionSelector::SemanticType(_) => 1,
-        crate::ConversionSelector::NamedType(_) => 2,
+        crate::ConversionSelector::ExtensionAttr { .. } => 2,
+        crate::ConversionSelector::NamedType(_) => 3,
     }
 }
 

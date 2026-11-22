@@ -21,9 +21,18 @@ Do not call both for the same selector: a domain type already enables conversion
 ### Which fields a selector reaches, and what shape you get
 
 A selector matches by precedence (exact `FieldPath`, then `SemanticType`, then
-`NamedType`), so a blanket mapping plus one per-field override behaves the way
-it reads, whatever order you register them in. Paths are `"Message.field"`,
-extended with group names inside a group (`"Order.legs.price"`).
+an `ExtensionAttr` schema mark, then `NamedType`), so a blanket mapping plus
+one per-field override behaves the way it reads, whatever order you register
+them in. Paths are `"Message.field"`, extended with group names inside a group
+(`"Order.legs.price"`).
+
+`extension_attr("exponent")` selects fields whose schema carries a namespaced
+`exponent` attribute (any prefix); `extension_attr_value("exponent", "price")`
+additionally requires that exact value. Marks select fields only — the Rust
+type always comes from `build.rs`, never from the schema. `ExtensionAttr`
+reaches message and group fields (nested group entries included); marks on
+`<data>`, `<group>` elements and type-level declarations are visible to
+[hooks](hooks.md) only.
 
 `named_type` matches a composite, enum or set by name, or a primitive alias:
 with `<type name="Timestamp" primitiveType="uint64"/>`,
@@ -34,10 +43,11 @@ A selector that cannot apply fails generation instead of being skipped:
 
 | Config | `GenerateError` |
 |---|---|
-| `field_path` / `semantic_type` that matches no field | `InvalidConversion`: "matches no field in the schema" |
+| `field_path` / `semantic_type` / `extension_attr` that matches no field | `InvalidConversion`: "matches no field in the schema" |
 | `named_type` naming no composite, enum or set, and no alias a field uses | `InvalidConversion`: "no matching type found in schema" |
 | `with_domain_type` / `with_manual_domain_type` twice on one selector, different types | `InvalidConversion`: "mapped to both `A` and `B`" |
 | a domain-type selector whose every field a higher-precedence selector takes | `InvalidConversion`: "every field it matches takes a higher-precedence selector" |
+| two extension domain selectors tie on one field with different types | `InvalidConversion`: "ambiguous extension selectors for field …" |
 | `with_null_as_option` on anything but `named_type(<enum>)` | `InvalidConfiguration` |
 
 `generate_multi` resolves each selector against the union of its schemas. A

@@ -34,6 +34,7 @@
   - [with_conversion vs with_domain_type](./sbe/configuration/conversion-vs-domain.md)
   - [GenerationConfig options](./sbe/configuration/generation-config.md)
   - [Code-generation hooks](./sbe/configuration/hooks.md)
+  - [Extension XML](./sbe/configuration/extension-xml.md)
 - [Recipes](./sbe/recipes.md)
   - [Aeron try_claim](./sbe/recipes/aeron-try-claim.md)
   - [Display and Debug](./sbe/recipes/display-debug.md)

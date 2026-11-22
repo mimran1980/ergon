@@ -33,12 +33,15 @@ The client handles these documented transitions:
 | `NewLeaderEvent` (the last one in a poll) | Bind to the image that delivered it; add the leader's ingress publication without waiting; `Connected` once it connects, `Disconnected` if it has not within the message timeout |
 | `SessionEvent(CLOSED)` | Session moves to `PendingClose`, then `Closed`, even while a new leader's publication is pending |
 | Redirect during connect | Follow `leader_endpoints` to the new leader |
+| Handshake event larger than one MTU | Reassembled before it is parsed, as Java's `EgressPoller` does |
 | New ingress publication (redirect or new leader) | Keep every unicast ingress channel setting but the endpoint, and re-add IPC and multicast channels unchanged, so the message limits do not change |
 | Auth challenge | Pass to `CredentialsSupplier`, send `ChallengeResponse` |
 | Auth rejection | `ClusterError::AuthRejected` with the cluster's detail, at once |
 | `SessionEvent(ERROR)` answering the connect (session limit, client version) | `ClusterError::ConnectFailed` with the cluster's detail, at once |
 | Connect request | Sent once; a challenge response or a redirect sends a new one |
 | `close()` | `SessionCloseRequest` while connected (up to three offers under back pressure), then `Closed` |
+| Snapshot admin request | Up to three claims under back pressure, then a retryable `ClusterError::Publication` |
+| Ingress publication at its maximum position | The offer returns `MaxPositionExceeded`; the next poll leaves the session `Closed` |
 | Egress frame of another SBE schema | `EgressListener::on_extension_message`; skipped during connect |
 | Timeout (connect / poll / new-leader) | `ClusterError::Timeout` / `ClusterError::Disconnected` |
 | Listener panic | `ClusterError::ListenerPanicked`, session continues |
@@ -69,8 +72,11 @@ fails if its filter drops one).
 | Null, simple and empty credentials; a challenge answered correctly; wrong credentials and a wrong challenge answer rejected with `ClusterError::AuthRejected` | `auth.rs` |
 | Cluster closes a session that sends no keep-alives; keep-alives hold one open | `client_parity.rs` |
 | One connect request per connect; a connect error fails the connect at once; session limit | `client_parity.rs` |
+| A handshake event spanning several fragments, on the async, blocking and fan-out connects | `client_parity.rs` |
+| Dropping an async connect releases its subscription and publications on a shared Aeron client | `client_parity.rs` |
+| Reaching the ingress maximum position closes the session | `client_parity.rs` |
 | `controlled_poll_egress` (`Abort`, `Break`, `Commit`, `Continue`, lifecycle events, listener panic recovery) | `client_parity.rs` |
-| Admin snapshot request answered on `on_admin_response` | `admin_snapshot.rs` |
+| Admin snapshot request answered on `on_admin_response`: `OK` when authorised, `UNAUTHORISEDACCESS` by default, `ERROR` for an unknown request type | `admin_snapshot.rs` |
 
 Not covered by the harness: expiry of the async connect timeout
 (`ClusterError::Timeout`). Unit tests in `cluster/src/` (run by `ci.yml`'s
@@ -85,3 +91,13 @@ Not covered by the harness: expiry of the async connect timeout
 - No snapshot/recovery integration.
 - No TLS/mTLS at the Aeron transport layer.
 - The `cluster_codec_types` module is `#[doc(hidden)]` and not stable API.
+- Ingress is always an exclusive publication, and the client does not expose
+  its raw publication or subscription.
+- After leader loss the old ingress publication stays open until the new
+  leader's replaces it or the client is dropped (Java closes it at once);
+  offers are refused by state meanwhile.
+- A failed new-leader publication add is reported once and not retried
+  (Java retries a `RESOURCE_TEMPORARILY_UNAVAILABLE` add).
+- `clientInfo` is `name=<client name> ergo-aeron-cluster <version>`, and the
+  default client name is `cluster-client` (Java: `name=<name> version=<v>
+  commit=<sha>`, default name empty).

@@ -292,12 +292,31 @@ pub(crate) fn generate_message_decoder(
             #min_extent_arms
         }
 
+        /// Floor for the wire `blockLength` field at `acting_version`: the
+        /// version-aware readable extent, raised to the compiled
+        /// `BLOCK_LENGTH` at the current schema version or any newer one
+        /// (extensions only append) so schema-declared padding stays part of
+        /// the frame. Shared by `try_wrap` and
+        /// `verify` so both accept and reject the same frames.
+        #[inline]
+        const fn min_block_length(acting_version: u16) -> usize {
+            let min_fixed = Self::min_readable_fixed_extent(acting_version);
+            if acting_version >= Self::SCHEMA_VERSION && Self::BLOCK_LENGTH > min_fixed {
+                Self::BLOCK_LENGTH
+            } else {
+                min_fixed
+            }
+        }
+
         /// Wrap a buffer for decoding at **message start** with bounds checks.
         /// Fields are at `message_offset + HEADER_LENGTH + field_offset`.
         ///
-        /// Validates that the body holds `max(acting_block_length,
-        /// min_readable_fixed_extent(acting_version))` bytes so required
-        /// accessors never read out of bounds from safe code.
+        /// Validates that `acting_block_length` is at least
+        /// `min_block_length(acting_version)` — the version-aware readable
+        /// extent, or the compiled `BLOCK_LENGTH` at the current schema
+        /// version — and that the body holds `acting_block_length` bytes,
+        /// so required accessors never read past the declared block or out
+        /// of bounds from safe code.
         ///
         /// # Migration from sbe-tool
         ///
@@ -320,21 +339,26 @@ pub(crate) fn generate_message_decoder(
                 });
             };
             let available_body = buf.len().saturating_sub(body_offset);
-            let min_fixed = Self::min_readable_fixed_extent(acting_version);
-            let body_need = if acting_block_length > min_fixed {
-                acting_block_length
-            } else {
-                min_fixed
-            };
-            if body_need > available_body {
+            let min_block = Self::min_block_length(acting_version);
+            if acting_block_length < min_block {
+                sbe_rt::cold();
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "blockLength",
+                    needed: min_block,
+                    available: acting_block_length,
+                });
+            }
+            // acting_block_length >= min_block >= min_readable_fixed_extent,
+            // so the declared block is the whole extent to prove in-bounds.
+            if acting_block_length > available_body {
                 sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "message body",
-                    needed: Self::HEADER_LENGTH.saturating_add(body_need),
+                    needed: Self::HEADER_LENGTH.saturating_add(acting_block_length),
                     available: buf.len().saturating_sub(message_offset),
                 });
             }
-            // SAFETY: body_need bytes after header are in-bounds.
+            // SAFETY: acting_block_length bytes after header are in-bounds.
             Ok(unsafe {
                 Self::wrap_unchecked(buf, message_offset, acting_block_length, acting_version)
             })
@@ -1316,7 +1340,7 @@ pub(crate) fn generate_message_decoder(
                 #version_check
                 let offset = self.#vd_tail_call?;
                 #vd_cache_hit
-                if offset + #prefix_size_lit > self.buf.len() {
+                if #prefix_size_lit > self.buf.len().saturating_sub(offset) {
                     sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_snake_ident),
@@ -1324,7 +1348,8 @@ pub(crate) fn generate_message_decoder(
                         available: self.buf.len().saturating_sub(offset),
                     });
                 }
-                // SAFETY: bounds verified by the preceding check
+                // SAFETY: the saturating check above proves
+                // `offset + prefix <= buf.len()` without an overflowing add.
                 let bytes: [u8; #prefix_size_lit] = unsafe {
                     core::ptr::read_unaligned(
                         self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit]
@@ -1416,7 +1441,11 @@ pub(crate) fn generate_message_decoder(
 
     let mut verify_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
 
-    // Header + block_length preamble
+    // Header + block_length preamble. The acting version is read first so
+    // the block-length floor can be the same version-aware decision
+    // `try_wrap` makes (shared `min_block_length`), rather than always the
+    // compiled `BLOCK_LENGTH` — which would reject a legal older-version
+    // frame before its version is ever looked at.
     verify_stmts.push(quote::quote! {
         if buf.len() < #hs_lit {
             sbe_rt::cold();
@@ -1424,14 +1453,19 @@ pub(crate) fn generate_message_decoder(
         }
         let header_bytes: [u8; #hs_lit] = read_bytes::<#hs_lit>(buf, 0);
         let header = #hp_ident(header_bytes);
+        let acting_version = sbe_rt::checked_header_u16(
+            "version",
+            header.#header_vr_ident() as u64,
+        )?;
         let block_length = sbe_rt::checked_header_usize(
             "blockLength",
             header.#hbl_ident() as u64,
         )?;
-        if block_length < Self::BLOCK_LENGTH {
+        let min_block = Self::min_block_length(acting_version);
+        if block_length < min_block {
             sbe_rt::cold();
             return Err(sbe_rt::VerifyError::InvalidBlockLength {
-                expected_min: Self::BLOCK_LENGTH,
+                expected_min: min_block,
                 actual: block_length,
             });
         }
@@ -1449,10 +1483,6 @@ pub(crate) fn generate_message_decoder(
             });
         }
         let mut offset = body_end;
-        let acting_version = sbe_rt::checked_header_u16(
-            "version",
-            header.#header_vr_ident() as u64,
-        )?;
     });
 
     // Group dimension checks. Both the tailed skip and the fixed-stride
@@ -1598,7 +1628,10 @@ pub(crate) fn generate_message_decoder(
                         length: 0,
                     });
                 }
-                let bytes: [u8; #ps_lit] = read_bytes::<#ps_lit>(buf, offset);
+                // SAFETY: the typed check above proves
+                // `offset + ps <= buf.len()` (no overflow possible).
+                let bytes: [u8; #ps_lit] =
+                    unsafe { read_bytes_unchecked::<#ps_lit>(buf, offset) };
                 let var_header = #tp_ident(bytes);
                 let len = var_header.#lf_ident() as u64;
                 let (_, data_end) = match sbe_rt::checked_var_data_bounds::<true, #max_lit>(

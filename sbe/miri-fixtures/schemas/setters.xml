@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<messageSchema package="miri.setters" id="805" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="pair">
+      <type name="left" primitiveType="uint16"/>
+      <type name="right" primitiveType="uint16"/>
+    </composite>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">0</validValue>
+      <validValue name="Sell">1</validValue>
+    </enum>
+    <enum name="BooleanType" encodingType="uint8">
+      <validValue name="F">0</validValue>
+      <validValue name="T">1</validValue>
+    </enum>
+    <set name="Flags" encodingType="uint8">
+      <choice name="first">0</choice>
+      <choice name="second">1</choice>
+    </set>
+  </types>
+  <message name="Setters" id="1">
+    <field name="side" id="1" type="Side"/>
+    <field name="flags" id="2" type="Flags"/>
+    <field name="pair" id="3" type="pair"/>
+    <field name="active" id="4" type="BooleanType"/>
+  </message>
+</messageSchema>

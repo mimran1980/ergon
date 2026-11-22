@@ -98,3 +98,36 @@ generated item (so they extend it with `impl`s, not with derives).
 
 Full runnable example with serde + serde_json round-trip:
 [`hook_serde_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/hook_serde_test.rs).
+
+## Extension XML on hook contexts
+
+Every `ItemContext` variant carries the schema extension content of the
+element it was generated from: namespaced attributes and foreign-namespace
+child elements that the SBE grammar does not own.
+
+| Context | Carries |
+|---|---|
+| `Enum` / `Set` / `Composite` | that `<enum>` / `<set>` / `<composite>` element's own marks |
+| `MessageDecoder` / `MessageEncoder` | the `<message>` element's marks, foreign children included |
+| `DomainStruct` | the `<message>` (message DTO) or `<group>` (entry DTO) element's marks |
+| `EnumVariantInfo` / `SetChoiceInfo` | that `<validValue>` / `<choice>` element's marks |
+| `FieldInfo` | that `<field>` / `<group>` / `<data>` element's marks |
+
+Look marks up by local name — any prefix works: `extensions.attr("jsonValue")`,
+`extensions.child("meta")`, `extensions.is_empty()`. Marks on `<data>`,
+`<group>` elements and type-level declarations reach hooks but are invisible
+to [`ConversionSelector::ExtensionAttr`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.ConversionSelector.html),
+which selects message and group fields only.
+
+**Example**: emit a JSON label from a `jsonValue` mark on each variant:
+
+```rust,ignore
+{{#include ../../../../samples/exchange-example/build.rs:json_label_hook}}
+```
+
+The exchange sample applies exactly this hook to its venue schema —
+[exchange example](../../samples/exchange-example.md).
+
+Capture rules, the full context surface, `ExtensionAttr` selectors and
+the three built-in knobs that read the same marks:
+[Extension XML](extension-xml.md).

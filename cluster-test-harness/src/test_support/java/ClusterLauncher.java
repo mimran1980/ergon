@@ -6,6 +6,7 @@ import io.aeron.logbuffer.Header;
 import io.aeron.ExclusivePublication;
 import io.aeron.Image;
 import io.aeron.cluster.codecs.CloseReason;
+import io.aeron.security.AuthorisationService;
 import io.aeron.security.Authenticator;
 import io.aeron.security.SessionProxy;
 import org.agrona.DirectBuffer;
@@ -88,10 +89,13 @@ public class ClusterLauncher {
         // consensus dirs (log-recovery restart). "auction" runs the official
         // sample service; anything else, including omission, is the echo service.
         // "auth" runs the echo service behind TestAuthenticator.
+        // "admin-allow" authorises every admin request (AuthorisationService.ALLOW_ALL);
+        // the default authorisation service refuses them as UNAUTHORISED_ACCESS.
         // The media driver directory is always recreated: a leftover cnc.dat
         // from a killed process triggers ActiveDriverException.
         boolean keep = false;
         boolean auth = false;
+        boolean adminAllow = false;
         ClusteredService service = new Echo();
         for (int i = 3; i < args.length; i++) {
             if (args[i].equals("keep")) {
@@ -100,6 +104,8 @@ public class ClusterLauncher {
                 service = new BasicAuctionClusteredService();
             } else if (args[i].equals("auth")) {
                 auth = true;
+            } else if (args[i].equals("admin-allow")) {
+                adminAllow = true;
             } else if (!args[i].equals("echo")) {
                 throw new IllegalArgumentException("unknown ClusterLauncher arg: " + args[i]);
             }
@@ -115,6 +121,9 @@ public class ClusterLauncher {
             .ingressChannel("aeron:udp?endpoint=localhost:" + ingressPort);
         if (auth) {
             config.consensusModuleContext().authenticatorSupplier(TestAuthenticator::new);
+        }
+        if (adminAllow) {
+            config.consensusModuleContext().authorisationServiceSupplier(() -> AuthorisationService.ALLOW_ALL);
         }
 
         ClusteredMediaDriver.launch(config.mediaDriverContext(), config.archiveContext(), config.consensusModuleContext());

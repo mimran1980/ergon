@@ -15,6 +15,64 @@ impl WireDec {
     }
 }
 
+/// Exact decimal text for `mantissa × 10^exponent`: integer string
+/// arithmetic only, so large mantissas round-trip losslessly (no floats,
+/// no decimal crate).
+impl core::fmt::Display for WireDec {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.mantissa == 0 {
+            return f.write_str("0");
+        }
+        let negative = self.mantissa < 0;
+        let digits = self.mantissa.unsigned_abs().to_string();
+        if negative {
+            f.write_str("-")?;
+        }
+        if self.exponent >= 0 {
+            f.write_str(&digits)?;
+            for _ in 0..self.exponent {
+                f.write_str("0")?;
+            }
+            return Ok(());
+        }
+        // Negative exponent: insert the point `exponent` places from the
+        // right of the digit string, left-padding with "0." when it runs off.
+        let point = digits.len() as i64 + i64::from(self.exponent);
+        if point > 0 {
+            f.write_str(&digits[..point as usize])?;
+            f.write_str(".")?;
+            f.write_str(&digits[point as usize..])
+        } else {
+            f.write_str("0.")?;
+            for _ in 0..-point {
+                f.write_str("0")?;
+            }
+            f.write_str(&digits)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WireDec;
+
+    #[test]
+    fn display_renders_exact_decimals() {
+        assert_eq!(WireDec::new(5_000_000, -3).to_string(), "5000.000");
+        assert_eq!(WireDec::new(-5_000_000, -3).to_string(), "-5000.000");
+        assert_eq!(WireDec::new(123, 0).to_string(), "123");
+        assert_eq!(WireDec::new(5, 2).to_string(), "500");
+        assert_eq!(WireDec::new(5, -8).to_string(), "0.00000005");
+        assert_eq!(WireDec::new(42, -1).to_string(), "4.2");
+        assert_eq!(WireDec::new(0, -3).to_string(), "0");
+        // Full i64 magnitude: no float ever touches this path.
+        assert_eq!(
+            WireDec::new(i64::MAX, -6).to_string(),
+            "9223372036854.775807"
+        );
+    }
+}
+
 /// One side level of a normalized order book.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Level {

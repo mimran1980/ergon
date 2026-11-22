@@ -515,6 +515,7 @@ fn issue435_codegen_pipeline() -> Result<(), Box<dyn std::error::Error>> {
         header_type: "messageHeader".into(),
         sources: Vec::new(),
         tokens: vec![],
+        extensions: Default::default(),
     });
     let mut generator = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("issue435"));
     let modules = generator.generate(&schema).unwrap();
@@ -615,6 +616,7 @@ fn all_issue_schemas_codegen() -> Result<(), Box<dyn std::error::Error>> {
             header_type: "messageHeader".into(),
             sources: Vec::new(),
             tokens: vec![],
+            extensions: Default::default(),
         });
         // Module names must be Rust identifiers; hyphens become underscores.
         let module_name = format!("issue{}", num.replace('-', "_"));

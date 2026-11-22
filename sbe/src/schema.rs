@@ -51,6 +51,7 @@ impl Schema {
                 header_type: "messageHeader".to_string(),
                 tokens: Vec::new(),
                 sources: Vec::new(),
+                extensions: Default::default(),
             },
         }
     }
@@ -92,6 +93,7 @@ mod tests {
             header_type: "customHeader".to_string(),
             sources: Vec::new(),
             tokens: Vec::new(),
+            extensions: Default::default(),
         };
         let schema = Schema::from_ir(ir);
         assert_eq!(schema.ir.package, "test_pkg");

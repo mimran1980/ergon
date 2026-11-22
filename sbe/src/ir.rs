@@ -190,6 +190,127 @@ pub struct Encoding {
     pub deprecated: Option<u16>,
 }
 
+/// Extension content retained from one schema node: namespaced (or allow-listed
+/// non-grammar) attributes and foreign-namespace child elements. Empty for every
+/// node a schema does not annotate. Build-time data only; never read by code
+/// generation unless the consumer opts in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Extensions {
+    /// Extension attributes in document order. Never `xmlns*` declarations
+    /// (roxmltree resolves those into the namespace table).
+    pub attributes: Vec<ExtensionAttr>,
+    /// Foreign-namespace child elements in document order.
+    pub elements: Vec<ExtensionElement>,
+}
+
+/// One attribute the SBE grammar does not own (namespaced, or an allow-listed
+/// non-grammar name such as `jsonValue` / `unit`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionAttr {
+    /// Local name (the part after the colon) — the match key; any prefix works.
+    pub local_name: String,
+    /// Resolved namespace URI; `None` for allow-listed non-grammar attributes.
+    pub namespace: Option<String>,
+    /// Verbatim attribute value.
+    pub value: String,
+}
+
+/// One foreign-namespace element with its whole subtree, captured verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionElement {
+    /// Local name (prefix is not retained: matching is prefix-independent).
+    pub local_name: String,
+    /// Resolved namespace URI of this element.
+    pub namespace: Option<String>,
+    /// All attributes of the extension element (its subtree is opaque, so the
+    /// SBE allow-list does not apply). Never `xmlns*`.
+    pub attributes: Vec<ExtensionAttr>,
+    /// Concatenated direct text nodes, verbatim (whitespace preserved);
+    /// `None` when the element has no text-node children. Consumers trim.
+    pub text: Option<String>,
+    /// Child elements, document order, recursively captured. XML comments
+    /// inside extension subtrees are dropped.
+    pub elements: Vec<ExtensionElement>,
+}
+
+impl Extensions {
+    /// True when nothing was retained on this node.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.attributes.is_empty() && self.elements.is_empty()
+    }
+
+    /// First attribute with this local name, in any namespace — the
+    /// “any prefix works” lookup.
+    ///
+    /// ```
+    /// # use ergo_sbe::{ExtensionAttr, Extensions};
+    /// let ext = Extensions {
+    ///     attributes: vec![ExtensionAttr {
+    ///         local_name: "exponent".into(),
+    ///         namespace: Some("urn:example".into()),
+    ///         value: "priceExponent".into(),
+    ///     }],
+    ///     elements: vec![],
+    /// };
+    /// assert_eq!(ext.attr("exponent"), Some("priceExponent"));
+    /// ```
+    #[must_use]
+    pub fn attr(&self, local_name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|a| a.local_name == local_name)
+            .map(|a| a.value.as_str())
+    }
+
+    /// First attribute with this exact (namespace URI, local name).
+    #[must_use]
+    pub fn attr_in(&self, namespace: &str, local_name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|a| a.namespace.as_deref() == Some(namespace) && a.local_name == local_name)
+            .map(|a| a.value.as_str())
+    }
+
+    /// First child element with this local name, in any namespace.
+    #[must_use]
+    pub fn child(&self, local_name: &str) -> Option<&ExtensionElement> {
+        self.elements.iter().find(|e| e.local_name == local_name)
+    }
+}
+
+impl ExtensionElement {
+    /// First attribute with this local name, in any namespace.
+    #[must_use]
+    pub fn attr(&self, local_name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|a| a.local_name == local_name)
+            .map(|a| a.value.as_str())
+    }
+
+    /// First attribute with this exact (namespace URI, local name).
+    #[must_use]
+    pub fn attr_in(&self, namespace: &str, local_name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|a| a.namespace.as_deref() == Some(namespace) && a.local_name == local_name)
+            .map(|a| a.value.as_str())
+    }
+
+    /// First child element with this local name, in any namespace.
+    #[must_use]
+    pub fn child(&self, local_name: &str) -> Option<&ExtensionElement> {
+        self.elements.iter().find(|e| e.local_name == local_name)
+    }
+
+    /// Direct text content, verbatim; `None` when there were no text nodes.
+    #[must_use]
+    pub fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+}
+
 /// One token in the flat IR stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
@@ -204,6 +325,10 @@ pub struct Token {
     /// Source span into the input XML text, for miette diagnostics.
     /// `None` for synthetic tokens not originating from the schema source.
     pub span: Option<std::ops::Range<usize>>,
+    /// Extension content of the schema element this token represents.
+    /// Empty unless the schema annotates that element; never read by
+    /// code generation without an explicit opt-in.
+    pub extensions: Extensions,
 }
 
 /// The parsed schema IR: schema-level metadata plus the token stream.
@@ -232,4 +357,9 @@ pub struct Ir {
     /// [`crate::GeneratedModuleSet::write_to`] watches these with
     /// `cargo::rerun-if-changed`.
     pub sources: Vec<std::path::PathBuf>,
+    /// Extension content at schema level: `messageSchema` root and `<types>`
+    /// sections (including those pulled in through `xi:include`), merged in
+    /// walk order: the root's own content first, then section/included
+    /// content as the parse encounters it.
+    pub extensions: Extensions,
 }

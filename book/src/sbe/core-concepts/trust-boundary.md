@@ -29,10 +29,13 @@ Wire layout follows official SBE offsets and order for the shapes under
 test ([compatibility profile](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md));
 official SBE wire compatibility outranks API convenience.
 
-**The trusted tier is safe Rust.** Bare constructors run the same header +
-fixed-body extent proof as `try_*`, then panic on failure. After that proof,
-field accessors/setters use unchecked loads/stores (justified by the
-constructor). Dynamic tails still check on consume.
+**The trusted tier is safe Rust.** Bare constructors run the same buffer
+extent proof as `try_*`, then panic on failure. `try_*` additionally rejects
+a declared block length below the version floor — a validity check `verify`
+shares — while the trusted tier takes the caller's word that the frame is
+well-formed. After that proof, field accessors/setters use unchecked
+loads/stores (justified by the constructor). Dynamic tails still check on
+consume.
 
 `try_decode` does not first traverse all dynamic tails. A staged walk validates
 them as it advances, so checked construction is compatible with a single-pass
@@ -50,10 +53,14 @@ knows. Its **acting block length** tells it how many fixed-body bytes precede
 the first tail. The local `BLOCK_LENGTH` describes the generated schema, so
 it cannot replace the sender's length when locating a tail.
 
-Checked construction requires the body to hold
-`max(acting_block_length, min_readable_fixed_extent(acting_version))` bytes.
-An older frame can therefore have a shorter fixed block than the local
-schema. A compatible newer frame can have an unknown fixed suffix, which the
+Checked construction requires `acting_block_length` to be at least
+`min_readable_fixed_extent(acting_version)` — raised to the compiled
+`BLOCK_LENGTH` when the acting version is the current schema version or a
+newer one (extensions only append), so
+schema-declared padding stays part of the frame — and the body to hold
+`acting_block_length` bytes. `verify()` applies the same floor, so the two
+agree on which frames are acceptable. An older frame can therefore have a
+shorter fixed block than the local schema. A compatible newer frame can have an unknown fixed suffix, which the
 decoder skips before reaching the existing tails. This does not make arbitrary
 schema edits compatible: keep the official SBE evolution rules and the
 [published compatibility profile](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md).

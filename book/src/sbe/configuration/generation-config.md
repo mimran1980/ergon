@@ -28,6 +28,13 @@ flags default to the value shown.
 | `with_keyword_append_token(token)` | `"_"` | Schema `type` → Rust `type_` |
 | `with_encode_version(version)` | none | Encoder writes `version` and omits members above it; the decoder still reads every version in the schema |
 | `with_hook(fn)` | none | Register a code-generation hook (serde, custom traits, …) |
+| `with_variant_labels(attr, method)` | none | Emit a total label method on every enum/set whose values carry the schema extension attribute `attr` (local name, any prefix): the value's label when it carries one, otherwise the enum's variant name (what the built-in `as_str` returns) or the set's raw schema name. `method` must be a Rust identifier; `as_str` replaces the enum's built-in one (so `Display` follows). No marks, no emission |
+| `with_exponent_links(attr)` | none | `{field}_with_exponent()` on the decoder that owns each fixed field whose extension attribute names a sibling exponent field; returns `(mantissa, exponent)` exactly as the two accessors do. Dangling or non-integer references fail generation with `GenerateError::ExtensionReference` |
+| `with_field_extension_defaults(default_attr, omit_attr)` | none | `{FIELD}_SCHEMA_DEFAULT: Option<&'static str>` and `{FIELD}_SCHEMA_OMIT_NULL: bool` consts for fixed fields carrying either attribute: message fields on `{Name}Schema`, group-entry fields on the group decoder. Stringly values, consts only; no marks, no emission |
+
+Selector kinds (`field_path`, `semantic_type`, `extension_attr`,
+`named_type`) and their precedence:
+[with_conversion vs with_domain_type](conversion-vs-domain.md).
 
 Turn off `with_display_debug`, `with_meta_attributes`, and `with_dispatch` to
 shrink generated code. Text fields stay bytes unless the schema declares a

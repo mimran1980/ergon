@@ -746,10 +746,12 @@ pub(crate) fn generate_group_decoder(
 
                 #[inline]
                 fn next(&mut self) -> Option<Self::Item> {
-                    // Poisoned: the error was already yielded once. Every later
-                    // offset in this group came from the entry that failed, so
-                    // there is nothing truthful left to produce.
-                    if self.poisoned.is_some() || self.count == 0 {
+                    // Finished: count is zero, either because iteration is
+                    // done or because a failure zeroed it with the poison (the
+                    // error was already yielded once; every later offset in
+                    // this group came from the entry that failed, so there is
+                    // nothing truthful left to produce).
+                    if self.count == 0 {
                         return None;
                     }
                     // `count > 0`, so the wrap proved the acting block holds
@@ -1668,7 +1670,24 @@ pub(crate) fn generate_group_decoder(
                     #cached_first_tail
                     let offset = self.#tail_nvd_call?;
                     #nvd_cache_hit_last
-                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                    // First proof of this field's prefix: upstream extent
+                    // walks make a miss near-unreachable but do not dominate
+                    // locally, so the typed check replaces the slice check
+                    // (a latent panic) with the documented typed error.
+                    if #prefix_size_lit > self.buf.len().saturating_sub(offset) {
+                        sbe_rt::cold();
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: stringify!(#vd_snake_ident),
+                            needed: #prefix_size_lit,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    // SAFETY: the typed check above proves
+                    // `offset + prefix_size <= buf.len()` (no overflow
+                    // possible).
+                    let bytes: [u8; #prefix_size_lit] = unsafe {
+                        read_bytes_unchecked::<#prefix_size_lit>(self.buf, offset)
+                    };
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
                     let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(
@@ -1693,7 +1712,24 @@ pub(crate) fn generate_group_decoder(
                     #version_check
                     let offset = self.#tail_nvd_call?;
                     #nvd_cache_hit_mid
-                    let bytes: [u8; #prefix_size_lit] = read_bytes::<#prefix_size_lit>(self.buf, offset);
+                    // First proof of this field's prefix: upstream extent
+                    // walks make a miss near-unreachable but do not dominate
+                    // locally, so the typed check replaces the slice check
+                    // (a latent panic) with the documented typed error.
+                    if #prefix_size_lit > self.buf.len().saturating_sub(offset) {
+                        sbe_rt::cold();
+                        return Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: stringify!(#vd_snake_ident),
+                            needed: #prefix_size_lit,
+                            available: self.buf.len().saturating_sub(offset),
+                        });
+                    }
+                    // SAFETY: the typed check above proves
+                    // `offset + prefix_size <= buf.len()` (no overflow
+                    // possible).
+                    let bytes: [u8; #prefix_size_lit] = unsafe {
+                        read_bytes_unchecked::<#prefix_size_lit>(self.buf, offset)
+                    };
                     let header = #type_pascal_ident(bytes);
                     let wire_length = header.#len_field_ident() as u64;
                     let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<true, #max_lit>(

@@ -246,6 +246,7 @@ pub(crate) fn resolve_type_to_tokens(
                 signal: Signal::BeginField,
                 encoding: field_enc,
                 span: span.clone(),
+                extensions: Default::default(),
             },
             Token {
                 id: None,
@@ -253,6 +254,7 @@ pub(crate) fn resolve_type_to_tokens(
                 signal: Signal::EndField,
                 encoding: Encoding::default(),
                 span,
+                extensions: Default::default(),
             },
         ])
     } else if let Some(tokens) = registry.registry.get(type_name) {
@@ -267,6 +269,7 @@ pub(crate) fn resolve_type_to_tokens(
                 ..Encoding::default()
             },
             span: span.clone(),
+            extensions: Default::default(),
         });
         for t in tokens {
             inlined.push(t.clone());
@@ -277,6 +280,7 @@ pub(crate) fn resolve_type_to_tokens(
             signal: Signal::EndField,
             encoding: Encoding::default(),
             span,
+            extensions: Default::default(),
         });
         Some(inlined)
     } else {

@@ -20,9 +20,73 @@ mod zero_length_header {
     include!(concat!(env!("OUT_DIR"), "/zero_length_header.rs"));
 }
 
+mod setters {
+    include!(concat!(env!("OUT_DIR"), "/setters.rs"));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{big_endian, little_endian, nested, zero_length_header};
+    use super::{big_endian, little_endian, nested, setters, zero_length_header};
+
+    /// The composite, enum, set and bool setters write through
+    /// `get_unchecked_mut` or a raw pointer. On a buffer that ends exactly at
+    /// the block, from an unaligned offset, every setter on every encoder stage
+    /// and on the raw writer must stay in bounds and land its bytes.
+    #[test]
+    fn unchecked_fixed_setters_stay_in_bounds() -> Result<(), Box<dyn std::error::Error>> {
+        use setters::{
+            BooleanType, Flags, Pair, SettersDecoder, SettersEncoder, SettersFixedFields, Side,
+        };
+        const OFFSET: usize = 3;
+        let check = |buffer: &[u8]| -> Result<(), Box<dyn std::error::Error>> {
+            let decoder = SettersDecoder::try_decode(buffer, OFFSET)?;
+            assert_eq!(decoder.side(), Side::Sell);
+            assert_eq!(decoder.flags().0, 0b11);
+            assert_eq!(
+                (decoder.pair().left(), decoder.pair().right()),
+                (0x0102, 0x0304)
+            );
+            assert!(decoder.active_bool()?);
+            Ok(())
+        };
+        let mut buffer = [0u8; OFFSET + SettersEncoder::compute_length_with_header()];
+
+        let mut unfixed = SettersEncoder::try_wrap_and_apply_header(&mut buffer, OFFSET)?;
+        unfixed
+            .side(Side::Sell)
+            .flags(Flags(0b11))
+            .pair(Pair::new(0x0102, 0x0304))
+            .active(BooleanType::F)
+            .active_bool(true);
+        check(&buffer)?;
+
+        buffer.fill(0);
+        let fields = SettersFixedFields {
+            side: Side::Buy,
+            flags: Flags(0),
+            pair: Pair::new(0, 0),
+            active: BooleanType::F,
+        };
+        let mut fixed =
+            SettersEncoder::try_wrap_and_apply_header(&mut buffer, OFFSET)?.fixed(&fields);
+        fixed
+            .side(Side::Sell)
+            .flags(Flags(0b11))
+            .pair(Pair::new(0x0102, 0x0304))
+            .active(BooleanType::F)
+            .active_bool(true);
+        check(&buffer)?;
+
+        buffer.fill(0);
+        let mut raw = SettersEncoder::try_wrap_and_apply_header(&mut buffer, OFFSET)?.raw_fixed();
+        raw.side(Side::Sell)
+            .flags(Flags(0b11))
+            .pair(Pair::new(0x0102, 0x0304))
+            .active(BooleanType::F)
+            .active_bool(true);
+        check(&buffer)?;
+        Ok(())
+    }
 
     /// A zero-length header and body make every length guard see N = 0: an
     /// offset past the buffer must be an error, never a pointer offset out

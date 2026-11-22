@@ -42,6 +42,8 @@ SHAPES = [
     ("tsMs",       "uint64",    'semanticType="UTCTimestamp" timeUnit="millisecond"', "millisecond timestamp, built-in chrono domain type"),
     ("aOpt",       "OptPair16", "",                            "optional fixed array (element null in every slot)"),
     ("cOpt",       "Pair",      'presence="optional"',        "optional composite (field-level presence)"),
+    ("xLink",      "uint64",    'ext:exponent="xLinkExp"',    "mantissa linked to its exponent field"),
+    ("xDef",       "int64",     'ext:jsonDefaultValue="-1" ext:jsonOmitNull="true"', "field with extension defaults"),
 ]
 
 # sinceVersion values under test.
@@ -67,6 +69,12 @@ def fields(start_id, indent):
             if prefix == "aCollision":
                 out.append(f'{indent}<field name="{prefix}V{v}AsStr" id="{fid}" type="uint32"{since}/>')
                 fid += 1
+    # Not a shape: the sibling target the xLink shapes' ext:exponent
+    # attribute names. Unversioned, so it exists beside both xLink version
+    # cells at every location.
+    out.append(f"{indent}<!-- exponent target for the xLink shapes -->")
+    out.append(f'{indent}<field name="xLinkExp" id="{fid}" type="int8"/>')
+    fid += 1
     # Not a shape: a Rust keyword name, so every location takes the
     # keyword-append rename (with_keyword_append_token).
     out.append(f"{indent}<!-- Rust keyword name -->")
@@ -100,6 +108,7 @@ HEADER = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
      Field naming is <shape>V<sinceVersion>; `codegen_matrix_test` recomputes
      this cross product and fails if a cell is missing here. -->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   xmlns:ext="https://example.org/sbe-ext"
                    package="codegen_matrix"
                    id="204"
                    version="3"
@@ -132,11 +141,11 @@ HEADER = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         </composite>
 
         <enum name="BooleanType" encodingType="uint8">
-            <validValue name="F">0</validValue>
-            <validValue name="T">1</validValue>
+            <validValue name="F" ext:jsonValue="f-label">0</validValue>
+            <validValue name="T" ext:jsonValue="t-label">1</validValue>
         </enum>
         <enum name="Model" encodingType="char">
-            <validValue name="A">A</validValue>
+            <validValue name="A" ext:jsonValue="alpha">A</validValue>
             <validValue name="B">B</validValue>
         </enum>
         <set name="Opts" encodingType="uint8">

@@ -61,6 +61,7 @@ pub(crate) mod decoder_display;
 pub(crate) mod domain_cluster;
 pub(crate) use domain_cluster::*;
 pub(crate) mod encoded_length;
+pub(crate) mod extension_helpers;
 pub(crate) mod field_type;
 pub(crate) mod message_header_template;
 pub(crate) mod nullification;
@@ -178,6 +179,19 @@ pub enum GenerateError {
         /// First differing property / fingerprint mismatch summary.
         difference: String,
     },
+    /// An extension attribute names a field that cannot take part in the
+    /// reference it annotates (only [`GenerationConfig::with_exponent_links`]
+    /// has references today). Fails closed: never a silent skip.
+    ExtensionReference {
+        /// Message or group the annotated field belongs to.
+        item: String,
+        /// The field carrying the extension attribute.
+        field: String,
+        /// The sibling field name the attribute's value spells.
+        target: String,
+        /// Why the reference is invalid.
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for GenerateError {
@@ -233,6 +247,17 @@ impl core::fmt::Display for GenerateError {
                     f,
                     "shared type '{name}' is wire-incompatible between modules \
                      '{owner_module}' (owner) and '{consumer_module}': {difference}"
+                )
+            }
+            Self::ExtensionReference {
+                item,
+                field,
+                target,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "extension reference in '{item}' field '{field}' names '{target}': {reason}"
                 )
             }
         }
@@ -450,6 +475,18 @@ impl Generator {
                 value: token.clone(),
                 reason,
             });
+        }
+        // The variant-labels method name becomes a generated `fn`; reject a
+        // non-identifier or keyword now rather than as an unreadable
+        // compile error in the consumer's crate.
+        if let Some((_, method)) = &self.config.variant_labels {
+            if !crate::config::is_valid_module_ident(method) {
+                return Err(GenerateError::InvalidConfiguration {
+                    option: "with_variant_labels".into(),
+                    value: method.clone(),
+                    reason: "method must be one Rust identifier that is not a keyword".into(),
+                });
+            }
         }
         Ok(())
     }
@@ -721,8 +758,8 @@ impl Generator {
                         check(
                             "enum",
                             name,
-                            canonical_token_fingerprint(ref_et, owner_byte_order),
-                            canonical_token_fingerprint(et, consumer_byte_order),
+                            canonical_shared_type_fingerprint(ref_et, owner_byte_order),
+                            canonical_shared_type_fingerprint(et, consumer_byte_order),
                         )?;
                     }
                 }
@@ -737,8 +774,8 @@ impl Generator {
                         check(
                             "set",
                             name,
-                            canonical_token_fingerprint(ref_st, owner_byte_order),
-                            canonical_token_fingerprint(st, consumer_byte_order),
+                            canonical_shared_type_fingerprint(ref_st, owner_byte_order),
+                            canonical_shared_type_fingerprint(st, consumer_byte_order),
                         )?;
                     }
                 }
@@ -753,8 +790,8 @@ impl Generator {
                         check(
                             "composite",
                             name,
-                            canonical_token_fingerprint(ref_ct, owner_byte_order),
-                            canonical_token_fingerprint(ct, consumer_byte_order),
+                            canonical_shared_type_fingerprint(ref_ct, owner_byte_order),
+                            canonical_shared_type_fingerprint(ct, consumer_byte_order),
                         )?;
                     }
                 }
@@ -865,11 +902,13 @@ impl Generator {
                     label: t.name.clone(),
                     value,
                     description: t.encoding.description.clone(),
+                    extensions: t.extensions.clone(),
                 })
             })
             .collect();
         crate::ItemContext::Enum {
             schema,
+            extensions: tokens[0].extensions.clone(),
             name,
             encoding_type: et_str,
             variants,
@@ -897,6 +936,7 @@ impl Generator {
                 null_value: None,
                 deprecated: g.deprecated,
                 description: g.description.clone(),
+                extensions: g.extensions.clone(),
             });
         }
         for vd in &msg.var_data {
@@ -911,6 +951,7 @@ impl Generator {
                 null_value: None,
                 deprecated: vd.deprecated,
                 description: vd.description.clone(),
+                extensions: vd.extensions.clone(),
             });
         }
         let name = match kind {
@@ -921,6 +962,7 @@ impl Generator {
         match kind {
             crate::ItemKind::MessageDecoder => crate::ItemContext::MessageDecoder {
                 schema,
+                extensions: msg.extensions.clone(),
                 name,
                 template_id: msg.id,
                 block_length: msg.block_length,
@@ -928,6 +970,7 @@ impl Generator {
             },
             crate::ItemKind::MessageEncoder => crate::ItemContext::MessageEncoder {
                 schema,
+                extensions: msg.extensions.clone(),
                 name,
                 template_id: msg.id,
                 block_length: msg.block_length,
@@ -1024,11 +1067,15 @@ impl Generator {
                     null_value: enc.and_then(|e| e.null_value),
                     deprecated: enc.and_then(|e| e.deprecated),
                     description: enc.and_then(|e| e.description.clone()),
+                    // The member element's own marks live on its BeginField
+                    // wrapper, not on the inlined type's inner token.
+                    extensions: field_tok.map(|t| t.extensions.clone()).unwrap_or_default(),
                 }
             })
             .collect();
         crate::ItemContext::Composite {
             schema,
+            extensions: tokens[0].extensions.clone(),
             name,
             fields,
         }
@@ -1059,10 +1106,12 @@ impl Generator {
                     .and_then(|v| v.parse::<u8>().ok())
                     .unwrap_or(0),
                 description: t.encoding.description.clone(),
+                extensions: t.extensions.clone(),
             })
             .collect();
         crate::ItemContext::Set {
             schema,
+            extensions: tokens[0].extensions.clone(),
             name,
             encoding_type: et_str,
             choices,
@@ -1180,7 +1229,26 @@ impl Generator {
             if shared.contains(&type_name) {
                 continue;
             }
-            generate_enum(&mut src, enum_tokens);
+            // One predicate, one decision: the labels impl exists exactly
+            // when it is emitted, so `as_str` is suppressed exactly then too.
+            let labels = self
+                .config
+                .variant_labels
+                .as_ref()
+                .and_then(|(attr, method)| {
+                    extension_helpers::enum_labels_impl(enum_tokens, attr, method)
+                });
+            let labels_shadow_as_str = labels.is_some()
+                && self
+                    .config
+                    .variant_labels
+                    .as_ref()
+                    .is_some_and(|(_, method)| method == "as_str");
+            generate_enum(&mut src, enum_tokens, labels_shadow_as_str);
+            if let Some(labels) = &labels {
+                src.push_str(&labels.to_string());
+                src.push('\n');
+            }
             if let Some(mapping) = self
                 .config
                 .enum_mappings
@@ -1201,6 +1269,17 @@ impl Generator {
                 continue;
             }
             generate_set(&mut src, set_tokens);
+            if let Some(labels) = self
+                .config
+                .variant_labels
+                .as_ref()
+                .and_then(|(attr, method)| {
+                    extension_helpers::set_labels_impl(set_tokens, attr, method)
+                })
+            {
+                src.push_str(&labels.to_string());
+                src.push('\n');
+            }
             if self.config.has_hooks() {
                 let ctx = Self::build_set_ctx(set_tokens, schema);
                 self.run_hooks(&ctx, &mut src);
@@ -1285,6 +1364,30 @@ impl Generator {
             );
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
+            // Extension built-ins (B2/B3): empty when no knob is set, so the
+            // default output is byte-identical.
+            if self.config.exponent_links.is_some()
+                || self.config.field_extension_defaults.is_some()
+            {
+                let walk = extension_helpers::KnobWalk {
+                    exponent_links: self.config.exponent_links.as_deref(),
+                    field_defaults: self
+                        .config
+                        .field_extension_defaults
+                        .as_ref()
+                        .map(|(d, o)| (d.as_str(), o.as_str())),
+                    conv_sels: &conv_sels,
+                    domain_types,
+                    null_as_option: &self.config.null_as_option,
+                    all_enums_as_option: self.config.all_enums_as_option,
+                    multi_message: multi,
+                };
+                let ext_ts = extension_helpers::message_extension_impls(msg, &marker, &walk)?;
+                if !ext_ts.is_empty() {
+                    src.push_str(&ext_ts.to_string());
+                    src.push('\n');
+                }
+            }
             message_markers.push((to_pascal_case(&msg.name), marker));
             // Hooks for the message decoder
             if self.config.has_hooks() {
@@ -1757,8 +1860,8 @@ fn selector_fields(elements: &[&SchemaElements]) -> Vec<MessageField> {
 /// | Selector | Error when |
 /// |---|---|
 /// | `NamedType` | no composite, enum or set of that name, and no field of a primitive alias of it |
-/// | `FieldPath`, `SemanticType` | no field matches |
-/// | domain type | a second type for the same selector, or every field it matches takes a higher-precedence selector |
+/// | `FieldPath`, `SemanticType`, `ExtensionAttr` | no field matches |
+/// | domain type | a second type for the same selector, two extension selectors tie with different type paths on one field, or every field it matches takes a higher-precedence selector |
 /// | `null_as_option` | anything but `NamedType` naming an enum |
 ///
 /// `scope` names where a `NamedType` was looked for (`"schema"` or `"any schema"`).
@@ -1816,6 +1919,39 @@ fn validate_selectors(
             reason: format!("mapped to both `{first}` and `{second}`"),
         });
     }
+    // Two extension selectors can both match one field (it carries both
+    // marks); `min_by_key` would silently pick registration order for the
+    // tie, so fail closed when the tied entries disagree on the type path.
+    // Same path twice is idempotent, not an error. Runs before the shadow
+    // check below, which would otherwise report a tie as higher-precedence
+    // shadowing.
+    for field in &fields {
+        let mut best_rank = u8::MAX;
+        let mut tied: Vec<&(crate::ConversionSelector, String)> = Vec::new();
+        for entry in &config.domain_types {
+            if !selector_matches(&entry.0, field) {
+                continue;
+            }
+            let rank = selector_rank(&entry.0);
+            if rank < best_rank {
+                best_rank = rank;
+                tied.clear();
+                tied.push(entry);
+            } else if rank == best_rank {
+                tied.push(entry);
+            }
+        }
+        if tied.len() < 2 {
+            continue;
+        }
+        let first_path = &tied[0].1;
+        if tied.iter().any(|(_, path)| path != first_path) {
+            return Err(GenerateError::InvalidConversion {
+                selector: format!("{:?}", tied[0].0),
+                reason: format!("ambiguous extension selectors for field {}", field.path),
+            });
+        }
+    }
     for (sel, rust_type) in &config.domain_types {
         if rust_type.is_empty() {
             return Err(GenerateError::InvalidConversion {
@@ -1829,14 +1965,26 @@ fn validate_selectors(
             selector: format!("{sel:?}"),
             reason: format!("domain type path is not a valid Rust type: {e}"),
         })?;
-        // A selector whose every field a higher-precedence one takes would
-        // generate nothing for it: almost always a stale or mistyped mapping.
+        // A selector whose every field a strictly higher-precedence one takes
+        // would generate nothing for it: almost always a stale or mistyped
+        // mapping. Compare ranks rather than selector identity so a same-rank
+        // tie with the same type path stays idempotent (different paths are
+        // rejected by the ambiguity check above).
+        let rank = selector_rank(sel);
         let mut matched = fields
             .iter()
             .filter(|f| selector_matches(sel, f))
             .peekable();
         if matched.peek().is_some()
-            && matched.all(|f| find_domain_selector(f, &config.domain_types) != Some(sel))
+            && matched.all(|f| {
+                config
+                    .domain_types
+                    .iter()
+                    .filter(|(s, _)| selector_matches(s, f))
+                    .map(|(s, _)| selector_rank(s))
+                    .min()
+                    .is_some_and(|best| best < rank)
+            })
         {
             return Err(GenerateError::InvalidConversion {
                 selector: format!("{sel:?}"),
@@ -1967,6 +2115,7 @@ mod tests {
             signal,
             encoding: Encoding::default(),
             span: None,
+            extensions: Default::default(),
         }
     }
 
@@ -2213,6 +2362,7 @@ mod tests {
             character_encoding: None,
             type_alias: None,
             field_type: FieldType::Primitive(PrimitiveType::UInt64, None),
+            extensions: crate::ir::Extensions::default(),
         };
         let conversions = vec![crate::ConversionSelector::semantic_type("UTCTimestamp")];
         assert!(

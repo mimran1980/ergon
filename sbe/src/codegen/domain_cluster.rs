@@ -10,7 +10,7 @@ use super::conversion_helpers::{
     message_field_infos,
 };
 use super::runtime::{to_pascal_case, to_snake_case};
-use crate::ir::{ByteOrder, Presence, PrimitiveType};
+use crate::ir::{ByteOrder, Extensions, Presence, PrimitiveType};
 use crate::structured_ir::{
     FieldType, MessageField, MessageGroup, MessageStructure, MessageVarData, SchemaElements,
     get_dim_num_layout, get_dimension_info, get_vardata_info, rust_type,
@@ -54,6 +54,7 @@ pub(crate) fn generate_domain_objects(
         "",    // path_prefix: message fields' paths are their names
         hooks,
         schema,
+        &msg.extensions,
         null_as_option,
         all_enums_as_option,
         &mut ts,
@@ -386,6 +387,9 @@ pub(crate) fn generate_domain_recursive(
     path_prefix: &str,
     hooks: &crate::config::Hooks,
     schema: &crate::Schema,
+    // Extension content of the owning element: the `<message>` for a message
+    // DTO, the `<group>` for a group-entry DTO.
+    extensions: &Extensions,
     null_as_option: &[crate::ConversionSelector],
     all_enums_as_option: bool,
     ts: &mut proc_macro2::TokenStream,
@@ -831,6 +835,7 @@ pub(crate) fn generate_domain_recursive(
             &format!("{path_prefix}{}.", g.name),
             hooks,
             schema,
+            &g.extensions,
             null_as_option,
             all_enums_as_option,
             ts,
@@ -1094,6 +1099,7 @@ pub(crate) fn generate_domain_recursive(
                 null_value: None,
                 deprecated: g.deprecated,
                 description: g.description.clone(),
+                extensions: g.extensions.clone(),
             });
         }
         // Append synthetic field entries for var-data
@@ -1121,10 +1127,12 @@ pub(crate) fn generate_domain_recursive(
                 null_value: None,
                 deprecated: vd.deprecated,
                 description: vd.description.clone(),
+                extensions: vd.extensions.clone(),
             });
         }
         let ctx = crate::ItemContext::DomainStruct {
             schema,
+            extensions: extensions.clone(),
             name: struct_prefix.to_string() + "Domain",
             fields: ctx_fields,
         };

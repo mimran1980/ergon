@@ -30,6 +30,65 @@ fn public_safe_api_rejects_header_only_car_frame() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+/// A long buffer with an acting block length below the version's minimum
+/// readable extent must be rejected: bounds alone are satisfied, but required
+/// getters would then read past the declared block (in-buffer, wrong values).
+#[test]
+fn try_wrap_rejects_block_length_below_version_floor() -> Result<(), Box<dyn Error>> {
+    let (_schema, src) = generate(&Paths::example_schema(), "soundness_bl_floor");
+    compile_and_run(
+        "soundness_bl_floor",
+        &src,
+        r#"
+        // Far longer than the message, so only the declared block length is wrong.
+        let buf = [0u8; 128];
+        assert!(
+            CarDecoder::try_wrap(&buf, 0, 0, CarDecoder::SCHEMA_VERSION).is_err(),
+            "block length 0 at the current schema version must be rejected"
+        );
+        assert!(
+            CarDecoder::try_wrap(&buf, 0, 0, 0).is_err(),
+            "block length 0 at version 0 must be rejected"
+        );
+        // One byte below the compiled block length still fails at the current
+        // version: schema-declared padding is part of the frame.
+        assert!(
+            CarDecoder::try_wrap(
+                &buf,
+                0,
+                CarDecoder::BLOCK_LENGTH - 1,
+                CarDecoder::SCHEMA_VERSION,
+            )
+            .is_err(),
+            "block length below BLOCK_LENGTH must be rejected at the current version"
+        );
+        // And one byte below the version-0 readable extent fails as well.
+        let v0_floor = CarDecoder::min_readable_fixed_extent(0);
+        assert!(v0_floor > 0, "car must require a non-empty fixed block");
+        assert!(
+            CarDecoder::try_wrap(&buf, 0, v0_floor - 1, 0).is_err(),
+            "block length below min_readable_fixed_extent must be rejected"
+        );
+        // The error names the declared block length against its floor, not the
+        // (much larger) buffer.
+        match CarDecoder::try_wrap(&buf, 0, 3, CarDecoder::SCHEMA_VERSION) {
+            Err(sbe_rt::DecodeError::BufferTooShort { field, needed, available }) => {
+                assert_eq!(field, "blockLength");
+                assert_eq!(needed, CarDecoder::BLOCK_LENGTH);
+                assert_eq!(available, 3);
+            }
+            other => panic!("expected BufferTooShort on blockLength, got {other:?}"),
+        }
+        // A well-formed block length is still accepted.
+        assert!(
+            CarDecoder::try_wrap(&buf, 0, CarDecoder::BLOCK_LENGTH, CarDecoder::SCHEMA_VERSION)
+                .is_ok()
+        );
+    "#,
+    );
+    Ok(())
+}
+
 #[test]
 fn safe_encoder_constructors_reject_empty_buffer_without_panic() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "soundness_empty_enc");

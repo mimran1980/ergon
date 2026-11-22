@@ -954,20 +954,18 @@ pub mod sbe_rt {
                     max_length: usize::MAX as u64,
                 }
             })?;
-        let data_start = offset
-            .checked_add(prefix_size)
-            .ok_or(DecodeError::BufferTooShort {
-                field,
-                needed: usize::MAX,
-                available: buffer_length.saturating_sub(offset),
-            })?;
-        let data_end = data_start
-            .checked_add(length)
-            .ok_or(DecodeError::BufferTooShort {
-                field,
-                needed: usize::MAX,
-                available: buffer_length.saturating_sub(offset),
-            })?;
+        let data_start = offset + prefix_size;
+        let data_end = match data_start.checked_add(length) {
+            Some(end) => end,
+            None => {
+                cold();
+                return Err(DecodeError::BufferTooShort {
+                    field,
+                    needed: usize::MAX,
+                    available: buffer_length.saturating_sub(offset),
+                });
+            }
+        };
         if data_end > buffer_length {
             cold();
             return Err(DecodeError::BufferTooShort {
@@ -2587,12 +2585,30 @@ impl<'a> CarDecoder<'a> {
         let mut m = 45;
         m
     }
+    /// Floor for the wire `blockLength` field at `acting_version`: the
+    /// version-aware readable extent, raised to the compiled
+    /// `BLOCK_LENGTH` at the current schema version or any newer one
+    /// (extensions only append) so schema-declared padding stays part of
+    /// the frame. Shared by `try_wrap` and
+    /// `verify` so both accept and reject the same frames.
+    #[inline]
+    const fn min_block_length(acting_version: u16) -> usize {
+        let min_fixed = Self::min_readable_fixed_extent(acting_version);
+        if acting_version >= Self::SCHEMA_VERSION && Self::BLOCK_LENGTH > min_fixed {
+            Self::BLOCK_LENGTH
+        } else {
+            min_fixed
+        }
+    }
     /// Wrap a buffer for decoding at **message start** with bounds checks.
     /// Fields are at `message_offset + HEADER_LENGTH + field_offset`.
     ///
-    /// Validates that the body holds `max(acting_block_length,
-    /// min_readable_fixed_extent(acting_version))` bytes so required
-    /// accessors never read out of bounds from safe code.
+    /// Validates that `acting_block_length` is at least
+    /// `min_block_length(acting_version)` — the version-aware readable
+    /// extent, or the compiled `BLOCK_LENGTH` at the current schema
+    /// version — and that the body holds `acting_block_length` bytes,
+    /// so required accessors never read past the declared block or out
+    /// of bounds from safe code.
     ///
     /// # Migration from sbe-tool
     ///
@@ -2615,17 +2631,20 @@ impl<'a> CarDecoder<'a> {
             });
         };
         let available_body = buf.len().saturating_sub(body_offset);
-        let min_fixed = Self::min_readable_fixed_extent(acting_version);
-        let body_need = if acting_block_length > min_fixed {
-            acting_block_length
-        } else {
-            min_fixed
-        };
-        if body_need > available_body {
+        let min_block = Self::min_block_length(acting_version);
+        if acting_block_length < min_block {
+            sbe_rt::cold();
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: "blockLength",
+                needed: min_block,
+                available: acting_block_length,
+            });
+        }
+        if acting_block_length > available_body {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "message body",
-                needed: Self::HEADER_LENGTH.saturating_add(body_need),
+                needed: Self::HEADER_LENGTH.saturating_add(acting_block_length),
                 available: buf.len().saturating_sub(message_offset),
             });
         }
@@ -3297,7 +3316,7 @@ impl<'a> CarDecoder<'a> {
         &self,
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 4 > self.buf.len().saturating_sub(start) {
+        if start.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "manufacturer",
@@ -3305,7 +3324,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len().saturating_sub(start),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(self.buf, start) };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
         let (_, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -3319,7 +3338,7 @@ impl<'a> CarDecoder<'a> {
         &self,
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 4 > self.buf.len().saturating_sub(start) {
+        if start.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "model",
@@ -3327,7 +3346,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len().saturating_sub(start),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(self.buf, start) };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
         let (_, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -3341,7 +3360,7 @@ impl<'a> CarDecoder<'a> {
         &self,
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 4 > self.buf.len().saturating_sub(start) {
+        if start.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "activationCode",
@@ -3349,7 +3368,7 @@ impl<'a> CarDecoder<'a> {
                 available: self.buf.len().saturating_sub(start),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(self.buf, start) };
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
         let (_, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -3443,7 +3462,7 @@ impl<'a> CarDecoder<'a> {
     #[inline(always)]
     pub fn manufacturer(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_2::<false>()?;
-        if offset + 4 > self.buf.len() {
+        if 4 > self.buf.len().saturating_sub(offset) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: stringify!(manufacturer),
@@ -3494,7 +3513,7 @@ impl<'a> CarDecoder<'a> {
     #[inline(always)]
     pub fn model(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_3::<false>()?;
-        if offset + 4 > self.buf.len() {
+        if 4 > self.buf.len().saturating_sub(offset) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: stringify!(model),
@@ -3543,7 +3562,7 @@ impl<'a> CarDecoder<'a> {
     #[inline(always)]
     pub fn activation_code(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
         let offset = self.tail_offset_4::<false>()?;
-        if offset + 4 > self.buf.len() {
+        if 4 > self.buf.len().saturating_sub(offset) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: stringify!(activation_code),
@@ -3637,14 +3656,19 @@ impl<'a> CarDecoder<'a> {
         }
         let header_bytes: [u8; 8] = read_bytes::<8>(buf, 0);
         let header = MessageHeader(header_bytes);
+        let acting_version = sbe_rt::checked_header_u16(
+            "version",
+            header.version() as u64,
+        )?;
         let block_length = sbe_rt::checked_header_usize(
             "blockLength",
             header.block_length() as u64,
         )?;
-        if block_length < Self::BLOCK_LENGTH {
+        let min_block = Self::min_block_length(acting_version);
+        if block_length < min_block {
             sbe_rt::cold();
             return Err(sbe_rt::VerifyError::InvalidBlockLength {
-                expected_min: Self::BLOCK_LENGTH,
+                expected_min: min_block,
                 actual: block_length,
             });
         }
@@ -3662,10 +3686,6 @@ impl<'a> CarDecoder<'a> {
             });
         }
         let mut offset = body_end;
-        let acting_version = sbe_rt::checked_header_u16(
-            "version",
-            header.version() as u64,
-        )?;
         {
             if offset + 4 > buf.len() {
                 sbe_rt::cold();
@@ -3753,7 +3773,7 @@ impl<'a> CarDecoder<'a> {
                     length: 0,
                 });
             }
-            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+            let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
             let var_header = VarStringEncoding(bytes);
             let len = var_header.length() as u64;
             let (_, data_end) = match sbe_rt::checked_var_data_bounds::<
@@ -3784,7 +3804,7 @@ impl<'a> CarDecoder<'a> {
                     length: 0,
                 });
             }
-            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+            let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
             let var_header = VarStringEncoding(bytes);
             let len = var_header.length() as u64;
             let (_, data_end) = match sbe_rt::checked_var_data_bounds::<
@@ -3815,7 +3835,7 @@ impl<'a> CarDecoder<'a> {
                     length: 0,
                 });
             }
-            let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+            let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
             let var_header = VarAsciiEncoding(bytes);
             let len = var_header.length() as u64;
             let (_, data_end) = match sbe_rt::checked_var_data_bounds::<
@@ -4271,7 +4291,7 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for FuelFiguresDecoder<'a, C> {
     type Item = Result<FuelFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.poisoned.is_some() || self.count == 0 {
+        if self.count == 0 {
             return None;
         }
         let available = self.buf.len().saturating_sub(self.offset);
@@ -4461,7 +4481,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
         &self,
         start: usize,
     ) -> Result<usize, sbe_rt::DecodeError> {
-        if 4 > self.buf.len().saturating_sub(start) {
+        if start.checked_add(4).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "usageDescription",
@@ -4469,7 +4489,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
                 available: self.buf.len().saturating_sub(start),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, start);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(self.buf, start) };
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
         let (_, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -4525,7 +4545,15 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
             >(stringify!(usage_description), end.saturating_sub(data_offset) as u64)?;
             return Ok(unsafe { self.buf.get_unchecked(data_offset..end) });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(self.buf, offset);
+        if 4 > self.buf.len().saturating_sub(offset) {
+            sbe_rt::cold();
+            return Err(sbe_rt::DecodeError::BufferTooShort {
+                field: stringify!(usage_description),
+                needed: 4,
+                available: self.buf.len().saturating_sub(offset),
+            });
+        }
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(self.buf, offset) };
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
         let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -5232,7 +5260,7 @@ impl<'a, C: sbe_rt::GroupContext> Iterator for PerformanceFiguresDecoder<'a, C> 
     type Item = Result<PerformanceFiguresEntryDecoder<'a>, sbe_rt::DecodeError>;
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.poisoned.is_some() || self.count == 0 {
+        if self.count == 0 {
             return None;
         }
         let available = self.buf.len().saturating_sub(self.offset);
@@ -8342,7 +8370,7 @@ impl<'a> CarMemoizedDecoder<'a> {
         if let Some(end) = self.cache.end_of(2) {
             return Ok(&buf[offset + 4..end]);
         }
-        if offset + 4 > buf.len() {
+        if 4 > buf.len().saturating_sub(offset) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: stringify!(manufacturer),
@@ -8350,7 +8378,7 @@ impl<'a> CarMemoizedDecoder<'a> {
                 available: buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
         let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -8396,7 +8424,7 @@ impl<'a> CarMemoizedDecoder<'a> {
         if let Some(end) = self.cache.end_of(3) {
             return Ok(&buf[offset + 4..end]);
         }
-        if offset + 4 > buf.len() {
+        if 4 > buf.len().saturating_sub(offset) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: stringify!(model),
@@ -8404,7 +8432,7 @@ impl<'a> CarMemoizedDecoder<'a> {
                 available: buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = VarStringEncoding(bytes);
         let wire_length = header.length() as u64;
         let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -8448,7 +8476,7 @@ impl<'a> CarMemoizedDecoder<'a> {
         if let Some(end) = self.cache.end_of(4) {
             return Ok(&buf[offset + 4..end]);
         }
-        if offset + 4 > buf.len() {
+        if 4 > buf.len().saturating_sub(offset) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: stringify!(activation_code),
@@ -8456,7 +8484,7 @@ impl<'a> CarMemoizedDecoder<'a> {
                 available: buf.len().saturating_sub(offset),
             });
         }
-        let bytes: [u8; 4] = read_bytes::<4>(buf, offset);
+        let bytes: [u8; 4] = unsafe { read_bytes_unchecked::<4>(buf, offset) };
         let header = VarAsciiEncoding(bytes);
         let wire_length = header.length() as u64;
         let (data_start, data_end) = sbe_rt::checked_var_data_bounds::<
@@ -8773,20 +8801,30 @@ impl<'a> CarRawFixedWriter<'a> {
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.msg_offset + 10;
-        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&(val as u8).to_le_bytes());
+        }
         self
     }
     ///Generated method `available_bool`.
     #[inline]
     pub const fn available_bool(&mut self, val: bool) -> &mut Self {
-        self.buf[self.msg_offset + 10] = val as u8;
+        unsafe {
+            *self.buf.as_mut_ptr().add(self.msg_offset + 10) = val as u8;
+        }
         self
     }
     ///Generated method `code`.
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.msg_offset + 11;
-        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&(val as u8).to_le_bytes());
+        }
         self
     }
     ///Generated method `some_numbers`.
@@ -8845,14 +8883,20 @@ impl<'a> CarRawFixedWriter<'a> {
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.msg_offset + 34;
-        self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&val.0.to_le_bytes());
+        }
         self
     }
     ///Generated method `engine`.
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.msg_offset + 35;
-        self.buf[offset..offset + 10].copy_from_slice(&val.0);
+        unsafe {
+            self.buf.get_unchecked_mut(offset..offset + 10).copy_from_slice(&val.0);
+        }
         self
     }
 }
@@ -9238,20 +9282,30 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.msg_offset + 18;
-        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&(val as u8).to_le_bytes());
+        }
         self
     }
     ///Generated method `available_bool`.
     #[inline]
     pub const fn available_bool(&mut self, val: bool) -> &mut Self {
-        self.buf[self.msg_offset + 18] = val as u8;
+        unsafe {
+            *self.buf.as_mut_ptr().add(self.msg_offset + 18) = val as u8;
+        }
         self
     }
     ///Generated method `code`.
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.msg_offset + 19;
-        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&(val as u8).to_le_bytes());
+        }
         self
     }
     ///Generated method `some_numbers`.
@@ -9310,14 +9364,20 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.msg_offset + 42;
-        self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&val.0.to_le_bytes());
+        }
         self
     }
     ///Generated method `engine`.
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.msg_offset + 43;
-        self.buf[offset..offset + 10].copy_from_slice(&val.0);
+        unsafe {
+            self.buf.get_unchecked_mut(offset..offset + 10).copy_from_slice(&val.0);
+        }
         self
     }
     ///Set all fixed fields at once from a [`CarFixedFields`] value.
@@ -9384,20 +9444,30 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     #[inline]
     pub fn available(&mut self, val: BooleanType) -> &mut Self {
         let offset = self.msg_offset + 18;
-        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&(val as u8).to_le_bytes());
+        }
         self
     }
     ///Generated method `available_bool`.
     #[inline]
     pub const fn available_bool(&mut self, val: bool) -> &mut Self {
-        self.buf[self.msg_offset + 18] = val as u8;
+        unsafe {
+            *self.buf.as_mut_ptr().add(self.msg_offset + 18) = val as u8;
+        }
         self
     }
     ///Generated method `code`.
     #[inline]
     pub fn code(&mut self, val: Model) -> &mut Self {
         let offset = self.msg_offset + 19;
-        self.buf[offset..offset + 1].copy_from_slice(&(val as u8).to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&(val as u8).to_le_bytes());
+        }
         self
     }
     ///Generated method `some_numbers`.
@@ -9456,14 +9526,20 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     #[inline]
     pub fn extras(&mut self, val: OptionalExtras) -> &mut Self {
         let offset = self.msg_offset + 42;
-        self.buf[offset..offset + 1].copy_from_slice(&val.0.to_le_bytes());
+        unsafe {
+            self.buf
+                .get_unchecked_mut(offset..offset + 1)
+                .copy_from_slice(&val.0.to_le_bytes());
+        }
         self
     }
     ///Generated method `engine`.
     #[inline]
     pub fn engine(&mut self, val: Engine) -> &mut Self {
         let offset = self.msg_offset + 43;
-        self.buf[offset..offset + 10].copy_from_slice(&val.0);
+        unsafe {
+            self.buf.get_unchecked_mut(offset..offset + 10).copy_from_slice(&val.0);
+        }
         self
     }
 }

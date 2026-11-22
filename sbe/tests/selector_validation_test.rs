@@ -4,12 +4,15 @@
 //!
 //! | Config | Error |
 //! |---|---|
-//! | `field_path` / `semantic_type` matching no field | `InvalidConversion` |
+//! | `field_path` / `semantic_type` / `extension_attr` matching no field | `InvalidConversion` |
 //! | `with_null_as_option` on anything but `named_type(<enum>)` | `InvalidConfiguration` |
 //! | two `with_domain_type` types for one selector | `InvalidConversion` |
 //! | a domain selector every match of which a higher-rank selector takes | `InvalidConversion` |
+//! | two extension domain selectors on one field, different types | `InvalidConversion` |
 //!
 //! Each rejection has a positive twin that still generates.
+//! Rank order proven here: `field_path` > `semantic_type` > `extension_attr`
+//! > `named_type` — the loser of each pair is the selector named in the error.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -67,12 +70,56 @@ const SECOND: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   </sbe:message>
 </sbe:messageSchema>"#;
 
+/// `SCHEMA` plus one namespaced mark per field, so each precedence pair can
+/// shadow exactly one field (marks are inert without an `ExtensionAttr`
+/// selector reading them).
+const SCHEMA_EXT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" xmlns:x="urn:example" package="sel" id="71" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="Decimal">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8"/>
+    </composite>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+    </enum>
+  </types>
+  <sbe:message name="NewOrder" id="1">
+    <field name="price" id="1" type="Decimal" x:pathmark="1" x:mark="alpha" x:other="o"/>
+    <field name="side" id="2" type="Side" x:typemark="1"/>
+    <field name="qty" id="3" type="uint32" semanticType="Qty" x:semmark="1"/>
+    <group name="fills" id="10" dimensionType="groupSizeEncoding">
+      <field name="px" id="11" type="Decimal"/>
+    </group>
+  </sbe:message>
+</sbe:messageSchema>"#;
+
 fn schema(xml: &str) -> Result<Schema, Box<dyn std::error::Error>> {
     Ok(Schema::from_ir(parse(SchemaSource::xml(xml))?))
 }
 
 fn generate(config: GenerationConfig) -> Result<(), GenerateError> {
     let schema = schema(SCHEMA).map_err(|e| GenerateError::InvalidConversion {
+        selector: "fixture".into(),
+        reason: e.to_string(),
+    })?;
+    Generator::new(config).generate(&schema).map(|_| ())
+}
+
+/// Like [`generate`], but against the extension-marked [`SCHEMA_EXT`].
+fn generate_ext(config: GenerationConfig) -> Result<(), GenerateError> {
+    let schema = schema(SCHEMA_EXT).map_err(|e| GenerateError::InvalidConversion {
         selector: "fixture".into(),
         reason: e.to_string(),
     })?;
@@ -303,4 +350,152 @@ fn named_type_overridden_on_some_fields_still_generates() -> Result<(), Generate
             .with_domain_type(ConversionSelector::named_type("Decimal"), "crate::A")
             .with_domain_type(ConversionSelector::field_path("NewOrder.price"), "crate::B"),
     )
+}
+
+// ── ExtensionAttr selectors ────────────────────────────────────────────
+//
+// Each precedence pair shadows exactly one field (SCHEMA_EXT gives every
+// field its own mark), so the loser of the pair is the selector the error
+// names.
+
+#[test]
+fn extension_attr_no_field_carries_is_rejected() {
+    let (selector, reason) = invalid_conversion(generate_ext(
+        config().with_domain_type(ConversionSelector::extension_attr("nosuch"), "crate::T"),
+    ));
+    assert_eq!(
+        selector,
+        r#"ExtensionAttr { local_name: "nosuch", value: None }"#
+    );
+    assert_eq!(reason, "matches no field in the schema");
+}
+
+#[test]
+fn extension_attr_value_filters_by_value() -> Result<(), GenerateError> {
+    // A value that no mark carries matches nothing → rejected…
+    let (selector, reason) = invalid_conversion(generate_ext(config().with_domain_type(
+        ConversionSelector::extension_attr_value("mark", "wrong"),
+        "crate::T",
+    )));
+    assert_eq!(
+        selector,
+        r#"ExtensionAttr { local_name: "mark", value: Some("wrong") }"#
+    );
+    assert_eq!(reason, "matches no field in the schema");
+    // …and the value the mark carries matches and generates.
+    generate_ext(config().with_domain_type(
+        ConversionSelector::extension_attr_value("mark", "alpha"),
+        "crate::T",
+    ))
+}
+
+#[test]
+fn extension_attr_conversion_selector_generates() -> Result<(), GenerateError> {
+    generate_ext(config().with_conversion(ConversionSelector::extension_attr("mark")))
+}
+
+#[test]
+fn extension_attr_selectors_alone_still_generate() -> Result<(), GenerateError> {
+    // Positive twin of the three precedence rejections below: with no
+    // higher-rank competitor registered, every extension selector wins.
+    generate_ext(
+        config()
+            .with_domain_type(ConversionSelector::extension_attr("pathmark"), "crate::T")
+            .with_domain_type(ConversionSelector::extension_attr("semmark"), "crate::T")
+            .with_domain_type(ConversionSelector::extension_attr("typemark"), "crate::T"),
+    )
+}
+
+#[test]
+fn field_path_beats_extension_attr() {
+    let (selector, reason) = invalid_conversion(generate_ext(
+        config()
+            .with_domain_type(ConversionSelector::field_path("NewOrder.price"), "crate::A")
+            .with_domain_type(ConversionSelector::extension_attr("pathmark"), "crate::B"),
+    ));
+    assert_eq!(
+        selector,
+        r#"ExtensionAttr { local_name: "pathmark", value: None }"#
+    );
+    assert_eq!(
+        reason,
+        "every field it matches takes a higher-precedence selector"
+    );
+}
+
+#[test]
+fn semantic_type_beats_extension_attr() {
+    let (selector, reason) = invalid_conversion(generate_ext(
+        config()
+            .with_domain_type(ConversionSelector::semantic_type("Qty"), "crate::A")
+            .with_domain_type(ConversionSelector::extension_attr("semmark"), "crate::B"),
+    ));
+    assert_eq!(
+        selector,
+        r#"ExtensionAttr { local_name: "semmark", value: None }"#
+    );
+    assert_eq!(
+        reason,
+        "every field it matches takes a higher-precedence selector"
+    );
+}
+
+#[test]
+fn extension_attr_beats_named_type() {
+    let (selector, reason) = invalid_conversion(generate_ext(
+        config()
+            .with_domain_type(ConversionSelector::extension_attr("typemark"), "crate::A")
+            .with_domain_type(ConversionSelector::named_type("Side"), "crate::B"),
+    ));
+    assert_eq!(selector, r#"NamedType("Side")"#);
+    assert_eq!(
+        reason,
+        "every field it matches takes a higher-precedence selector"
+    );
+}
+
+#[test]
+fn ambiguous_extension_domain_selectors_rejected() {
+    // `mark` and `other` both sit on `price`: two extension selectors at the
+    // same rank with different type paths must fail closed, not fall back to
+    // registration order.
+    let (selector, reason) = invalid_conversion(generate_ext(
+        config()
+            .with_domain_type(ConversionSelector::extension_attr("mark"), "crate::A")
+            .with_domain_type(ConversionSelector::extension_attr("other"), "crate::B"),
+    ));
+    assert!(
+        selector.starts_with("ExtensionAttr"),
+        "expected the tied selector, got {selector}"
+    );
+    assert_eq!(
+        reason,
+        "ambiguous extension selectors for field NewOrder.price"
+    );
+}
+
+#[test]
+fn same_path_extension_selectors_still_generate() -> Result<(), GenerateError> {
+    // Same rank, same type path: idempotent, not ambiguous.
+    generate_ext(
+        config()
+            .with_domain_type(ConversionSelector::extension_attr("mark"), "crate::T")
+            .with_domain_type(
+                ConversionSelector::extension_attr_value("mark", "alpha"),
+                "crate::T",
+            ),
+    )
+}
+
+#[test]
+fn null_as_option_on_extension_attr_is_rejected() {
+    let (option, value, reason) = invalid_configuration(generate_ext(
+        config().with_null_as_option(ConversionSelector::extension_attr("mark")),
+    ));
+    assert_eq!(option, "null_as_option");
+    assert_eq!(
+        value,
+        r#"ExtensionAttr { local_name: "mark", value: None }"#
+    );
+    assert_eq!(reason, "only named_type(<enum>) is applied");
 }

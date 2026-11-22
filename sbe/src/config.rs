@@ -40,7 +40,14 @@
 /// When several selectors could match the same field, precedence is:
 /// 1. Exact `"Message.field"` path ([`ConversionSelector::FieldPath`])
 /// 2. SBE `semanticType` ([`ConversionSelector::SemanticType`])
-/// 3. Named type ([`ConversionSelector::NamedType`])
+/// 3. Schema extension attribute ([`ConversionSelector::ExtensionAttr`])
+/// 4. Named type ([`ConversionSelector::NamedType`])
+///
+/// `ExtensionAttr` matches message and group fields only (nested group
+/// entries included); marks on `<data>` elements, `<group>` elements and
+/// type-level declarations reach hooks, not selectors. The Rust type a
+/// selector binds always comes from `build.rs` (`with_domain_type` /
+/// `with_manual_domain_type`) — schemas never carry Rust paths.
 ///
 /// ```rust
 /// use ergo_sbe::ConversionSelector;
@@ -48,6 +55,7 @@
 /// let _ = ConversionSelector::named_type("Decimal");
 /// let _ = ConversionSelector::semantic_type("UTCTimestamp");
 /// let _ = ConversionSelector::field_path("Quote.price");
+/// let _ = ConversionSelector::extension_attr("exponent");
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ConversionSelector {
@@ -59,6 +67,18 @@ pub enum ConversionSelector {
     ///
     /// Example: `"Decimal"` matches every field of composite type `Decimal`.
     NamedType(String),
+    /// Match fields carrying this schema extension attribute — any namespace,
+    /// matched by local name. `value: None` matches any value; `Some(v)`
+    /// matches only fields whose mark equals `v` exactly.
+    ///
+    /// The mark only *selects* fields; the Rust type still comes from
+    /// `build.rs`, never from the schema.
+    ExtensionAttr {
+        /// Attribute local name; any prefix/namespace matches.
+        local_name: String,
+        /// Exact attribute value to match, or any value when `None`.
+        value: Option<String>,
+    },
 }
 
 impl ConversionSelector {
@@ -78,6 +98,26 @@ impl ConversionSelector {
     #[must_use]
     pub fn field_path(path: impl Into<String>) -> Self {
         Self::FieldPath(path.into())
+    }
+
+    /// Select fields carrying the extension attribute `local_name` (any
+    /// namespace, matched by local name), regardless of its value.
+    #[must_use]
+    pub fn extension_attr(local_name: impl Into<String>) -> Self {
+        Self::ExtensionAttr {
+            local_name: local_name.into(),
+            value: None,
+        }
+    }
+
+    /// Select fields carrying the extension attribute `local_name` whose
+    /// value equals `value` exactly.
+    #[must_use]
+    pub fn extension_attr_value(local_name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::ExtensionAttr {
+            local_name: local_name.into(),
+            value: Some(value.into()),
+        }
     }
 }
 
@@ -302,6 +342,10 @@ pub struct EnumVariantInfo {
     pub value: i128,
     /// Schema description, if present.
     pub description: Option<String>,
+    /// Extension content of this `<validValue>` element (namespaced
+    /// attributes and foreign-namespace children). Empty unless the schema
+    /// annotates the element; build-time data only.
+    pub extensions: crate::ir::Extensions,
 }
 
 /// One bitset choice for hook introspection.
@@ -317,6 +361,9 @@ pub struct SetChoiceInfo {
     pub bit_position: u8,
     /// Schema description, if present.
     pub description: Option<String>,
+    /// Extension content of this `<choice>` element. Empty unless the schema
+    /// annotates the element; build-time data only.
+    pub extensions: crate::ir::Extensions,
 }
 
 /// Kind of SBE field described by [`FieldInfo`].
@@ -360,6 +407,10 @@ pub struct FieldInfo {
     pub deprecated: Option<u16>,
     /// Schema description on the field, if present.
     pub description: Option<String>,
+    /// Extension content of the schema element this field came from (the
+    /// `<field>`, `<group>` or `<data>` element). Empty unless the schema
+    /// annotates it; build-time data only.
+    pub extensions: crate::ir::Extensions,
 }
 
 impl FieldInfo {
@@ -385,6 +436,8 @@ pub enum ItemContext<'a> {
     Enum {
         /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Extension content of the `<enum>` element itself.
+        extensions: crate::ir::Extensions,
         /// Enum type name (PascalCase).
         name: String,
         /// Wire encoding type (e.g. `"u8"`).
@@ -396,6 +449,8 @@ pub enum ItemContext<'a> {
     Set {
         /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Extension content of the `<set>` element itself.
+        extensions: crate::ir::Extensions,
         /// Set type name (PascalCase).
         name: String,
         /// Wire encoding type (e.g. `"u8"`).
@@ -407,6 +462,8 @@ pub enum ItemContext<'a> {
     Composite {
         /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Extension content of the `<composite>` element itself.
+        extensions: crate::ir::Extensions,
         /// Composite type name (PascalCase).
         name: String,
         /// Member fields in wire order.
@@ -416,6 +473,9 @@ pub enum ItemContext<'a> {
     MessageDecoder {
         /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Extension content of the `<message>` element itself (foreign
+        /// child elements included).
+        extensions: crate::ir::Extensions,
         /// Message name (PascalCase).
         name: String,
         /// SBE template id.
@@ -429,6 +489,9 @@ pub enum ItemContext<'a> {
     MessageEncoder {
         /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Extension content of the `<message>` element itself (foreign
+        /// child elements included).
+        extensions: crate::ir::Extensions,
         /// Message name (PascalCase).
         name: String,
         /// SBE template id.
@@ -442,6 +505,9 @@ pub enum ItemContext<'a> {
     DomainStruct {
         /// Full schema IR for advanced hooks.
         schema: &'a crate::Schema,
+        /// Extension content of the owning element: the `<message>` for a
+        /// message DTO, the `<group>` for a group-entry DTO.
+        extensions: crate::ir::Extensions,
         /// DTO type name (PascalCase).
         name: String,
         /// Fields on the DTO (including groups/var-data as owned types).
@@ -575,6 +641,23 @@ pub struct GenerationConfig {
     /// Emit opt-in `validate()` on message decoders, group entry decoders
     /// and `AnyMessage`.
     pub(crate) validate: bool,
+    /// `(attribute local name, method name)`: emit a total label method on
+    /// every enum/set whose values carry the attribute. Emitted only when at
+    /// least one value carries it; the method name is validated as a Rust
+    /// identifier at generation time.
+    pub(crate) variant_labels: Option<(String, String)>,
+    /// Attribute local name on a fixed field whose value names a sibling
+    /// exponent field: emit a `{field}_with_exponent()` pair helper on the
+    /// owning decoder. Dangling or type-invalid references fail generation
+    /// with [`crate::GenerateError::ExtensionReference`].
+    pub(crate) exponent_links: Option<String>,
+    /// `(default attribute, omit-null attribute)`: emit stringly
+    /// `{FIELD}_SCHEMA_DEFAULT: Option<&'static str>` and
+    /// `{FIELD}_SCHEMA_OMIT_NULL: bool` consts for fields carrying either
+    /// attribute, on the message's `{Name}Schema` unit or the owning group
+    /// decoder. Values are the schema's own strings; no parsing, no error
+    /// surface.
+    pub(crate) field_extension_defaults: Option<(String, String)>,
 }
 
 impl std::fmt::Debug for GenerationConfig {
@@ -603,6 +686,9 @@ impl std::fmt::Debug for GenerationConfig {
             .field("composite_mappings", &self.composite_mappings)
             .field("source_traits", &self.source_traits)
             .field("validate", &self.validate)
+            .field("variant_labels", &self.variant_labels)
+            .field("exponent_links", &self.exponent_links)
+            .field("field_extension_defaults", &self.field_extension_defaults)
             .finish()
     }
 }
@@ -641,6 +727,9 @@ impl GenerationConfig {
             composite_mappings: Vec::new(),
             source_traits: false,
             validate: false,
+            variant_labels: None,
+            exponent_links: None,
+            field_extension_defaults: None,
         }
     }
 
@@ -1258,6 +1347,96 @@ impl GenerationConfig {
         F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + Send + Sync + 'static,
     {
         self.hooks.push(std::sync::Arc::new(hook));
+        self
+    }
+
+    /// Emit a total label method on every enum/set at least one of whose
+    /// values carries the schema extension attribute `attr` (matched by
+    /// local name, any prefix).
+    ///
+    /// The method is named `method` and returns `&'static str`: the value's
+    /// extension label when it carries one, an enum's variant name (exactly
+    /// what the built-in `as_str` returns, so unmarked values never change
+    /// rendering) or a set's raw schema name otherwise, and `"NullVal"` /
+    /// `"UNKNOWN"` for an enum's unknown variant / a set
+    /// that is not exactly one labelled choice. `method` must be a Rust
+    /// identifier that is not a keyword, else generation fails with
+    /// [`crate::GenerateError::InvalidConfiguration`]. Choosing `as_str`
+    /// replaces the enum's built-in `as_str` (and `Display`, which delegates
+    /// to it); any other name adds a second method. A name that collides
+    /// with another inherent method fails to compile in the consumer.
+    ///
+    /// Nothing is emitted for a value set that carries no such attribute,
+    /// and no encoder, setter or wire path changes.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let _ = GenerationConfig::new("msgs").with_variant_labels("jsonValue", "as_str");
+    /// ```
+    #[must_use]
+    pub fn with_variant_labels(
+        mut self,
+        attr: impl Into<String>,
+        method: impl Into<String>,
+    ) -> Self {
+        self.variant_labels = Some((attr.into(), method.into()));
+        self
+    }
+
+    /// Emit a `{field}_with_exponent()` helper on the decoder that owns each
+    /// fixed field carrying the schema extension attribute `attr` (local
+    /// name, any prefix), whose *value* names a sibling field holding the
+    /// exponent.
+    ///
+    /// The helper returns the pair of the two accessors' values — `(mantissa,
+    /// exponent)` — so its tuple elements are exactly what `self.mantissa()`
+    /// and `self.exponent()` return (domain types and `Option` included).
+    /// Both fields must be non-constant fixed primitive integer — a scalar
+    /// or a fixed-size array (a `[u8; 16]` magnitude pairs as `[u8; 16]`) —
+    /// and the named sibling must exist **in the same block** (message or
+    /// one group entry); a dangling or type-invalid reference there fails
+    /// generation with [`crate::GenerateError::ExtensionReference`]. A group
+    /// field whose target lives in the *enclosing message* instead gets no
+    /// helper: the pair spans two decoders the entry cannot reach, so the
+    /// reference is recognised and skipped rather than emitted or rejected.
+    /// Decode side only: no encoder, setter or wire path changes, and a
+    /// field without the attribute gets nothing.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let _ = GenerationConfig::new("msgs").with_exponent_links("exponent");
+    /// ```
+    #[must_use]
+    pub fn with_exponent_links(mut self, attr: impl Into<String>) -> Self {
+        self.exponent_links = Some(attr.into());
+        self
+    }
+
+    /// Emit schema-default consts for fixed fields carrying either extension
+    /// attribute (matched by local name, any prefix): `default_attr`'s value
+    /// becomes `{FIELD}_SCHEMA_DEFAULT: Option<&'static str>` (`Some` of the
+    /// schema's own string, untrimmed and unparsed), and `omit_attr`'s
+    /// presence becomes `{FIELD}_SCHEMA_OMIT_NULL: bool` (`true` for a
+    /// truthy value such as `"true"`, `false` otherwise).
+    ///
+    /// Message-level fields land on the message's `{Name}Schema` unit,
+    /// group-entry fields on the group decoder that owns them. Constants
+    /// only — a hook reads them alongside [`ItemContext`]
+    /// and emits whatever layer it wants. Fields carrying neither attribute
+    /// get nothing, and no encoder, setter or wire path changes.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let _ = GenerationConfig::new("msgs")
+    ///     .with_field_extension_defaults("jsonDefaultValue", "jsonOmitNull");
+    /// ```
+    #[must_use]
+    pub fn with_field_extension_defaults(
+        mut self,
+        default_attr: impl Into<String>,
+        omit_attr: impl Into<String>,
+    ) -> Self {
+        self.field_extension_defaults = Some((default_attr.into(), omit_attr.into()));
         self
     }
 
