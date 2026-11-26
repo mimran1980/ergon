@@ -53,6 +53,49 @@ library at runtime.
 | [`sbe-codegen-examples/`](sbe-codegen-examples/) | Runtime only | Generator API as a library (no `build.rs`) | None |
 | [`cluster-tutorial/`](cluster-tutorial/) | Neither (uses `ergo-aeron-cluster`) | Connect, offer, poll, keep-alive, close walkthrough | JDK 25 (17+) and built Aeron artifacts |
 
+### `exchange-example/`: the venue's extension marks, SBE back to JSON
+
+The venue serves every REST and WebSocket response as JSON or, on request,
+SBE (`Accept: application/sbe`, `X-MBX-SBE: <id>:<version>`). Its schema
+(the published `spot_3_5.xml`, under `schemas/`) adds namespaced attributes
+so a decoder can turn an SBE response back into the JSON one.
+Its SBE FAQ says they were added "for documentation purposes"; what each one
+records:
+
+| Mark | Count | What it records | Why JSON needs it |
+|---|---|---|---|
+| `mbx:exponent` | 288 | the field holding this mantissa's exponent | SBE sends decimals as separate mantissa and exponent primitives (not FIX SBE's decimal composite) to keep payloads small; JSON sends exact decimal strings (`"0.00914800"`). Exponents sit on the message, mantissas often in groups |
+| `mbx:jsonPath` | 218 | the JSON key for this field or group: a name (`a`, `limit`), `[]` (an array position), `..` (the group's array is the parent value) | JSON keys and nesting differ from SBE names |
+| `mbx:jsonValue` | 167 | the JSON string of an enum value (`SPOT`, `MAX_ASSET`) | SBE enums are integers |
+| `mbx:jsonDefaultValue` | 105 | the JSON value of an absent optional field (`0`, `-1`) | SBE null vs JSON default. The FAQ calls it `mbx:defaultJsonValue`; the schema spells it `jsonDefaultValue` |
+| `mbx:jsonOmitNull` | 1 | `true` on the `sors` group of `ExchangeInfoResponse` | not described in the FAQ; by its name, the JSON leaves the key out rather than sending `null` |
+
+The sample generates the JSON renderer from those marks through the generic
+API only (`build.rs`): `json_hook` (a try-hook) emits `write_json` on each
+covered response decoder, group decoder and entry decoder from the hook
+context (`jsonPath` keys, accessor names and types, enclosing blocks for
+message-level exponents); `ext_recipes::pairs` emits the
+`{field}_with_exponent` helpers; `with_extension_consts(true)` emits every
+mark as a const. `src/sbe_json.rs` holds the value formatting and the
+template-id dispatch.
+
+| Check | Command |
+|---|---|
+| Recorded responses (depth, trades, aggTrades, klines, avgPrice, ticker/price, bookTicker; single and multi symbol) render to JSON equal to the venue's JSON as values | `cargo test --manifest-path samples/exchange-example/Cargo.toml --test json_fixture_test` |
+| Same against live public endpoints (no key; needs `jq`) | `samples/exchange-example/scripts/live-json-check.sh` |
+| Render a saved response | `cargo run --manifest-path samples/exchange-example/Cargo.toml --example sbe_json -- <file.sbe>` |
+
+Found while recording (2026-11-25):
+
+- SBE timestamps are microseconds; JSON is milliseconds unless the request
+  sends `X-MBX-TIME-UNIT: MICROSECOND`, which the fixtures use.
+- A `3:5` request is answered in the newest compatible schema (header
+  version 6); the 3:5 decoders read it through the SBE extension rules.
+- Each JSON kline row ends in an unused `"0"` the schema has no field for;
+  `json_hook`'s `JSON_TRAILERS` adds it.
+- `exchangeInfo` is not covered: its SBE form omits `timezone` and
+  `serverTime` (schema comment) and embeds filters as nested SBE messages.
+
 ### Seeing generated code (without committing it)
 
 `include!(concat!(env!("OUT_DIR"), …))` and `sbe_mod!` put files under a

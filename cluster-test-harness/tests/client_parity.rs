@@ -1,4 +1,5 @@
 #![allow(missing_docs, dead_code)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Behaviour of Java's `AeronCluster` client, checked against a Java cluster
 //! or, where each protocol step must happen on cue, a fake one: connect
 //! shapes (an ephemeral egress port, `aeron:udp` plus an ingress endpoint

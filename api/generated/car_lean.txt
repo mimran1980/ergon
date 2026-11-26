@@ -169,9 +169,9 @@
 # [must_use = "entry encoder fields must be set before the next entry"] struct FuelFiguresEntryEncoder< 'a > {  }
 # [must_use = "entry encoder fields must be set before the next entry"] struct PerformanceFiguresAccelerationEntryEncoder< 'a > {  }
 # [must_use = "entry encoder fields must be set before the next entry"] struct PerformanceFiguresEntryEncoder< 'a > {  }
-# [must_use = "group encoder must call add() to write entries"] struct FuelFiguresEncoder< 'a > {  }
-# [must_use = "group encoder must call add() to write entries"] struct PerformanceFiguresAccelerationEncoder< 'a > {  }
-# [must_use = "group encoder must call add() to write entries"] struct PerformanceFiguresEncoder< 'a > {  }
+# [must_use = "group encoder must call add() to write entries"] struct FuelFiguresEncoder< 'a , C = sbe_rt :: Attached > {  }
+# [must_use = "group encoder must call add() to write entries"] struct PerformanceFiguresAccelerationEncoder< 'a , C = sbe_rt :: Attached > {  }
+# [must_use = "group encoder must call add() to write entries"] struct PerformanceFiguresEncoder< 'a , C = sbe_rt :: Attached > {  }
 # [must_use = "length builder must be completed"] struct CarEncodedLengthAfterFuelFigures {  }
 # [must_use = "length builder must be completed"] struct CarEncodedLengthAfterManufacturer {  }
 # [must_use = "length builder must be completed"] struct CarEncodedLengthAfterModel {  }
@@ -193,8 +193,8 @@
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] FuelFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] PerformanceFiguresAccelerationDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] PerformanceFiguresDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
-# [must_use] CarAfterFuelFigures::fn performance_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
-# [must_use] CarAfterFuelFigures::fn performance_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] CarAfterFuelFigures::fn performance_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut PerformanceFiguresEncoder < 'b >) -> sbe_rt :: GroupResult ,
+# [must_use] CarAfterFuelFigures::fn performance_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterPerformanceFigures < 'a , H > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut PerformanceFiguresEncoder < 'b >) -> sbe_rt :: GroupResult ,
 # [must_use] CarAfterManufacturer::fn model (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterManufacturer::fn model_as_str (self , src : & str ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterManufacturer::fn model_unchecked (mut self , data : & [u8] ,) -> Result < CarAfterModel < 'a , H > , sbe_rt :: EncodeError >
@@ -208,17 +208,17 @@
 # [must_use] CarAfterPerformanceFigures::fn manufacturer_unchecked (mut self , data : & [u8] ,) -> Result < CarAfterManufacturer < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] CarAfterPerformanceFigures::fn manufacturer_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < CarAfterManufacturer < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
 # [must_use] CarEncoder::fn fixed (mut self , fixed : & CarFixedFields ,) -> CarEncoder < 'a , H , sbe_rt :: FieldsFixed >
-# [must_use] CarEncoder::fn fuel_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterFuelFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut FuelFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
-# [must_use] CarEncoder::fn fuel_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterFuelFigures < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut FuelFiguresEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] CarEncoder::fn fuel_figures < F > (mut self , count : u16 , f : F ,) -> Result < CarAfterFuelFigures < 'a , H > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut FuelFiguresEncoder < 'b >) -> sbe_rt :: GroupResult ,
+# [must_use] CarEncoder::fn fuel_figures_unknown_size < F > (mut self , f : F ,) -> Result < CarAfterFuelFigures < 'a , H > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut FuelFiguresEncoder < 'b >) -> sbe_rt :: GroupResult ,
 # [must_use] CarEncoder::fn raw_fixed (self) -> CarRawFixedWriter < 'a >
-# [must_use] FuelFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (FuelFiguresEntryEncoder < 'b > ,) -> Result < FuelFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
+# [must_use] FuelFiguresEncoder::fn add < F > (& mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (FuelFiguresEntryEncoder < 'b > ,) -> Result < FuelFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
 # [must_use] FuelFiguresEntryEncoder::fn usage_description (mut self , data : & [u8] ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
 # [must_use] FuelFiguresEntryEncoder::fn usage_description_as_str (self , src : & str ,) -> Result < FuelFiguresEntryComplete < 'a > , sbe_rt :: EncodeError >
 # [must_use] PerformanceFiguresAccelerationDecoderIter::const fn entry_block_length (& self) -> usize
 # [must_use] PerformanceFiguresAccelerationEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEntryEncoder < 'b > ,) -> sbe_rt :: GroupResult ,
 # [must_use] PerformanceFiguresAccelerationEncoder::fn start_entry (& mut self ,) -> Result < PerformanceFiguresAccelerationEntryEncoder < '_ > , sbe_rt :: EncodeError >
-# [must_use] PerformanceFiguresEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (PerformanceFiguresEntryEncoder < 'b > ,) -> Result < PerformanceFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
-# [must_use] PerformanceFiguresEntryEncoder::fn acceleration < F > (mut self , count : u16 , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] PerformanceFiguresEncoder::fn add < F > (& mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (PerformanceFiguresEntryEncoder < 'b > ,) -> Result < PerformanceFiguresEntryComplete < 'b > , sbe_rt :: EncodeError > ,
+# [must_use] PerformanceFiguresEntryEncoder::fn acceleration < F > (mut self , count : u16 , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'b > ,) -> sbe_rt :: GroupResult ,
 # [must_use] sbe_rt::EntryInfo::const fn is_first (& self) -> bool
 # [must_use] sbe_rt::EntryInfo::const fn is_last (& self) -> bool
 # [must_use] sbe_rt::EntryInfo::const fn remaining (& self) -> usize
@@ -420,7 +420,7 @@ FuelFiguresDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :
 FuelFiguresDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < FuelFiguresDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
 FuelFiguresEncoder::const ENTRY_BLOCK_LENGTH: usize
 FuelFiguresEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
-FuelFiguresEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+FuelFiguresEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16 ,) -> FuelFiguresEncoder < 'a , sbe_rt :: Detached >
 FuelFiguresEntryDecoder::const ENTRY_BLOCK_LENGTH: usize
 FuelFiguresEntryDecoder::const fn ordered (self) -> sbe_rt :: Ordered < Self >
 FuelFiguresEntryDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
@@ -485,7 +485,7 @@ PerformanceFiguresAccelerationDecoderIter::const fn remaining_entries (& self) -
 PerformanceFiguresAccelerationDecoderIter::fn finish (self ,) -> Result < PerformanceFiguresEntryDecoderComplete < 'a > , sbe_rt :: DecodeError >
 PerformanceFiguresAccelerationEncoder::const ENTRY_BLOCK_LENGTH: usize
 PerformanceFiguresAccelerationEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
-PerformanceFiguresAccelerationEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+PerformanceFiguresAccelerationEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16 ,) -> PerformanceFiguresAccelerationEncoder < 'a , sbe_rt :: Detached >
 PerformanceFiguresAccelerationEncoder::fn add_checked < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (PerformanceFiguresAccelerationEntryEncoder < 'b > ,) -> Result < PerformanceFiguresAccelerationEntryComplete < 'b > , sbe_rt :: EncodeError , > ,
 PerformanceFiguresAccelerationEncoder::fn add_struct (& mut self , entry : & PerformanceFiguresAccelerationEntry ,) -> Result < () , sbe_rt :: EncodeError >
 PerformanceFiguresAccelerationEncoder::fn bulk_add (& mut self , entries : & [PerformanceFiguresAccelerationEntry] ,) -> Result < () , sbe_rt :: EncodeError >
@@ -502,7 +502,7 @@ PerformanceFiguresDecoder::fn skip_n (& mut self , n : usize) -> Result < () , s
 PerformanceFiguresDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < PerformanceFiguresDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
 PerformanceFiguresEncoder::const ENTRY_BLOCK_LENGTH: usize
 PerformanceFiguresEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
-PerformanceFiguresEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+PerformanceFiguresEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16 ,) -> PerformanceFiguresEncoder < 'a , sbe_rt :: Detached >
 PerformanceFiguresEntryDecoder::const ENTRY_BLOCK_LENGTH: usize
 PerformanceFiguresEntryDecoder::const fn ordered (self) -> sbe_rt :: Ordered < Self >
 PerformanceFiguresEntryDecoder::fn acceleration (& self ,) -> Result < PerformanceFiguresAccelerationDecoder < 'a > , sbe_rt :: DecodeError >
@@ -515,7 +515,7 @@ PerformanceFiguresEntryDecoderComplete::const fn acting_block_length (& self) ->
 PerformanceFiguresEntryDecoderComplete::const fn acting_version (& self) -> u16
 PerformanceFiguresEntryEncoder::const ENTRY_BLOCK_LENGTH: usize
 PerformanceFiguresEntryEncoder::const fn octane_rating (& mut self , val : u8) -> & mut Self
-PerformanceFiguresEntryEncoder::fn acceleration_unknown_size < F > (mut self , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'a >) -> sbe_rt :: GroupResult ,
+PerformanceFiguresEntryEncoder::fn acceleration_unknown_size < F > (mut self , f : F ,) -> Result < PerformanceFiguresEntryComplete < 'a > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut PerformanceFiguresAccelerationEncoder < 'b > ,) -> sbe_rt :: GroupResult ,
 RaggedEntryBuilder::const fn add (& mut self) -> sbe_rt :: GroupResult
 RaggedEntryBuilder::const fn entries (& mut self , n : usize) -> sbe_rt :: GroupResult
 RaggedEntryBuilder::fn group (& mut self , dim : usize , block : usize , count : usize ,) -> sbe_rt :: GroupResult

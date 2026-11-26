@@ -130,9 +130,11 @@ fence_mark = ("```", "~~~")
 
 
 def slug(text):
-    """mdbook's heading id: markup dropped, lower case, alphanumerics, '-'
-    and '_' kept, whitespace to '-'."""
-    text = re.sub(r"<[^>]+>", "", text).replace("`", "")
+    """mdbook's heading id: markup dropped (HTML tags only outside code
+    spans, so `Option<T>` keeps its T), lower case, alphanumerics, '-' and
+    '_' kept, whitespace to '-'."""
+    parts = text.split("`")
+    text = "".join(p if i % 2 else re.sub(r"<[^>]+>", "", p) for i, p in enumerate(parts))
     text = html.unescape(re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text))
     return "".join(c if c.isalnum() or c in "-_" else "-" if c.isspace() else ""
                    for c in text.strip().lower())

@@ -28,6 +28,8 @@
     unused
 )]
 mod common;
+#[path = "common/ext_recipes.rs"]
+mod ext_recipes;
 use common::{compile_and_run_with_deps, generate_domain_with};
 use ergo_sbe::{
     ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile, SchemaSource,
@@ -193,6 +195,50 @@ fn with_matrix_conversions(c: GenerationConfig) -> GenerationConfig {
         .with_conversion(ConversionSelector::semantic_type("TagText"))
 }
 
+/// T3: a try-hook that fails generation when any row of a decoder context
+/// (message, entry or nested entry; constants, groups and var-data included)
+/// lacks
+/// `accessor` or `accessor_type`, and otherwise echoes every one as
+/// `fn _echo_{field}(&self) -> {accessor_type} { self.{accessor}() }`.
+/// Compiling the module proves each reported type is the real return type;
+/// a field kind that silently resolves to `None` fails generation, so the
+/// row cannot pass vacuously.
+fn echo_hook(ctx: &ergo_sbe::ItemContext) -> Result<Vec<proc_macro2::TokenStream>, String> {
+    let (owner, fields) = match ctx {
+        ergo_sbe::ItemContext::MessageDecoder { name, fields, .. }
+        | ergo_sbe::ItemContext::GroupEntryDecoder { name, fields, .. } => (name, fields),
+        _ => return Ok(vec![]),
+    };
+    let mut methods = Vec::new();
+    for f in fields {
+        let (Some(acc), Some(ty)) = (&f.accessor, &f.accessor_type) else {
+            return Err(format!("{owner}.{}: no accessor or type", f.schema_name));
+        };
+        let echo = quote::format_ident!("_echo_{}", f.name);
+        let acc = quote::format_ident!("{}", acc);
+        let ty: proc_macro2::TokenStream = ty.parse().map_err(|e| format!("{ty}: {e}"))?;
+        methods.push(quote::quote! {
+            #[allow(dead_code)]
+            fn #echo(&self) -> #ty { self.#acc() }
+        });
+    }
+    let owner = quote::format_ident!("{}", owner);
+    Ok(vec![quote::quote! { impl<'a> #owner<'a> { #(#methods)* } }])
+}
+
+/// A try-hook that adds one const to every message's `{Name}Schema` unit,
+/// named from `schema_marker`: hook consts on that unit beside the consts
+/// switch's marks and the domain converter impls in one module.
+fn marker_const_hook(ctx: &ergo_sbe::ItemContext) -> Result<Vec<proc_macro2::TokenStream>, String> {
+    let ergo_sbe::ItemContext::MessageDecoder { schema_marker, .. } = ctx else {
+        return Ok(vec![]);
+    };
+    let marker = quote::format_ident!("{}", schema_marker);
+    Ok(vec![quote::quote! {
+        impl #marker { pub const HOOK_MARKER: &'static str = "hooked"; }
+    }])
+}
+
 /// One generation configuration under test.
 struct Variant {
     /// Names the cell in a failure and the scratch crate on disk.
@@ -242,16 +288,34 @@ const VARIANTS: &[Variant] = &[
         expect_src: &[],
     },
     Variant {
+        name: "hook_accessor_echo",
+        domain_impls: false,
+        build: |c| c.with_try_hook(echo_hook),
+        module_suffix: "",
+        // Constants, group and var-data rows are echoed too; `kConst` is
+        // message-only while `kEnum` sits at every location.
+        expect_src: &[
+            "fn _echo_x_link_v0(",
+            "fn _echo_type_(",
+            "fn _echo_k_const(",
+            "fn _echo_k_enum(",
+            "fn _echo_rows(",
+            "fn _echo_cells(",
+            "fn _echo_note(",
+            "fn _echo_row_note(",
+        ],
+    },
+    Variant {
         name: "flyweight_only_domain_types",
         domain_impls: true,
-        build: with_matrix_domain_types,
+        build: |c| with_matrix_domain_types(c).with_try_hook(echo_hook),
         module_suffix: "",
         expect_src: &[],
     },
     Variant {
         name: "flyweight_only_conversions",
         domain_impls: false,
-        build: with_matrix_conversions,
+        build: |c| with_matrix_conversions(c).with_try_hook(echo_hook),
         module_suffix: "",
         expect_src: &[],
     },
@@ -265,7 +329,7 @@ const VARIANTS: &[Variant] = &[
     Variant {
         name: "flyweight_encode_version_0",
         domain_impls: false,
-        build: |c| c.with_encode_version(0),
+        build: |c| c.with_encode_version(0).with_try_hook(echo_hook),
         module_suffix: "",
         expect_src: &[],
     },
@@ -275,6 +339,7 @@ const VARIANTS: &[Variant] = &[
         build: |c| {
             with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
                 .with_all_enums_as_option()
+                .with_try_hook(echo_hook)
         },
         module_suffix: "",
         expect_src: &[],
@@ -362,22 +427,22 @@ const VARIANTS: &[Variant] = &[
         expect_src: &[],
     },
     Variant {
-        name: "extension_variant_labels",
+        name: "extension_labels_recipe",
         domain_impls: false,
-        build: |c| c.with_variant_labels("jsonValue", "as_str"),
-        // `as_str` already exists on every enum: the knob's labels impl
-        // replaces it (and `Display`, which delegates), so a duplicate
-        // definition or a missing label fails here at compile time.
+        build: |c| c.with_try_hook(ext_recipes::labels("jsonValue", "label")),
+        // The label method sits beside the built-in `as_str`, which keeps the
+        // variant name; a duplicate definition or a missing label fails here.
         module_suffix: r#"
-            const _: () = assert!(Model::A.as_str().len() == 5);
-            const _: () = assert!(BooleanType::T.as_str().len() == 7);
+            const _: () = assert!(Model::A.label().len() == 5);
+            const _: () = assert!(BooleanType::T.label().len() == 7);
+            const _: () = assert!(Model::A.as_str().len() == 1);
         "#,
         expect_src: &[r#""alpha""#],
     },
     Variant {
-        name: "extension_exponent_links",
+        name: "extension_pairs_recipe",
         domain_impls: false,
-        build: |c| c.with_exponent_links("exponent"),
+        build: |c| c.with_try_hook(ext_recipes::pairs("exponent", "with_exponent")),
         // The pair helpers must exist at all three codegen locations with
         // the accessors' exact return types; a missing helper or a wrong
         // tuple element fails this compile.
@@ -391,13 +456,13 @@ const VARIANTS: &[Variant] = &[
         expect_src: &["with_exponent"],
     },
     Variant {
-        // `pair_member`'s domain branch: every marked mantissa is domain-typed,
-        // so the pair helper must call the domain getter and declare exactly
-        // its `Result`-wrapped return type at all three codegen locations.
-        name: "extension_exponent_links_domain",
+        // Every marked mantissa is domain-typed, so the pairs recipe must read
+        // the domain getter and its exact `Result`-wrapped return type from the
+        // context at all three codegen locations.
+        name: "extension_pairs_recipe_domain",
         domain_impls: false,
         build: |c| {
-            c.with_exponent_links("exponent")
+            c.with_try_hook(ext_recipes::pairs("exponent", "with_exponent"))
                 .with_manual_domain_type(ConversionSelector::extension_attr("exponent"), "u128")
         },
         module_suffix: r#"
@@ -418,12 +483,12 @@ const VARIANTS: &[Variant] = &[
         expect_src: &["x_link_v0_wire"],
     },
     Variant {
-        // `pair_member`'s `*_wire` branch: a conversion on the marked field
-        // renames the raw accessor, so the helper must call `{snake}_wire`.
-        name: "extension_exponent_links_conversion",
+        // A conversion on the marked field renames the raw accessor, so the
+        // pairs recipe must read `{snake}_wire` from the context.
+        name: "extension_pairs_recipe_conversion",
         domain_impls: false,
         build: |c| {
-            c.with_exponent_links("exponent")
+            c.with_try_hook(ext_recipes::pairs("exponent", "with_exponent"))
                 .with_conversion(ConversionSelector::extension_attr("exponent"))
         },
         module_suffix: r#"
@@ -436,19 +501,40 @@ const VARIANTS: &[Variant] = &[
         expect_src: &["x_link_v0_wire"],
     },
     Variant {
-        name: "extension_field_defaults",
+        name: "extension_consts",
         domain_impls: false,
-        build: |c| c.with_field_extension_defaults("jsonDefaultValue", "jsonOmitNull"),
-        // The consts must exist on the message's Schema unit and on both
-        // group decoders; a missing one fails this compile.
+        build: |c| c.with_extension_consts(true),
+        // The consts must exist on the message's Schema unit, on both group
+        // decoders and on the enum; a missing one fails this compile.
         module_suffix: r#"
-            const _: () = assert!(FlatSchema::X_DEF_V0_SCHEMA_DEFAULT.is_some());
-            const _: () = assert!(FlatSchema::X_DEF_V0_SCHEMA_OMIT_NULL);
-            const _: () = assert!(NestedRowsDecoder::X_DEF_V0_SCHEMA_DEFAULT.is_some());
-            const _: () = assert!(NestedRowsCellsDecoder::X_DEF_V0_SCHEMA_DEFAULT.is_some());
-            const _: () = assert!(NestedRowsCellsDecoder::X_DEF_V1_SCHEMA_OMIT_NULL);
+            const _: () = assert!(FlatSchema::X_DEF_V0_JSON_DEFAULT_VALUE.len() == 2);
+            const _: () = assert!(FlatSchema::X_DEF_V0_JSON_OMIT_NULL.len() == 4);
+            const _: () = assert!(FlatSchema::X_LINK_V0_EXPONENT.len() == 8);
+            const _: () = assert!(NestedRowsDecoder::X_DEF_V0_JSON_DEFAULT_VALUE.len() == 2);
+            const _: () = assert!(NestedRowsCellsDecoder::X_DEF_V0_JSON_DEFAULT_VALUE.len() == 2);
+            const _: () = assert!(NestedRowsCellsDecoder::X_DEF_V1_JSON_OMIT_NULL.len() == 4);
+            const _: () = assert!(Model::A_JSON_VALUE.len() == 5);
         "#,
-        expect_src: &["SCHEMA_DEFAULT"],
+        expect_src: &["JSON_DEFAULT_VALUE"],
+    },
+    Variant {
+        // The consts switch crossed with domain objects, domain types and a
+        // hook const on the `schema_marker` unit: the clash check reads every
+        // inherent impl (converter, mark and hook), so this combination must
+        // generate and compile, never be inferred from the single-knob rows.
+        name: "extension_consts_domain_marker",
+        domain_impls: true,
+        build: |c| {
+            with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
+                .with_extension_consts(true)
+                .with_try_hook(marker_const_hook)
+        },
+        module_suffix: r#"
+            const _: () = assert!(FlatSchema::HOOK_MARKER.len() == 6);
+            const _: () = assert!(NestedSchema::HOOK_MARKER.len() == 6);
+            const _: () = assert!(FlatSchema::X_DEF_V0_JSON_DEFAULT_VALUE.len() == 2);
+        "#,
+        expect_src: &["JSON_DEFAULT_VALUE"],
     },
 ];
 

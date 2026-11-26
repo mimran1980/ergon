@@ -268,7 +268,7 @@ Anim.register('codegen-pipeline', (stage, api) => {
         { t: 'off by default; included files are not checked', muted: true },
       ],
       cost: 'An extra parse of the root document, before the real one.',
-      caption: 'with_xsd_validation() checks the root document against the embedded SBE XSD before anything is parsed. It is off by default and skips included files; parse alone already rejects malformed XML, unexpected elements and unknown attributes.',
+      caption: 'with_xsd_validation() checks the root document against the embedded SBE XSD before anything is parsed. It is off by default and skips included files; parse alone already rejects malformed XML and unexpected elements, and keeps unknown attributes as extension marks.',
     },
     {
       ms: 7000, at: 2, done: [0], title: 'parse: XML to a flat token stream',

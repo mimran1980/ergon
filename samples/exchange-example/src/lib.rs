@@ -60,6 +60,7 @@ pub mod decimal;
 pub mod market;
 pub mod orderbook;
 pub mod publication;
+pub mod sbe_json;
 
 // Application-side TryFromSbe adapter for rust_decimal, a domain-mapping
 // example showing how generated conversion traits can be implemented for

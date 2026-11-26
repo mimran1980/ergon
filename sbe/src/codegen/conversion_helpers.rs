@@ -146,10 +146,11 @@ pub(crate) fn message_field_infos(
     fields: &[MessageField],
     domain_types: &[(crate::ConversionSelector, String)],
     elements: Option<&SchemaElements>,
+    with_constants: bool,
 ) -> Vec<crate::FieldInfo> {
     fields
         .iter()
-        .filter(|f| f.presence != Presence::Constant)
+        .filter(|f| with_constants || f.presence != Presence::Constant)
         .map(|f| {
             // Report the type the DTO actually materialises. This must go
             // through `dto_domain_type` rather than re-deriving the rule: a
@@ -183,6 +184,9 @@ pub(crate) fn message_field_infos(
                 deprecated: f.deprecated,
                 description: f.description.clone(),
                 extensions: f.extensions.clone(),
+                schema_name: f.name.clone(),
+                accessor: None,
+                accessor_type: None,
             }
         })
         .collect()

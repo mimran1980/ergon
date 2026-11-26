@@ -3999,7 +3999,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
         parent_pos: usize,
         parent_block_length: usize,
     ) -> Result<FuelFiguresDecoder<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
-        if 4 > buf.len().saturating_sub(offset) {
+        if offset.checked_add(4).is_none_or(|end| end > buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "fuelFigures",
@@ -4952,7 +4952,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
         parent_pos: usize,
         parent_block_length: usize,
     ) -> Result<PerformanceFiguresDecoder<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
-        if 4 > buf.len().saturating_sub(offset) {
+        if offset.checked_add(4).is_none_or(|end| end > buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "performanceFigures",
@@ -5435,15 +5435,19 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
                 self.acting_version,
             ),
         )?;
-        let mut offset = start + 4;
-        let mut idx = 0;
-        while idx < count {
-            offset = PerformanceFiguresAccelerationEntryDecoder::skip_with::<
-                CHECK_MAX,
-            >(self.buf, offset, block_len, self.acting_version)?;
-            idx += 1;
+        let offset = start + 4;
+        let available = self.buf.len() - offset;
+        match count.checked_mul(block_len) {
+            Some(len) if len <= available => Ok(offset + len),
+            _ => {
+                sbe_rt::cold();
+                Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "group entry",
+                    needed: block_len,
+                    available: available.checked_rem(block_len).unwrap_or(available),
+                })
+            }
         }
-        Ok(offset)
     }
     #[inline]
     pub(crate) fn walk_dynamic_tail(
@@ -5621,7 +5625,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
         PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached>,
         sbe_rt::DecodeError,
     > {
-        if 4 > buf.len().saturating_sub(offset) {
+        if offset.checked_add(4).is_none_or(|end| end > buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: "acceleration",
@@ -5641,20 +5645,17 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
             min_fixed,
         )?;
         let entries_start = offset + 4;
-        let entries_length = count
-            .checked_mul(block_length)
-            .ok_or(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: usize::MAX,
-                available: buf.len().saturating_sub(entries_start),
-            })?;
-        if entries_length > buf.len().saturating_sub(entries_start) {
-            sbe_rt::cold();
-            return Err(sbe_rt::DecodeError::BufferTooShort {
-                field: "acceleration",
-                needed: entries_length,
-                available: buf.len().saturating_sub(entries_start),
-            });
+        let available = buf.len() - entries_start;
+        match count.checked_mul(block_length) {
+            Some(entries_length) if entries_length <= available => {}
+            entries_length => {
+                sbe_rt::cold();
+                return Err(sbe_rt::DecodeError::BufferTooShort {
+                    field: "acceleration",
+                    needed: entries_length.unwrap_or(usize::MAX),
+                    available,
+                });
+            }
         }
         Ok(PerformanceFiguresAccelerationDecoder {
             buf,
@@ -6132,17 +6133,6 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
             });
         }
         Ok(offset + block_len)
-    }
-    /// [`Self::skip`] for a parent's tail walk; a fixed entry has no
-    /// var-data, so `CHECK_MAX` changes nothing.
-    #[inline]
-    pub(crate) const fn skip_with<const CHECK_MAX: bool>(
-        buf: &'a [u8],
-        offset: usize,
-        block_len: usize,
-        acting_version: u16,
-    ) -> Result<usize, sbe_rt::DecodeError> {
-        Self::skip(buf, offset, block_len, acting_version)
     }
 }
 impl<'a> core::fmt::Display for PerformanceFiguresAccelerationEntryDecoder<'a> {
@@ -9616,7 +9606,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         f: F,
     ) -> Result<CarAfterFuelFigures<'a, H>, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> sbe_rt::GroupResult,
+        F: for<'b> FnOnce(&mut FuelFiguresEncoder<'b>) -> sbe_rt::GroupResult,
     {
         if self.offset + 4 > self.buf.len() {
             sbe_rt::cold();
@@ -9633,7 +9623,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
             .copy_from_slice(&FuelFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.offset + 2..self.offset + 2 + 2]
             .copy_from_slice(&count.to_le_bytes());
-        let mut group = FuelFiguresEncoder::wrap(self.buf, self.offset + 4, count);
+        let mut group = FuelFiguresEncoder::attach(self.buf, self.offset + 4, count);
         f(&mut group)?;
         let written = group.written();
         if written != count {
@@ -9662,7 +9652,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         f: F,
     ) -> Result<CarAfterFuelFigures<'a, H>, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut FuelFiguresEncoder<'a>) -> sbe_rt::GroupResult,
+        F: for<'b> FnOnce(&mut FuelFiguresEncoder<'b>) -> sbe_rt::GroupResult,
     {
         if self.offset + 4 > self.buf.len() {
             sbe_rt::cold();
@@ -9680,7 +9670,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
         let count_offset = self.offset + 2;
         self.buf[count_offset..count_offset + 2].fill(0);
         let (buf, offset, actual) = {
-            let mut group = FuelFiguresEncoder::wrap(
+            let mut group = FuelFiguresEncoder::attach(
                 self.buf,
                 self.offset + 4,
                 u16::MAX,
@@ -9711,7 +9701,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
         f: F,
     ) -> Result<CarAfterPerformanceFigures<'a, H>, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> sbe_rt::GroupResult,
+        F: for<'b> FnOnce(&mut PerformanceFiguresEncoder<'b>) -> sbe_rt::GroupResult,
     {
         if self.offset + 4 > self.buf.len() {
             sbe_rt::cold();
@@ -9728,7 +9718,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
             .copy_from_slice(&PerformanceFiguresEncoder::GROUP_DIM_TEMPLATE);
         self.buf[self.offset + 2..self.offset + 2 + 2]
             .copy_from_slice(&count.to_le_bytes());
-        let mut group = PerformanceFiguresEncoder::wrap(
+        let mut group = PerformanceFiguresEncoder::attach(
             self.buf,
             self.offset + 4,
             count,
@@ -9761,7 +9751,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
         f: F,
     ) -> Result<CarAfterPerformanceFigures<'a, H>, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut PerformanceFiguresEncoder<'a>) -> sbe_rt::GroupResult,
+        F: for<'b> FnOnce(&mut PerformanceFiguresEncoder<'b>) -> sbe_rt::GroupResult,
     {
         if self.offset + 4 > self.buf.len() {
             sbe_rt::cold();
@@ -9779,7 +9769,7 @@ impl<'a, H: sbe_rt::HeaderState> CarAfterFuelFigures<'a, H> {
         let count_offset = self.offset + 2;
         self.buf[count_offset..count_offset + 2].fill(0);
         let (buf, offset, actual) = {
-            let mut group = PerformanceFiguresEncoder::wrap(
+            let mut group = PerformanceFiguresEncoder::attach(
                 self.buf,
                 self.offset + 4,
                 u16::MAX,
@@ -10356,11 +10346,12 @@ pub type CarUnfixedEncoder<'a, H = sbe_rt::HeaderPresent> = CarEncoder<
     "` group — call `add()` to write entries."
 )]
 #[must_use = "group encoder must call add() to write entries"]
-pub struct FuelFiguresEncoder<'a> {
+pub struct FuelFiguresEncoder<'a, C = sbe_rt::Attached> {
     buf: &'a mut [u8],
     offset: usize,
     count: u16,
     written: u16,
+    _c: core::marker::PhantomData<C>,
 }
 impl<'a> FuelFiguresEncoder<'a> {
     /// Wire size in bytes of one entry's fixed block — every entry
@@ -10385,23 +10376,36 @@ impl<'a> FuelFiguresEncoder<'a> {
     /// `count` bounds how many entries `add()` accepts before it
     /// returns [`sbe_rt::EncodeError::GroupFull`].
     ///
-    /// Normal generated code reaches this only through the parent
-    /// message's own group-writing stage (e.g. the `fuel_figures(
-    /// count, |g| { .. })` method on the message encoder), which
-    /// writes the dimension header for you and hands you this type
-    /// already positioned at the first entry. Call this directly
-    /// only when assembling a standalone group outside a full
-    /// message — get the framing (header contents, `offset`, order)
-    /// wrong and the result is a malformed group image.
+    /// A group-writing method (e.g. `fuel_figures(count, |g| { .. })`)
+    /// writes the header and hands its closure an attached group,
+    /// which this detached one cannot replace. Use this only for a
+    /// standalone group; wrong framing gives a malformed group image.
     #[inline]
-    pub const fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
+    pub const fn wrap(
+        buf: &'a mut [u8],
+        offset: usize,
+        count: u16,
+    ) -> FuelFiguresEncoder<'a, sbe_rt::Detached> {
+        FuelFiguresEncoder {
+            buf,
+            offset,
+            count,
+            written: 0,
+            _c: core::marker::PhantomData,
+        }
+    }
+    #[inline]
+    const fn attach(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
             buf,
             offset,
             count,
             written: 0,
+            _c: core::marker::PhantomData,
         }
     }
+}
+impl<'a, C> FuelFiguresEncoder<'a, C> {
     /// Write one group entry, proving required tails are complete.
     ///
     /// The closure takes the entry encoder **by value** and must return
@@ -10409,9 +10413,9 @@ impl<'a> FuelFiguresEncoder<'a> {
     /// required nested group and var-data field in wire order.
     #[inline]
     #[must_use]
-    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(
+        F: for<'b> FnOnce(
             FuelFiguresEntryEncoder<'b>,
         ) -> Result<FuelFiguresEntryComplete<'b>, sbe_rt::EncodeError>,
     {
@@ -10430,7 +10434,7 @@ impl<'a> FuelFiguresEncoder<'a> {
                     .into(),
             );
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 6;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(
@@ -10579,11 +10583,12 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     "` group — call `add()` to write entries."
 )]
 #[must_use = "group encoder must call add() to write entries"]
-pub struct PerformanceFiguresEncoder<'a> {
+pub struct PerformanceFiguresEncoder<'a, C = sbe_rt::Attached> {
     buf: &'a mut [u8],
     offset: usize,
     count: u16,
     written: u16,
+    _c: core::marker::PhantomData<C>,
 }
 impl<'a> PerformanceFiguresEncoder<'a> {
     /// Wire size in bytes of one entry's fixed block — every entry
@@ -10608,23 +10613,36 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     /// `count` bounds how many entries `add()` accepts before it
     /// returns [`sbe_rt::EncodeError::GroupFull`].
     ///
-    /// Normal generated code reaches this only through the parent
-    /// message's own group-writing stage (e.g. the `fuel_figures(
-    /// count, |g| { .. })` method on the message encoder), which
-    /// writes the dimension header for you and hands you this type
-    /// already positioned at the first entry. Call this directly
-    /// only when assembling a standalone group outside a full
-    /// message — get the framing (header contents, `offset`, order)
-    /// wrong and the result is a malformed group image.
+    /// A group-writing method (e.g. `fuel_figures(count, |g| { .. })`)
+    /// writes the header and hands its closure an attached group,
+    /// which this detached one cannot replace. Use this only for a
+    /// standalone group; wrong framing gives a malformed group image.
     #[inline]
-    pub const fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
+    pub const fn wrap(
+        buf: &'a mut [u8],
+        offset: usize,
+        count: u16,
+    ) -> PerformanceFiguresEncoder<'a, sbe_rt::Detached> {
+        PerformanceFiguresEncoder {
+            buf,
+            offset,
+            count,
+            written: 0,
+            _c: core::marker::PhantomData,
+        }
+    }
+    #[inline]
+    const fn attach(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
             buf,
             offset,
             count,
             written: 0,
+            _c: core::marker::PhantomData,
         }
     }
+}
+impl<'a, C> PerformanceFiguresEncoder<'a, C> {
     /// Write one group entry, proving required tails are complete.
     ///
     /// The closure takes the entry encoder **by value** and must return
@@ -10632,9 +10650,9 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     /// required nested group and var-data field in wire order.
     #[inline]
     #[must_use]
-    pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+    pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
     where
-        F: FnOnce(
+        F: for<'b> FnOnce(
             PerformanceFiguresEntryEncoder<'b>,
         ) -> Result<PerformanceFiguresEntryComplete<'b>, sbe_rt::EncodeError>,
     {
@@ -10653,7 +10671,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
                     .into(),
             );
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 1;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(
@@ -10740,7 +10758,9 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         f: F,
     ) -> Result<PerformanceFiguresEntryComplete<'a>, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> sbe_rt::GroupResult,
+        F: for<'b> FnOnce(
+            &mut PerformanceFiguresAccelerationEncoder<'b>,
+        ) -> sbe_rt::GroupResult,
     {
         if self.offset + 4 > self.buf.len() {
             sbe_rt::cold();
@@ -10759,9 +10779,8 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
             .copy_from_slice(&count.to_le_bytes());
         let __offset;
         {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = PerformanceFiguresAccelerationEncoder::wrap(
-                __buf,
+            let mut group = PerformanceFiguresAccelerationEncoder::attach(
+                &mut *self.buf,
                 self.offset + 4,
                 count,
             );
@@ -10789,7 +10808,9 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         f: F,
     ) -> Result<PerformanceFiguresEntryComplete<'a>, sbe_rt::EncodeError>
     where
-        F: FnOnce(&mut PerformanceFiguresAccelerationEncoder<'a>) -> sbe_rt::GroupResult,
+        F: for<'b> FnOnce(
+            &mut PerformanceFiguresAccelerationEncoder<'b>,
+        ) -> sbe_rt::GroupResult,
     {
         if self.offset + 4 > self.buf.len() {
             sbe_rt::cold();
@@ -10808,9 +10829,8 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
         self.buf[count_offset..count_offset + 2].fill(0);
         let __offset;
         {
-            let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-            let mut group = PerformanceFiguresAccelerationEncoder::wrap(
-                __buf,
+            let mut group = PerformanceFiguresAccelerationEncoder::attach(
+                &mut *self.buf,
                 self.offset + 4,
                 u16::MAX,
             );
@@ -10833,11 +10853,12 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     "` group — call `add()` to write entries."
 )]
 #[must_use = "group encoder must call add() to write entries"]
-pub struct PerformanceFiguresAccelerationEncoder<'a> {
+pub struct PerformanceFiguresAccelerationEncoder<'a, C = sbe_rt::Attached> {
     buf: &'a mut [u8],
     offset: usize,
     count: u16,
     written: u16,
+    _c: core::marker::PhantomData<C>,
 }
 impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// Wire size in bytes of one entry's fixed block — every entry
@@ -10862,23 +10883,36 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// `count` bounds how many entries `add()` accepts before it
     /// returns [`sbe_rt::EncodeError::GroupFull`].
     ///
-    /// Normal generated code reaches this only through the parent
-    /// message's own group-writing stage (e.g. the `fuel_figures(
-    /// count, |g| { .. })` method on the message encoder), which
-    /// writes the dimension header for you and hands you this type
-    /// already positioned at the first entry. Call this directly
-    /// only when assembling a standalone group outside a full
-    /// message — get the framing (header contents, `offset`, order)
-    /// wrong and the result is a malformed group image.
+    /// A group-writing method (e.g. `fuel_figures(count, |g| { .. })`)
+    /// writes the header and hands its closure an attached group,
+    /// which this detached one cannot replace. Use this only for a
+    /// standalone group; wrong framing gives a malformed group image.
     #[inline]
-    pub const fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
+    pub const fn wrap(
+        buf: &'a mut [u8],
+        offset: usize,
+        count: u16,
+    ) -> PerformanceFiguresAccelerationEncoder<'a, sbe_rt::Detached> {
+        PerformanceFiguresAccelerationEncoder {
+            buf,
+            offset,
+            count,
+            written: 0,
+            _c: core::marker::PhantomData,
+        }
+    }
+    #[inline]
+    const fn attach(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
             buf,
             offset,
             count,
             written: 0,
+            _c: core::marker::PhantomData,
         }
     }
+}
+impl<'a, C> PerformanceFiguresAccelerationEncoder<'a, C> {
     /// Write one group entry. The closure may return `()` or
     /// `Result<(), sbe_rt::EncodeError>` (both satisfy
     /// [`sbe_rt::GroupResult`]), so `?` works without a `try_add`.
@@ -10905,7 +10939,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                     .into(),
             );
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 6;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(
@@ -10923,8 +10957,8 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                 PerformanceFiguresAccelerationEntryEncoder::wrap(__buf, self.offset)
             };
             f(&mut __entry)?;
-            self.offset = __entry.offset;
         }
+        self.offset += block_len;
         self.written += 1;
         Ok(())
     }
@@ -10958,7 +10992,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                     .into(),
             );
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 6;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(
@@ -10975,9 +11009,9 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
             let __entry = unsafe {
                 PerformanceFiguresAccelerationEntryEncoder::wrap(__buf, self.offset)
             };
-            let __complete = f(__entry)?;
-            self.offset = __complete.into_cursor();
+            f(__entry)?;
         }
+        self.offset += block_len;
         self.written += 1;
         Ok(())
     }
@@ -11001,7 +11035,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                     })?,
             });
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 6;
         if self
             .offset
             .checked_add(block_len)
@@ -11038,7 +11072,7 @@ pub struct PerformanceFiguresAccelerationEntry {
     ///Generated field `seconds`.
     pub seconds: f32,
 }
-impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
+impl<'a, C> PerformanceFiguresAccelerationEncoder<'a, C> {
     /// Write one entry from a struct. Faster than [`Self::add`] when
     /// the entry has no nested groups or var-data.
     #[inline]
@@ -11058,7 +11092,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                     })?,
             });
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 6;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -11098,7 +11132,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
                 attempted: sbe_rt::group_diag_count(attempted as u64)?,
             });
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = 6;
         if block_len == 0 {
             self.written = attempted as u16;
             return Ok(());

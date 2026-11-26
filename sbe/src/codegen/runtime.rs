@@ -1729,11 +1729,7 @@ pub(crate) fn find_matching_end(
 }
 
 /// Emit the enum type and its inherent impls.
-///
-/// `labels_shadow_as_str` is set when the variant-labels knob replaces the
-/// built-in `as_str` for this enum (its labels impl, emitted by the caller,
-/// defines the method); `Display` delegates to whichever `as_str` exists.
-pub(crate) fn generate_enum(src: &mut String, tokens: &[Token], labels_shadow_as_str: bool) {
+pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);
     let encoding_type = tokens[0]
@@ -1870,21 +1866,15 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token], labels_shadow_as
         quote::quote! {}
     };
 
-    // Omitted when the variant-labels knob's labels impl defines `as_str`
-    // for this enum: one definition, and `Display` below delegates to it.
-    let as_str_method = if labels_shadow_as_str {
-        quote::quote! {}
-    } else {
-        quote::quote! {
-            /// Variant name as a `&'static str` — no allocation, unlike
-            /// `.to_string()` through [`core::fmt::Display`].
-            #[must_use = "discarding this value is almost always a mistake"]
-            #[inline]
-            pub const fn as_str(self) -> &'static str {
-                match self {
-                    #(Self::#variant_names => stringify!(#variant_names),)*
-                    Self::NullVal => "NullVal",
-                }
+    let as_str_method = quote::quote! {
+        /// Variant name as a `&'static str` — no allocation, unlike
+        /// `.to_string()` through [`core::fmt::Display`].
+        #[must_use = "discarding this value is almost always a mistake"]
+        #[inline]
+        pub const fn as_str(self) -> &'static str {
+            match self {
+                #(Self::#variant_names => stringify!(#variant_names),)*
+                Self::NullVal => "NullVal",
             }
         }
     };

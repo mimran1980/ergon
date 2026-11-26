@@ -542,7 +542,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-aeron-cluster-test-harness"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "ergo-aeron-cluster",
  "rusteron-client",
@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "bytes",
  "chrono",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "bytes",
  "chrono",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.40"
+version = "0.1.41"
 dependencies = [
  "rustix",
 ]
@@ -1510,9 +1510,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rusteron-client"
-version = "0.3.0"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6c4bb18656f9ecb19950c1afcfba450d8fe176d3bd0a9c293a1936a7c9a0901"
+checksum = "a06dff0608002a750f0ef1f172c58e04b771697f7076c719d2a856be68884067"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1526,9 +1526,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.3.0"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5020e2b3f22969bc08aad0cf353bd078f9f6affe7c18c91e2b5b5f39b7fc2eed"
+checksum = "b61326fe15e860dd64053dd952c9ff1b5d133c378e2012932fcda2fc1878d1fc"
 dependencies = [
  "itertools 0.15.0",
  "log",
@@ -1541,9 +1541,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.3.0"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af9683352eb2052382989bcd31a6d613463362027cfd10739c23eb7eff8d5c07"
+checksum = "7888404f535d228df6fddf102070dacc2315662c1e3f88730ba5cb866e703bb1"
 dependencies = [
  "bindgen",
  "cmake",

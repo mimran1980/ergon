@@ -3286,12 +3286,39 @@ const HEADER_TYPES: &str = r#"
   <type name="version" primitiveType="uint16"/>
 </composite>"#;
 
-/// An unknown attribute is an authoring typo — `presense` for `presence`
-/// silently drops the intent, so the parser must reject it rather than
-/// ignore it. Namespaced attributes (`xsi:*`, `xi:*`) are outside the SBE
-/// grammar and must still pass.
+/// The documented scope of the typo check: `<types>` and the type-level
+/// elements accept a near-miss (`presense`) and a grammar attribute they do
+/// not take (`blockLength`), so the schema still parses.
 #[test]
-fn unknown_attributes_are_rejected_but_namespaced_ones_pass()
+fn types_level_elements_accept_typos_and_misplaced_grammar_attributes()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (types_attrs, type_attrs) in [
+        (r#" presense="x" blockLength="4""#, ""),
+        ("", r#" presense="x" blockLength="4""#),
+    ] {
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+<messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+  <types{types_attrs}>{HEADER_TYPES}
+    <type name="u32" primitiveType="uint32"{type_attrs}/>
+  </types>
+  <message name="M" id="1">
+    <field name="x" id="1" type="u32"/>
+  </message>
+</messageSchema>"#
+        );
+        parse(crate::SchemaSource::xml(&xml))?;
+    }
+    Ok(())
+}
+
+/// A near-miss of a grammar attribute is an authoring typo — `presense` for
+/// `presence` silently drops the intent, so the parser must reject it rather
+/// than capture it. Any other unknown attribute, prefixed or not, is an
+/// extension mark: captured, not rejected (the official SBE XSD rejects the
+/// unprefixed ones; `validate_against_sbe_xsd` still does).
+#[test]
+fn unknown_attributes_are_captured_but_grammar_typos_are_rejected()
 -> Result<(), Box<dyn std::error::Error>> {
     let schema = |schema_attrs: &str, field_attrs: &str| {
         format!(
@@ -3311,21 +3338,56 @@ fn unknown_attributes_are_rejected_but_namespaced_ones_pass()
     // below is the attribute and not a malformed fixture.
     parse(crate::SchemaSource::xml(&schema("", "")))?;
 
-    // Typo on the root element.
+    // An unknown unprefixed attribute on the root is an extension mark.
+    let ir = parse(crate::SchemaSource::xml(&schema(r#" bogusAttr="x""#, "")))?;
+    assert_eq!(ir.extensions.attr("bogusAttr"), Some("x"));
+    let ir = parse(crate::SchemaSource::xml(&schema("", r#" scale="2""#)))?;
+    let x = ir
+        .tokens
+        .iter()
+        .find(|t| t.signal == crate::ir::Signal::BeginField && t.name == "x")
+        .ok_or("field x")?;
+    assert_eq!(x.extensions.attr("scale"), Some("2"));
+    assert_eq!(
+        x.extensions.attributes[0].namespace, None,
+        "unprefixed: no namespace"
+    );
+    assert!(
+        crate::validate_against_sbe_xsd(&schema("", r#" scale="2""#)).is_err(),
+        "the XSD-shaped validator still rejects an unprefixed extension"
+    );
+
+    // Typo on the root element: a near-miss of `byteOrder`.
     assert!(matches!(
-        parse(crate::SchemaSource::xml(&schema(r#" bogusAttr="x""#, ""))).unwrap_err(),
+        parse(crate::SchemaSource::xml(&schema(r#" byteOrdre="x""#, ""))).unwrap_err(),
         ParseError::Invalid { .. }
     ));
 
-    // Typo on a field — `presense` is the classic one.
+    // A grammar attribute on the wrong element is not an extension.
     assert!(matches!(
         parse(crate::SchemaSource::xml(&schema(
             "",
-            r#" presense="optional""#
+            r#" dimensionType="x""#
         )))
         .unwrap_err(),
         ParseError::Invalid { .. }
     ));
+
+    // Typos on a field — `presense` is the classic one.
+    for typo in [
+        r#" presense="optional""#,
+        r#" semanticTpye="Price""#,
+        r#" sinceVerison="1""#,
+        r#" primitivType="int8""#,
+    ] {
+        assert!(
+            matches!(
+                parse(crate::SchemaSource::xml(&schema("", typo))).unwrap_err(),
+                ParseError::Invalid { .. }
+            ),
+            "{typo} must be rejected as a typo"
+        );
+    }
 
     // Namespaced attributes are not part of the SBE grammar; they must pass.
     parse(crate::SchemaSource::xml(&schema(
@@ -4602,7 +4664,8 @@ fn extension_matching_is_prefix_independent() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
-fn rejects_unnamespaced_unknown_attribute_and_element() -> Result<(), Box<dyn std::error::Error>> {
+fn rejects_unknown_element_and_misplaced_grammar_attribute()
+-> Result<(), Box<dyn std::error::Error>> {
     let base = |extra: &str| {
         format!(
             r#"<?xml version="1.0"?>
@@ -4620,12 +4683,23 @@ fn rejects_unnamespaced_unknown_attribute_and_element() -> Result<(), Box<dyn st
         )
     };
 
-    // Unnamespaced unknown attribute on a field: still rejected.
-    let err = parse(crate::SchemaSource::xml(&base(
+    // Unnamespaced unknown attribute on a field: captured as an extension.
+    let ir = parse(crate::SchemaSource::xml(&base(
         r#"<field name="x" id="1" type="uint32" surprise="1"/>"#,
+    )))?;
+    let x = ir
+        .tokens
+        .iter()
+        .find(|t| t.name == "x" && t.signal == crate::ir::Signal::BeginField)
+        .ok_or("field x")?;
+    assert_eq!(x.extensions.attr("surprise"), Some("1"));
+
+    // A grammar attribute the element does not take: still rejected.
+    let err = parse(crate::SchemaSource::xml(&base(
+        r#"<field name="x" id="1" type="uint32" blockLength="8"/>"#,
     )))
-    .expect_err("unknown unnamespaced attr");
-    assert!(format!("{err:?}").contains("unknown"), "{err:?}");
+    .expect_err("misplaced grammar attr");
+    assert!(format!("{err:?}").contains("blockLength"), "{err:?}");
 
     // Unnamespaced unknown child under message: still rejected.
     let err = parse(crate::SchemaSource::xml(&base(r#"<notAField name="x"/>"#)))

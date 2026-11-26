@@ -190,8 +190,8 @@ pub struct Encoding {
     pub deprecated: Option<u16>,
 }
 
-/// Extension content retained from one schema node: namespaced (or allow-listed
-/// non-grammar) attributes and foreign-namespace child elements. Empty for every
+/// Extension content retained from one schema node: attributes the SBE grammar
+/// does not define (namespaced or not) and foreign-namespace child elements. Empty for every
 /// node a schema does not annotate. Build-time data only; never read by code
 /// generation unless the consumer opts in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -203,13 +203,13 @@ pub struct Extensions {
     pub elements: Vec<ExtensionElement>,
 }
 
-/// One attribute the SBE grammar does not own (namespaced, or an allow-listed
-/// non-grammar name such as `jsonValue` / `unit`).
+/// One attribute the SBE grammar does not own: namespaced (`x:scaleBy`) or an
+/// unprefixed name the grammar does not define (`jsonValue`, `unit`, `scale`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExtensionAttr {
     /// Local name (the part after the colon) — the match key; any prefix works.
     pub local_name: String,
-    /// Resolved namespace URI; `None` for allow-listed non-grammar attributes.
+    /// Resolved namespace URI; `None` for an unprefixed attribute.
     pub namespace: Option<String>,
     /// Verbatim attribute value.
     pub value: String,

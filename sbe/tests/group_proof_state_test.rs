@@ -58,6 +58,26 @@ fn consumer_cannot_name_the_entry_encoder_proof_constructor()
     Ok(())
 }
 
+/// The attached group a group-writing closure is handed comes only from the
+/// generated module: a consumer that could build one could assign it in place
+/// of the real one and steer the method's cursor and count.
+#[test]
+fn consumer_cannot_build_an_attached_group_encoder() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_attach");
+    common::compile_fails_with_diagnostics_excluding(
+        "gp_attach",
+        &src,
+        r#"
+        let mut buf = [0u8; 64];
+        // ILLEGAL: attached-group constructor, private to the generated module.
+        let _ = FuelFiguresEncoder::attach(&mut buf, 0, 1);
+        "#,
+        &["E0624", "attach"],
+        &["E0599"],
+    );
+    Ok(())
+}
+
 #[test]
 fn consumer_cannot_invent_parent_proof_state() -> Result<(), Box<dyn std::error::Error>> {
     let (_, src) = generate(&Paths::example_schema(), "gp_parent");
@@ -454,6 +474,67 @@ fn fixed_stride_group_keeps_add_checked() -> Result<(), Box<dyn std::error::Erro
             Ok(e.complete())
         }).expect("fixed-stride add_checked");
         assert_eq!(g.written(), 1);
+        "#,
+    );
+    Ok(())
+}
+
+/// A dynamic `add` must not accept an entry proof from another group: the real
+/// entry would be dropped unwritten and the cursor taken from the other group.
+/// The proof cannot leave the `add` closure that made it.
+#[test]
+fn dynamic_add_rejects_a_proof_from_another_group() -> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_foreign_proof");
+    common::compile_fails_with_diagnostics_excluding(
+        "gp_foreign_proof",
+        &src,
+        r#"
+        let mut other = [0u8; 64];
+        let mut buf = [0u8; 64];
+        let mut decoy = FuelFiguresEncoder::wrap(&mut other, 40, 4);
+        let mut foreign = None;
+        let _ = decoy.add(|mut e| {
+            e.speed(1);
+            foreign = Some(e.usage_description(b"")?);
+            Err(sbe_rt::EncodeError::EncodedLengthOverflow)
+        });
+        let mut g = FuelFiguresEncoder::wrap(&mut buf, 0, 1);
+        let _ = g.add(|_e| foreign.take().ok_or(sbe_rt::EncodeError::EncodedLengthOverflow));
+        "#,
+        &["borrowed data escapes outside of closure"],
+        &["E0597", "E0499"],
+    );
+    Ok(())
+}
+
+/// A fixed-stride entry is exactly one block, so neither `add` (whose entry the
+/// closure can swap for another group's) nor `add_checked` (whose proof can come
+/// from another group's `start_entry`) may move the cursor anywhere else.
+#[test]
+fn fixed_stride_add_advances_one_block_whatever_the_closure_returns()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_, src) = generate(&Paths::example_schema(), "gp_fixed_cursor");
+    compile_and_run(
+        "gp_fixed_cursor",
+        &src,
+        r#"
+        let block = PerformanceFiguresAccelerationEncoder::ENTRY_BLOCK_LENGTH;
+        let mut other = [0u8; 64];
+        let mut buf = [0u8; 64];
+        let mut decoy = PerformanceFiguresAccelerationEncoder::wrap(&mut other, 30, 4);
+        let mut g = PerformanceFiguresAccelerationEncoder::wrap(&mut buf, 0, 3);
+        let mut stash = None;
+        g.add(|e| {
+            let d = decoy.start_entry()?;
+            stash = Some(core::mem::replace(e, d));
+            Ok(())
+        }).expect("swapped entry");
+        drop(stash);
+        g.add_checked(|_e| decoy.start_entry().map(|d| d.complete()))
+            .expect("foreign proof");
+        g.add(|e| { e.mph(0x0707); Ok(()) }).expect("third entry");
+        assert_eq!(g.written(), 3);
+        assert_eq!(&buf[2 * block..2 * block + 2], &0x0707u16.to_le_bytes());
         "#,
     );
     Ok(())

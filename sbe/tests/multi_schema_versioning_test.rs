@@ -10,6 +10,8 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, unused)]
 
 mod common;
+#[path = "common/ext_recipes.rs"]
+mod ext_recipes;
 use common::{Paths, compile_and_run_two_modules};
 
 use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
@@ -668,7 +670,7 @@ fn multi_schema_rejects_shared_enum_with_different_extension_marks()
     let b = mini_schema("b", 2, &consumer);
     let config = GenerationConfig::new("multi")
         .with_shared_module("common")
-        .with_variant_labels("jsonValue", "as_str");
+        .with_try_hook(ext_recipes::labels("jsonValue", "label"));
     let mut g = Generator::new(config);
     let err = g
         .generate_multi(&[(&a, "common"), (&b, "other")])
@@ -681,7 +683,7 @@ fn multi_schema_rejects_shared_enum_with_different_extension_marks()
     let same = mini_schema("c", 3, owner);
     let config = GenerationConfig::new("multi")
         .with_shared_module("common")
-        .with_variant_labels("jsonValue", "as_str");
+        .with_try_hook(ext_recipes::labels("jsonValue", "label"));
     Generator::new(config).generate_multi(&[(&a, "common"), (&same, "other")])?;
     Ok(())
 }

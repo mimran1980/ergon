@@ -162,7 +162,7 @@ pub(crate) fn generate_group_encoder(
             }
             .into());
         }
-        let block_len = Self::ENTRY_BLOCK_LENGTH;
+        let block_len = #block_len_lit;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
             sbe_rt::cold();
             return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -200,9 +200,11 @@ pub(crate) fn generate_group_encoder(
             /// required nested group and var-data field in wire order.
             #[inline]
             #[must_use]
-            pub fn add<'b, F>(&'b mut self, f: F) -> Result<(), sbe_rt::EncodeError>
+            pub fn add<F>(&mut self, f: F) -> Result<(), sbe_rt::EncodeError>
             where
-                F: FnOnce(#entry_enc_ident<'b>) -> Result<#entry_complete_ident<'b>, sbe_rt::EncodeError>,
+                // `for<'b>`: a proof made in another group's `add` closure
+                // cannot leave it, so the one returned here is this entry's.
+                F: for<'b> FnOnce(#entry_enc_ident<'b>) -> Result<#entry_complete_ident<'b>, sbe_rt::EncodeError>,
             {
                 #body
             }
@@ -214,8 +216,9 @@ pub(crate) fn generate_group_encoder(
                 let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
                 let mut __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
                 f(&mut __entry)?;
-                self.offset = __entry.offset;
             }
+            // One block, never the cursor of an entry the closure swapped in.
+            self.offset += block_len;
             self.written += 1;
             Ok(())
         });
@@ -240,9 +243,10 @@ pub(crate) fn generate_group_encoder(
             {
                 let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
                 let __entry = unsafe { #entry_enc_ident::wrap(__buf, self.offset) };
-                let __complete = f(__entry)?;
-                self.offset = __complete.into_cursor();
+                f(__entry)?;
             }
+            // One block, never the cursor of a proof from another group.
+            self.offset += block_len;
             self.written += 1;
             Ok(())
         });
@@ -274,7 +278,7 @@ pub(crate) fn generate_group_encoder(
                             })?,
                     });
                 }
-                let block_len = Self::ENTRY_BLOCK_LENGTH;
+                let block_len = #block_len_lit;
                 if self
                     .offset
                     .checked_add(block_len)
@@ -304,11 +308,12 @@ pub(crate) fn generate_group_encoder(
     ts.extend(quote::quote! {
         #[doc = concat!("Encoder for the `", stringify!(#group_enc_ident), "` group — call `add()` to write entries.")]
         #[must_use = "group encoder must call add() to write entries"]
-        pub struct #group_enc_ident<'a> {
+        pub struct #group_enc_ident<'a, C = sbe_rt::Attached> {
             buf: &'a mut [u8],
             offset: usize,
             count: #count_ty,
             written: #count_ty,
+            _c: core::marker::PhantomData<C>,
         }
 
         impl<'a> #group_enc_ident<'a> {
@@ -335,19 +340,24 @@ pub(crate) fn generate_group_encoder(
             /// `count` bounds how many entries `add()` accepts before it
             /// returns [`sbe_rt::EncodeError::GroupFull`].
             ///
-            /// Normal generated code reaches this only through the parent
-            /// message's own group-writing stage (e.g. the `fuel_figures(
-            /// count, |g| { .. })` method on the message encoder), which
-            /// writes the dimension header for you and hands you this type
-            /// already positioned at the first entry. Call this directly
-            /// only when assembling a standalone group outside a full
-            /// message — get the framing (header contents, `offset`, order)
-            /// wrong and the result is a malformed group image.
+            /// A group-writing method (e.g. `fuel_figures(count, |g| { .. })`)
+            /// writes the header and hands its closure an attached group,
+            /// which this detached one cannot replace. Use this only for a
+            /// standalone group; wrong framing gives a malformed group image.
             #[inline]
-            pub const fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
-                Self { buf, offset, count, written: 0 }
+            pub const fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> #group_enc_ident<'a, sbe_rt::Detached> {
+                #group_enc_ident { buf, offset, count, written: 0, _c: core::marker::PhantomData }
             }
 
+            // Private: only the group built over the frame's own buffer can
+            // be the one a closure holds, so none can be assigned in its place.
+            #[inline]
+            const fn attach(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
+                Self { buf, offset, count, written: 0, _c: core::marker::PhantomData }
+            }
+        }
+
+        impl<'a, C> #group_enc_ident<'a, C> {
             #add_fn
             #fixed_stride_methods
             /// Number of entries written so far (for `_unknown_size` back-patch).
@@ -435,7 +445,7 @@ pub(crate) fn generate_group_encoder(
             }
         });
         ts.extend(quote::quote! {
-            impl<'a> #group_enc_ident<'a> {
+            impl<'a, C> #group_enc_ident<'a, C> {
                 /// Write one entry from a struct. Faster than [`Self::add`] when
                 /// the entry has no nested groups or var-data.
                 #[inline]
@@ -452,7 +462,7 @@ pub(crate) fn generate_group_encoder(
                                 })?,
                         });
                     }
-                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    let block_len = #block_len_lit;
                     if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
                         sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::BufferTooShort {
@@ -491,7 +501,7 @@ pub(crate) fn generate_group_encoder(
                             attempted: sbe_rt::group_diag_count(attempted as u64)?,
                         });
                     }
-                    let block_len = Self::ENTRY_BLOCK_LENGTH;
+                    let block_len = #block_len_lit;
                     if block_len == 0 {
                         self.written = attempted as #count_ty;
                         return Ok(());
@@ -755,7 +765,7 @@ pub(crate) fn generate_group_encoder(
             #[must_use]
             pub fn #ng_snake<F>(mut self, count: #ng_count_ty, f: F) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
             where
-                F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
+                F: for<'b> FnOnce(&mut #ng_enc<'b>) -> sbe_rt::GroupResult,
             {
                 if self.offset + #ng_dim > self.buf.len() {
                     sbe_rt::cold();
@@ -772,8 +782,7 @@ pub(crate) fn generate_group_encoder(
                     .copy_from_slice(&count.#to_endian());
                 let __offset;
                 {
-                    let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-                    let mut group = #ng_enc::wrap(__buf, self.offset + #ng_dim, count);
+                    let mut group = #ng_enc::attach(&mut *self.buf, self.offset + #ng_dim, count);
                     f(&mut group)?;
                     let written = group.written();
                     if written != count {
@@ -796,7 +805,7 @@ pub(crate) fn generate_group_encoder(
             #[inline]
             pub fn #ng_snake_unknown<F>(mut self, f: F) -> Result<#next_stage<'a>, sbe_rt::EncodeError>
             where
-                F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
+                F: for<'b> FnOnce(&mut #ng_enc<'b>) -> sbe_rt::GroupResult,
             {
                 if self.offset + #ng_dim > self.buf.len() {
                     sbe_rt::cold();
@@ -813,8 +822,7 @@ pub(crate) fn generate_group_encoder(
                 self.buf[count_offset..count_offset + #num_sz_lit].fill(0);
                 let __offset;
                 {
-                    let __buf: &'a mut [u8] = unsafe { &mut *(self.buf as *mut [u8]) };
-                    let mut group = #ng_enc::wrap(__buf, self.offset + #ng_dim, #ng_count_ty::MAX);
+                    let mut group = #ng_enc::attach(&mut *self.buf, self.offset + #ng_dim, #ng_count_ty::MAX);
                     f(&mut group)?;
                     let actual: #ng_count_ty = group.written();
                     __offset = group.offset;

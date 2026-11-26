@@ -62,36 +62,53 @@ assert_eq!(AccountType::NullVal.json_label(), "UNKNOWN");
 
 This sample is the worked example for
 [Extension XML](../sbe/configuration/extension-xml.md). Its `build.rs`
-wires all three built-ins against the published venue schema it ships
-(the first file in `schemas/`, generated as the `<venue>_spot` module),
-keyed on that schema's own attribute names and namespace prefix:
+handles the extension marks of the published venue schema it ships (the
+first file in `schemas/`, generated as the `<venue>_spot` module) through
+the generic API only, keyed on that schema's own attribute names:
 
 ```rust,ignore
-// samples/exchange-example/build.rs
-let config = config
-    .with_variant_labels("jsonValue", "as_str")           // validValue jsonValue
-    .with_exponent_links("exponent")                      // field exponent
-    .with_field_extension_defaults("jsonDefaultValue", "jsonOmitNull")  // field marks
-    .with_hook(json_label_hook);                          // hook example above
+{{#include ../../../samples/exchange-example/build.rs:extension_config}}
 ```
 
-The other two sample schemas carry none of these marks, so for them the
-knobs emit nothing and the generated code stays byte-identical.
-
-What the marks produce on this schema:
+`ext_recipes` is ergo-sbe's venue-neutral example-hook file
+(`sbe/tests/common/ext_recipes.rs`), included with `#[path]`. The other two
+sample schemas carry no marks, so their generated code does not change.
 
 | Mark | Generated |
 |---|---|
-| `jsonValue` on `validValue`s | `FilterType::MaxAsset.as_str() == "MAX_ASSET"` — `Display` follows |
-| `exponent` naming a sibling field | `max_qty_with_exponent() -> (i64, i8)`, exactly what both accessors return |
-| `jsonDefaultValue` on a field | `TPlusSellFilterSchema::END_TIME_SCHEMA_DEFAULT == Some("-1")` |
+| `jsonValue` on `validValue`s | `FilterType::MaxAsset.json_label() == "MAX_ASSET"` (`json_label_hook`) and `FilterType::MAX_ASSET_JSON_VALUE`; `as_str` stays `"MaxAsset"` |
+| `exponent` naming a field of the same block | `max_qty_with_exponent() -> (i64, i8)`, exactly what both accessors return |
+| `exponent` naming a message field from a group | `bid.price_with_exponent(&message) -> (i64, i8)` on the depth response's entries |
+| `jsonPath`, `jsonDefaultValue`, `jsonOmitNull` | `MaxAssetFilterSchema::MAX_QTY_JSON_PATH == "limit"`, `TPlusSellFilterSchema::END_TIME_JSON_DEFAULT_VALUE == "-1"`, the group-level `ExchangeInfoResponseSchema::SORS_JSON_OMIT_NULL == "true"` |
 
-A group field whose exponent target lives in the enclosing message gets no
-helper — the pair spans two decoders — and a dangling or type-invalid
-reference fails generation rather than being skipped.
+The assertions live in `tests/extension_fixture_test.rs`.
+`cargo run --example sbe_text` decodes a filter message and prints the
+label, an exact `mantissa × 10^exponent` rendering and the asset text.
 
-Runnable: `cargo run --example sbe_text` decodes a filter message and
-prints the label, an exact `mantissa × 10^exponent` rendering (integer
-string arithmetic via `WireDec`'s `Display` — no floats, no decimal
-crate) and the asset text. The assertions above live in
-`tests/extension_fixture_test.rs` and run with the sample's test lane.
+## SBE responses back to the venue's JSON
+
+The venue's REST API answers each request as JSON or, on request, as SBE.
+Its schema's marks record how one maps to the other: `jsonPath` the JSON
+key (`[]` an array position, `..` the group's array is the parent value),
+`exponent` the field that scales a mantissa into a decimal string,
+`jsonDefaultValue` the JSON for an absent optional. A try-hook in
+`build.rs` (`json_hook`) reads those marks and the decoder accessors named
+in the hook context, and emits a `write_json` method on each covered
+response decoder, group decoder and entry decoder; an entry whose mantissa
+is scaled by a message-level exponent takes the enclosing decoders as
+arguments. `src/sbe_json.rs` formats values (exact decimals, integer
+arithmetic only) and dispatches on the template id.
+
+```sh
+# Recorded real responses render to JSON equal to the venue's own JSON
+cargo test --manifest-path samples/exchange-example/Cargo.toml --test json_fixture_test
+# Render a saved SBE response body
+cargo run --manifest-path samples/exchange-example/Cargo.toml --example sbe_json -- <file.sbe>
+```
+
+`tests/fixtures/` holds one SBE body and the JSON body of the same public
+market-data request per endpoint (order book, trades, aggregate trades,
+klines, average price, price and book tickers); the test compares them as
+JSON values. `scripts/` has the live check that recorded them. The
+sample's README section in `samples/README.md` records what each mark is
+for and what recording found.

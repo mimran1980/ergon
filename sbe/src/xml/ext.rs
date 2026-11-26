@@ -35,10 +35,6 @@ const GRAMMAR_LOCAL_NAMES: &[&str] = &[
 /// name (`sbe:enumm`) is rejected whatever namespace the root carries.
 const SBE_NAMESPACE: &str = "http://fixprotocol.io/2016/sbe";
 
-/// Unnamespaced attribute names the XSD allow-lists as vendor extensions;
-/// accepted and captured alongside namespaced attributes.
-const NON_GRAMMAR_ATTRS: &[&str] = &["jsonValue", "unit"];
-
 /// True when `child` is extension content rather than SBE grammar.
 ///
 /// Grammar local names match first. Otherwise the child must be namespaced
@@ -56,15 +52,18 @@ pub(crate) fn is_extension_element(child: Node<'_, '_>) -> bool {
     ns != SBE_NAMESPACE && root_ns != Some(ns)
 }
 
-/// Namespaced attributes (plus allow-listed non-grammar names) on a grammar
-/// node, in document order. `xmlns*` declarations are never yielded.
+/// Extension attributes on a grammar node, in document order: every
+/// namespaced attribute, and every unprefixed one the SBE grammar does not
+/// define. On the elements `attr::reject_unknown_attrs` checks, typos of
+/// grammar names were rejected earlier; on type-level elements they are
+/// yielded as marks. `xmlns*` declarations are never yielded.
 pub(crate) fn extension_attrs(node: Node<'_, '_>) -> Vec<ExtensionAttr> {
     node.attributes()
         .filter(|a| {
             if a.name().starts_with("xmlns") {
                 return false;
             }
-            a.namespace().is_some() || NON_GRAMMAR_ATTRS.contains(&a.name())
+            a.namespace().is_some() || !crate::schema_attrs::is_grammar_attr(a.name())
         })
         .map(|a| ExtensionAttr {
             local_name: a.name().to_string(),

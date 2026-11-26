@@ -173,4 +173,46 @@ mod tests {
         })?;
         Ok(())
     }
+
+    /// The entry-level nested-group methods reborrow the entry buffer for the
+    /// closure and then keep writing through it. Both the counted and the
+    /// unknown-size form, in one frame, with a write after each nested group.
+    #[test]
+    fn nested_group_reborrow_keeps_buffer_valid() -> Result<(), Box<dyn std::error::Error>> {
+        let mut buffer = [0u8; 256];
+        let len = nested::TreeEncoder::try_wrap_and_apply_header(&mut buffer, 0)?
+            .fixed(&nested::TreeFixedFields {})
+            .outer(2, |outer| {
+                outer.add(|mut entry| {
+                    entry.value(1);
+                    entry.inner(2, |inner| {
+                        inner.add(|mut row| {
+                            row.quantity(10);
+                            row.label(b"a")
+                        })?;
+                        inner.add(|mut row| {
+                            row.quantity(11);
+                            row.label(b"b")
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                outer.add(|mut entry| {
+                    entry.value(2);
+                    entry.inner_unknown_size(|inner| {
+                        inner.add(|mut row| {
+                            row.quantity(20);
+                            row.label(b"cc")
+                        })?;
+                        Ok(())
+                    })
+                })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        // header 8 + outer dim 4 + entry 1 (4 + dim 4 + 2 * 13) + entry 2 (4 + dim 4 + 14)
+        assert_eq!(len, 68);
+        nested::TreeDecoder::verify(&buffer[..len])?;
+        Ok(())
+    }
 }

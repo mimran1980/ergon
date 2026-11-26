@@ -1,8 +1,9 @@
 //! `sbe_text`: decode a filter message and print readable field text —
-//! the extension-XML use case. Labels come from `with_variant_labels`
-//! (`jsonValue` → `as_str`), the quantity renders as an exact decimal via
-//! `with_exponent_links` (integer arithmetic only — no floats, no decimal
-//! crate). Self-contained: it encodes one message first, then decodes it.
+//! the extension-XML use case. Labels come from `build.rs`'s
+//! `json_label_hook` (`jsonValue` → `json_label()`), the quantity renders
+//! as an exact decimal through the `pairs` recipe's `max_qty_with_exponent`
+//! (integer arithmetic only — no floats, no decimal crate). Self-contained:
+//! it encodes one message first, then decodes it.
 //!
 //! Run: `cargo run --example sbe_text`
 
@@ -27,8 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mantissa, exponent) = dec.max_qty_with_exponent();
 
     // `filterType` is a constant enum field; its label is the schema's
-    // `mbx:jsonValue`, exposed through the knob-generated `as_str`.
-    println!("filter type : {}", dec.filter_type().as_str());
+    // `mbx:jsonValue`, exposed through the hook-generated `json_label`.
+    println!("filter type : {}", dec.filter_type().json_label());
     // The pair helper returns exactly what the two accessors return;
     // WireDec renders `mantissa × 10^exponent` losslessly as text.
     println!(

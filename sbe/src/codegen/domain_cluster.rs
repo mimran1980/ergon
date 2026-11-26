@@ -32,7 +32,7 @@ pub(crate) fn generate_domain_objects(
     schema: &crate::Schema,
     null_as_option: &[crate::ConversionSelector],
     all_enums_as_option: bool,
-) -> proc_macro2::TokenStream {
+) -> Result<proc_macro2::TokenStream, super::GenerateError> {
     let span = proc_macro2::Span::call_site();
     let mut ts = proc_macro2::TokenStream::new();
     let _has_conversion = domain_has_conversion(&msg.fields, &msg.groups, &conversions);
@@ -59,8 +59,8 @@ pub(crate) fn generate_domain_objects(
         all_enums_as_option,
         &mut ts,
         span,
-    );
-    ts
+    )?;
+    Ok(ts)
 }
 
 pub(crate) fn domain_entry_can_bulk_encode(
@@ -394,7 +394,7 @@ pub(crate) fn generate_domain_recursive(
     all_enums_as_option: bool,
     ts: &mut proc_macro2::TokenStream,
     span: proc_macro2::Span,
-) {
+) -> Result<(), super::GenerateError> {
     let domain_ident = syn::Ident::new(&format!("{struct_prefix}Domain"), span);
     let decoder_ident = syn::Ident::new(&format!("{decoder_name}Decoder"), span);
 
@@ -840,7 +840,7 @@ pub(crate) fn generate_domain_recursive(
             all_enums_as_option,
             ts,
             span,
-        );
+        )?;
         if can_bulk_encode {
             let g_encoder_ident = syn::Ident::new(&format!("{g_scoped}Encoder"), span);
             let mut range_checks = proc_macro2::TokenStream::new();
@@ -1081,7 +1081,7 @@ pub(crate) fn generate_domain_recursive(
     // Fire hooks for this domain struct (message DTO or entry DTO).
     // Build context including group and var-data field info.
     if !hooks.is_empty() {
-        let mut ctx_fields = message_field_infos(fields, domain_types, Some(elements));
+        let mut ctx_fields = message_field_infos(fields, domain_types, Some(elements), false);
         // Append synthetic field entries for groups (Vec<EntryDomain>).
         // The generated entry-DTO struct is `{struct_prefix}{Group}EntryDomain`
         // (see the recursion below), so the reported type must carry the same
@@ -1100,6 +1100,9 @@ pub(crate) fn generate_domain_recursive(
                 deprecated: g.deprecated,
                 description: g.description.clone(),
                 extensions: g.extensions.clone(),
+                schema_name: g.name.clone(),
+                accessor: None,
+                accessor_type: None,
             });
         }
         // Append synthetic field entries for var-data
@@ -1128,6 +1131,9 @@ pub(crate) fn generate_domain_recursive(
                 deprecated: vd.deprecated,
                 description: vd.description.clone(),
                 extensions: vd.extensions.clone(),
+                schema_name: vd.name.clone(),
+                accessor: None,
+                accessor_type: None,
             });
         }
         let ctx = crate::ItemContext::DomainStruct {
@@ -1136,11 +1142,7 @@ pub(crate) fn generate_domain_recursive(
             name: struct_prefix.to_string() + "Domain",
             fields: ctx_fields,
         };
-        for hook in hooks.iter() {
-            for token_stream in hook(&ctx) {
-                ts.extend(token_stream);
-            }
-        }
+        hooks.run(&ctx, ts)?;
     }
 
     if is_entry {
@@ -1410,6 +1412,7 @@ pub(crate) fn generate_domain_recursive(
             }
         });
     }
+    Ok(())
 }
 
 // ── Source traits (`with_source_traits`) ─────────────────────────────────

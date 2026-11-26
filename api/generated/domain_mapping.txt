@@ -155,8 +155,8 @@
 # [must_use = "entry encoder fields must be set before the next entry"] struct OrderFillsAllocsEntryEncoder< 'a > {  }
 # [must_use = "entry encoder fields must be set before the next entry"] struct OrderFillsEntryEncoder< 'a > {  }
 # [must_use = "entry stage must continue writing required tails"] struct OrderFillsAfterAllocs< 'a > {  }
-# [must_use = "group encoder must call add() to write entries"] struct OrderFillsAllocsEncoder< 'a > {  }
-# [must_use = "group encoder must call add() to write entries"] struct OrderFillsEncoder< 'a > {  }
+# [must_use = "group encoder must call add() to write entries"] struct OrderFillsAllocsEncoder< 'a , C = sbe_rt :: Attached > {  }
+# [must_use = "group encoder must call add() to write entries"] struct OrderFillsEncoder< 'a , C = sbe_rt :: Attached > {  }
 # [must_use = "length builder must be completed"] struct OrderEncodedLengthAfterFills {  }
 # [must_use = "length builder must be completed"] struct OrderEncodedLengthComplete {  }
 # [must_use = "length builder must be consumed"] struct OrderEncodedLength {  }
@@ -186,8 +186,8 @@
 # [must_use] OrderAfterFills::fn note_as_str (self , src : & str ,) -> Result < OrderComplete < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] OrderAfterFills::fn note_unchecked (mut self , data : & [u8] ,) -> Result < OrderComplete < 'a , H > , sbe_rt :: EncodeError >
 # [must_use] OrderAfterFills::fn note_with < E , F > (mut self , exact_len : usize , f : F ,) -> Result < OrderComplete < 'a , H > , E > where E : From < sbe_rt :: EncodeError > , F : FnOnce (& mut [u8]) -> Result < () , E > ,
-# [must_use] OrderEncoder::fn fills < F > (mut self , count : u16 , f : F ,) -> Result < OrderAfterFills < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut OrderFillsEncoder < 'a >) -> sbe_rt :: GroupResult ,
-# [must_use] OrderEncoder::fn fills_unknown_size < F > (mut self , f : F ,) -> Result < OrderAfterFills < 'a , H > , sbe_rt :: EncodeError > where F : FnOnce (& mut OrderFillsEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] OrderEncoder::fn fills < F > (mut self , count : u16 , f : F ,) -> Result < OrderAfterFills < 'a , H > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut OrderFillsEncoder < 'b >) -> sbe_rt :: GroupResult ,
+# [must_use] OrderEncoder::fn fills_unknown_size < F > (mut self , f : F ,) -> Result < OrderAfterFills < 'a , H > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut OrderFillsEncoder < 'b >) -> sbe_rt :: GroupResult ,
 # [must_use] OrderEncoder::fn fixed (mut self , fixed : & OrderFixedFields ,) -> OrderEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] OrderEncoder::fn raw_fixed (self) -> OrderRawFixedWriter < 'a >
 # [must_use] OrderFillsAfterAllocs::fn venue_ref (mut self , data : & [u8] ,) -> Result < OrderFillsEntryComplete < 'a > , sbe_rt :: EncodeError >
@@ -195,8 +195,8 @@
 # [must_use] OrderFillsAllocsDecoderIter::const fn entry_block_length (& self) -> usize
 # [must_use] OrderFillsAllocsEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (& mut OrderFillsAllocsEntryEncoder < 'b >) -> sbe_rt :: GroupResult ,
 # [must_use] OrderFillsAllocsEncoder::fn start_entry (& mut self ,) -> Result < OrderFillsAllocsEntryEncoder < '_ > , sbe_rt :: EncodeError >
-# [must_use] OrderFillsEncoder::fn add < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (OrderFillsEntryEncoder < 'b > ,) -> Result < OrderFillsEntryComplete < 'b > , sbe_rt :: EncodeError > ,
-# [must_use] OrderFillsEntryEncoder::fn allocs < F > (mut self , count : u16 , f : F ,) -> Result < OrderFillsAfterAllocs < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut OrderFillsAllocsEncoder < 'a >) -> sbe_rt :: GroupResult ,
+# [must_use] OrderFillsEncoder::fn add < F > (& mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (OrderFillsEntryEncoder < 'b > ,) -> Result < OrderFillsEntryComplete < 'b > , sbe_rt :: EncodeError > ,
+# [must_use] OrderFillsEntryEncoder::fn allocs < F > (mut self , count : u16 , f : F ,) -> Result < OrderFillsAfterAllocs < 'a > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut OrderFillsAllocsEncoder < 'b >) -> sbe_rt :: GroupResult ,
 # [must_use] sbe_rt::EntryInfo::const fn is_first (& self) -> bool
 # [must_use] sbe_rt::EntryInfo::const fn is_last (& self) -> bool
 # [must_use] sbe_rt::EntryInfo::const fn remaining (& self) -> usize
@@ -453,7 +453,7 @@ OrderFillsAllocsDecoderIter::fn into_venue_ref (self ,) -> Result < (& 'a [u8] ,
 OrderFillsAllocsDecoderIter::fn into_venue_ref_as_str (self ,) -> Result < (& 'a str , OrderFillsEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError >
 OrderFillsAllocsEncoder::const ENTRY_BLOCK_LENGTH: usize
 OrderFillsAllocsEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
-OrderFillsAllocsEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+OrderFillsAllocsEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16 ,) -> OrderFillsAllocsEncoder < 'a , sbe_rt :: Detached >
 OrderFillsAllocsEncoder::fn add_checked < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (OrderFillsAllocsEntryEncoder < 'b > ,) -> Result < OrderFillsAllocsEntryComplete < 'b > , sbe_rt :: EncodeError > ,
 OrderFillsAllocsEncoder::fn add_struct (& mut self , entry : & OrderFillsAllocsEntry ,) -> Result < () , sbe_rt :: EncodeError >
 OrderFillsAllocsEncoder::fn bulk_add (& mut self , entries : & [OrderFillsAllocsEntry] ,) -> Result < () , sbe_rt :: EncodeError >
@@ -480,7 +480,7 @@ OrderFillsDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt ::
 OrderFillsDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < OrderFillsDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
 OrderFillsEncoder::const ENTRY_BLOCK_LENGTH: usize
 OrderFillsEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
-OrderFillsEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+OrderFillsEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16 ,) -> OrderFillsEncoder < 'a , sbe_rt :: Detached >
 OrderFillsEntryAllocsEntryDomain::fn encode_into < 'a > (& self , enc : & mut OrderFillsAllocsEntryEncoder < 'a > ,) -> Result < () , sbe_rt :: EncodeError >
 OrderFillsEntryAllocsEntryDomain::fn length_contribution (& self) -> Result < usize , sbe_rt :: EncodeError >
 OrderFillsEntryAllocsEntryDomain::fn try_from_decoder (dec : OrderFillsAllocsEntryDecoder < '_ > ,) -> Result < Self , sbe_rt :: DecodeError >
@@ -533,7 +533,7 @@ OrderFillsEntryDomain::fn encode_into < 'a > (& self , mut enc : OrderFillsEntry
 OrderFillsEntryDomain::fn length_contribution (& self) -> Result < usize , sbe_rt :: EncodeError >
 OrderFillsEntryDomain::fn try_from_decoder (dec : OrderFillsEntryDecoder < '_ > ,) -> Result < Self , sbe_rt :: DecodeError >
 OrderFillsEntryEncoder::const ENTRY_BLOCK_LENGTH: usize
-OrderFillsEntryEncoder::fn allocs_unknown_size < F > (mut self , f : F ,) -> Result < OrderFillsAfterAllocs < 'a > , sbe_rt :: EncodeError > where F : FnOnce (& mut OrderFillsAllocsEncoder < 'a >) -> sbe_rt :: GroupResult ,
+OrderFillsEntryEncoder::fn allocs_unknown_size < F > (mut self , f : F ,) -> Result < OrderFillsAfterAllocs < 'a > , sbe_rt :: EncodeError > where F : for < 'b > FnOnce (& mut OrderFillsAllocsEncoder < 'b >) -> sbe_rt :: GroupResult ,
 OrderFillsEntryEncoder::fn px (& mut self , val : i64) -> & mut Self
 OrderFillsEntryEncoder::fn qty (& mut self , val : u32) -> & mut Self
 OrderFillsEntryEncoder::fn side (& mut self , value : app :: Side ,) -> Result < & mut Self , < app :: Side as TryToSbe < Side > > :: Error >

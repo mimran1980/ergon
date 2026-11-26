@@ -95,14 +95,16 @@ grep -F -q 'moved.yaml' "$fixture/include-file.out"
 
 # A relative link to a page or file that is gone, or to a heading that is
 # not on the page, must fail: mdbook builds both without a warning. A link
-# inside code, an absolute URL and a repeated heading's -1 id pass.
+# inside code, an absolute URL, a repeated heading's -1 id and a heading
+# with `<T>` in code (mdbook keeps code text in the id) pass.
 for case in ok file anchor ref; do
     mkdir -p "$fixture/links/$case/deploy"
-    printf '# Clocks\n\n## Set up time sync\n\n## Set up time sync\n' >"$fixture/links/$case/deploy/clocks.md"
+    printf '# Clocks\n\n## Set up time sync\n\n## Set up time sync\n\n## Wrap in `Option<T>`\n' >"$fixture/links/$case/deploy/clocks.md"
 done
 cat > "$fixture/links/ok/deploy/page.md" <<'EOF'
 [time sync](clocks.md#set-up-time-sync), [again](clocks.md#set-up-time-sync-1),
-[html](clocks.html), [here](#same-page), [web](https://example.com/clock/overview.md)
+[html](clocks.html), [here](#same-page), [web](https://example.com/clock/overview.md),
+[generic](clocks.md#wrap-in-optiont)
 
 ## Same page
 

@@ -95,6 +95,41 @@ pub(crate) fn emit_tail_offsets(
         } else {
             proc_macro2::TokenStream::new()
         };
+        let entries = if g.has_fixed_stride() {
+            // Constant stride: one extent check instead of one per entry. The
+            // cold arm reports what the per-entry walk would have: the first
+            // entry that does not fit, with the bytes left at its offset.
+            quote::quote! {
+                let offset = start + #dim_size_lit;
+                let available = self.buf.len() - offset;
+                match count.checked_mul(block_len) {
+                    Some(len) if len <= available => Ok(offset + len),
+                    _ => {
+                        sbe_rt::cold();
+                        Err(sbe_rt::DecodeError::BufferTooShort {
+                            field: "group entry",
+                            needed: block_len,
+                            available: available.checked_rem(block_len).unwrap_or(available),
+                        })
+                    }
+                }
+            }
+        } else {
+            quote::quote! {
+                let mut offset = start + #dim_size_lit;
+                let mut idx = 0;
+                while idx < count {
+                    offset = #entry_decoder_ident::skip_with::<CHECK_MAX>(
+                        self.buf,
+                        offset,
+                        block_len,
+                        self.acting_version,
+                    )?;
+                    idx += 1;
+                }
+                Ok(offset)
+            }
+        };
         walk_fns.extend(quote::quote! {
             #[inline]
             fn #walk_ident<const CHECK_MAX: bool>(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
@@ -119,18 +154,7 @@ pub(crate) fn emit_tail_offsets(
                     header.#bf_ident() as u64,
                     #group_dec_ident::min_readable_fixed_extent(self.acting_version),
                 )?;
-                let mut offset = start + #dim_size_lit;
-                let mut idx = 0;
-                while idx < count {
-                    offset = #entry_decoder_ident::skip_with::<CHECK_MAX>(
-                        self.buf,
-                        offset,
-                        block_len,
-                        self.acting_version,
-                    )?;
-                    idx += 1;
-                }
-                Ok(offset)
+                #entries
             }
         });
         walk_arms.extend(quote::quote! { #k_lit => self.#walk_ident::<true>(start), });

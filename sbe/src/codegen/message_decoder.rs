@@ -57,7 +57,7 @@ pub(crate) fn generate_message_decoder(
     null_as_option: &[crate::ConversionSelector],
     all_enums_as_option: bool,
     gen_ctx: &super::runtime::GenerationContext,
-) -> (proc_macro2::TokenStream, String) {
+) -> Result<(proc_macro2::TokenStream, String), super::GenerateError> {
     let raw_name = &msg.name;
     let name = to_pascal_case(raw_name);
     let order_suffix = match byte_order {
@@ -1915,7 +1915,7 @@ pub(crate) fn generate_message_decoder(
             schema,
             null_as_option,
             all_enums_as_option,
-        );
+        )?;
         ts.extend(domain_ts);
     }
 
@@ -1934,7 +1934,7 @@ pub(crate) fn generate_message_decoder(
         all_enums_as_option,
     ));
 
-    (ts, marker_name)
+    Ok((ts, marker_name))
 }
 
 /// `*_as_str` / `*_as_str_unchecked` helpers over a var-data byte accessor.

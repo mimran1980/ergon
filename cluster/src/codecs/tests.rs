@@ -205,7 +205,7 @@ fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-// Schema 111 v18 (Aeron 1.54.2) adds the optional `termBaseLogPosition`
+// Schema 111 v18 (Aeron 1.54.2, unchanged in 1.54.3) adds the optional `termBaseLogPosition`
 // (`position_t`, null -1) to ClusterActionRequest and SnapshotMarker. These
 // goldens are the Java 1.54.2 encoders' output (aeron-all-1.54.2.jar) for the
 // same inputs as the tests below.

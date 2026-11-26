@@ -190,6 +190,8 @@ fn ext_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
                 None => vec![],
             }
         }
+        // Entry decoders get nothing from this hook.
+        ItemContext::GroupEntryDecoder { .. } => vec![],
     }
 }
 

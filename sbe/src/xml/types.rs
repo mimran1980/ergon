@@ -4,6 +4,8 @@ use std::collections::HashSet;
 
 use roxmltree::Node;
 
+use super::attr::GrammarAttr;
+
 use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
@@ -112,12 +114,14 @@ pub(crate) fn composite_refs_ready(node: Node<'_, '_>, registry: &TypeRegistry) 
             return true; // let parse_composite emit the error
         }
         let target = if tag == "ref" {
-            child.attribute("type").or_else(|| child.attribute("ref"))
+            child
+                .grammar_attr("type")
+                .or_else(|| child.grammar_attr("ref"))
         } else if tag == "type" {
             child
-                .attribute("ref")
-                .or_else(|| child.attribute("type"))
-                .or_else(|| child.attribute("primitiveType"))
+                .grammar_attr("ref")
+                .or_else(|| child.grammar_attr("type"))
+                .or_else(|| child.grammar_attr("primitiveType"))
         } else {
             None
         };
@@ -141,33 +145,33 @@ pub(crate) fn parse_type_element(
     warn_state: &WarnState,
 ) -> Result<Encoding, Fault> {
     let primitive = node
-        .attribute("primitiveType")
-        .or_else(|| node.attribute("type"));
+        .grammar_attr("primitiveType")
+        .or_else(|| node.grammar_attr("type"));
     let primitive_type = primitive
         .map(|s| parse_primitive_type(node, s))
         .transpose()?;
     let offset = opt_usize_attr(node, "offset", "offset")?;
     let presence = node
-        .attribute("presence")
+        .grammar_attr("presence")
         .map(|s| parse_presence(node, s))
         .transpose()?
         .unwrap_or(Presence::Required);
     let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
-    let character_encoding = node.attribute("characterEncoding").map(str::to_string);
-    let semantic_type = node.attribute("semanticType").map(str::to_string);
+    let character_encoding = node.grammar_attr("characterEncoding").map(str::to_string);
+    let semantic_type = node.grammar_attr("semanticType").map(str::to_string);
     let description = collect_description(node);
     let length = opt_usize_attr(node, "length", "length")?;
-    let epoch = node.attribute("epoch").map(str::to_string);
-    let time_unit = node.attribute("timeUnit").map(str::to_string);
+    let epoch = node.grammar_attr("epoch").map(str::to_string);
+    let time_unit = node.grammar_attr("timeUnit").map(str::to_string);
     let deprecated = parse_deprecated_attr(node)?;
 
-    let null_value = match node.attribute("nullValue") {
+    let null_value = match node.grammar_attr("nullValue") {
         Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
             .map_err(|e| Fault::invalid(node, "nullValue", e))?,
         None => None,
     };
     if null_value.is_some() && presence != Presence::Optional {
-        let type_name = node.attribute("name").unwrap_or("<unnamed>");
+        let type_name = node.grammar_attr("name").unwrap_or("<unnamed>");
         warn_once(
             &format!(
                 "warning: nullValue specified on non-optional type '{type_name}' \
@@ -177,12 +181,12 @@ pub(crate) fn parse_type_element(
             warn_state,
         );
     }
-    let min_value = match node.attribute("minValue") {
+    let min_value = match node.grammar_attr("minValue") {
         Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
             .map_err(|e| Fault::invalid(node, "minValue", e))?,
         None => None,
     };
-    let max_value = match node.attribute("maxValue") {
+    let max_value = match node.grammar_attr("maxValue") {
         Some(s) => super::registry::try_parse_u64_val(s, primitive_type)
             .map_err(|e| Fault::invalid(node, "maxValue", e))?,
         None => None,
@@ -195,7 +199,7 @@ pub(crate) fn parse_type_element(
             .text()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        from_text.or_else(|| node.attribute("valueRef").map(|s| s.to_string()))
+        from_text.or_else(|| node.grammar_attr("valueRef").map(|s| s.to_string()))
     } else {
         None
     };
@@ -265,7 +269,7 @@ pub(crate) fn parse_composite(
             since_version,
             deprecated: composite_deprecated,
             description: collect_description(node),
-            semantic_type: node.attribute("semanticType").map(str::to_string),
+            semantic_type: node.grammar_attr("semanticType").map(str::to_string),
             ..Encoding::default()
         },
         span: None,
@@ -392,8 +396,8 @@ pub(crate) fn parse_composite(
             let member_name = string_attr(child, "name", "composite ref @name")?;
             validate_sbe_name(child, &member_name, "composite ref @name")?;
             let ref_name = child
-                .attribute("type")
-                .or_else(|| child.attribute("ref"))
+                .grammar_attr("type")
+                .or_else(|| child.grammar_attr("ref"))
                 .ok_or_else(|| Fault::missing(child, "composite ref @type"))?;
             if ref_name == name {
                 return Err(Fault::invalid(
@@ -442,13 +446,13 @@ pub(crate) fn parse_composite(
             let member_name = string_attr(child, "name", "composite member @name")?;
             validate_sbe_name(child, &member_name, "composite member @name")?;
             let type_name = child
-                .attribute("type")
-                .or_else(|| child.attribute("primitiveType"))
-                .or_else(|| child.attribute("ref"));
+                .grammar_attr("type")
+                .or_else(|| child.grammar_attr("primitiveType"))
+                .or_else(|| child.grammar_attr("ref"));
             let since_val = opt_u16_attr(child, "sinceVersion", "sinceVersion")?.unwrap_or(0);
 
             // Cyclic composite: ref="SelfName".
-            if let Some(ref_name) = child.attribute("ref") {
+            if let Some(ref_name) = child.grammar_attr("ref") {
                 if ref_name == name {
                     return Err(Fault::invalid(
                         child,
@@ -492,11 +496,11 @@ pub(crate) fn parse_composite(
                 // through the registry) vs a direct encoding with inline attributes.
                 // A `ref` attribute always counts as indirect; a bare `type` attribute
                 // counts as indirect only when the name isn't a known primitive encoding.
-                let has_ref_attr = child.attribute("ref").is_some();
+                let has_ref_attr = child.grammar_attr("ref").is_some();
                 // Named types (typedef/enum/set/composite) always resolve by name;
                 // only bare primitiveType= members use parse_type_element directly.
                 let is_named_ref = has_ref_attr
-                    || (child.attribute("type").is_some() && !is_primitive_name(t_name));
+                    || (child.grammar_attr("type").is_some() && !is_primitive_name(t_name));
                 if !is_named_ref {
                     let mut encoding = parse_type_element(child, registry, warn_state)?;
                     // SBE var-data payload member: never contributes fixed composite
@@ -635,7 +639,7 @@ pub(crate) fn parse_enum(
         .and_then(|e| e.null_value);
 
     let mut enum_tokens = Vec::new();
-    let semantic_type = node.attribute("semanticType").map(str::to_string);
+    let semantic_type = node.grammar_attr("semanticType").map(str::to_string);
     enum_tokens.push(Token {
         id: None,
         name: name.clone(),
@@ -648,7 +652,7 @@ pub(crate) fn parse_enum(
             semantic_type,
             // Java EnumType precedence: the enum's own nullValue, else the
             // encodingType typedef's, else the primitive default (resolve).
-            null_value: match node.attribute("nullValue") {
+            null_value: match node.grammar_attr("nullValue") {
                 Some(s) => super::registry::try_parse_u64_val(s, Some(encoding_type))
                     .map_err(|e| Fault::invalid(node, "enum @nullValue", e))?,
                 None => None,

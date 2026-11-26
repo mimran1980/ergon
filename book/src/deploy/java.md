@@ -3,7 +3,7 @@
 `ergo-aeron-cluster` is only a client. The cluster (consensus module,
 clustered services, Archive) runs on Aeron's Java, as does an Archive beside
 a C media driver. This page: which Java, and the JVM and Aeron settings for
-latency, for Aeron 1.54.2 (the release ergon pins). Each setting comes from
+latency, for Aeron 1.54.3 (the release ergon pins). Each setting comes from
 Aeron's own scripts, benchmarks or wiki ([sources](#sources)); none has a
 latency A/B here.
 
@@ -13,18 +13,18 @@ Terms: [deployment glossary](overview.md#glossary).
 
 | Use | Java | Why |
 |---|---|---|
-| Run Archive and Cluster | **25**: Eclipse Temurin 25 (LTS) | The newest LTS in Aeron 1.54.2's CI (17, 21, 25); ergon's cluster harness runs on it in CI. `eclipse-temurin:25-jre` covers amd64 and arm64 (Graviton); Debian 13 ships `openjdk-25-jre-headless`. |
+| Run Archive and Cluster | **25**: Eclipse Temurin 25 (LTS) | The newest LTS in Aeron 1.54.3's CI (17, 21, 25); ergon's cluster harness runs on it in CI. `eclipse-temurin:25-jre` covers amd64 and arm64 (Graviton); Debian 13 ships `openjdk-25-jre-headless`. |
 | Oldest that works | 17 | Aeron compiles its classes with `--release 17`. |
 | Newest GA release, 27 | Runs, but not recommended | 27 is not an LTS release and is not in Aeron's test matrix. |
-| Build Aeron's jars from source | **JDK 25** (17 to 27 work) | CI builds them on 25. Aeron's Gradle (9.9.1) runs on 17 to 27. Any JDK makes Java 17 bytecode. Or skip Gradle: `aeron-all-1.54.2.jar` on Maven Central holds Archive, Cluster and the samples. |
+| Build Aeron's jars from source | **JDK 25** (17 to 27 work) | CI builds them on 25. Aeron's Gradle (9.9.2) runs on 17 to 27. Any JDK makes Java 17 bytecode. Or skip Gradle: `aeron-all-1.54.3.jar` on Maven Central holds Archive, Cluster and the samples. |
 
 The `eclipse-temurin:25-jre` image has neither `wget` nor `curl`. Fetch the
 jar with a checksummed `ADD`:
 
 ```dockerfile
 FROM eclipse-temurin:25-jre
-ADD --checksum=sha256:fa57de560fef9ff2187afbd41761465b3efed83a3e15b0caedaa45422a9eed19 --chmod=644 \
-    https://repo1.maven.org/maven2/io/aeron/aeron-all/1.54.2/aeron-all-1.54.2.jar /aeron-all.jar
+ADD --checksum=sha256:b801d0ef08aebddbeabd4363a05b83a1754fb6bacba186beb90403b295efacab --chmod=644 \
+    https://repo1.maven.org/maven2/io/aeron/aeron-all/1.54.3/aeron-all-1.54.3.jar /aeron-all.jar
 ```
 
 ## Ready-made settings
@@ -35,7 +35,7 @@ without a warning, every property is one Aeron's sources name (Aeron ignores
 a misspelt one), and a cluster node started with both serves a client.
 
 ```sh
-java @aeron.jvm -cp aeron-all-1.54.2.jar \
+java @aeron.jvm -cp aeron-all-1.54.3.jar \
     io.aeron.cluster.ClusteredMediaDriver low-latency.properties cluster.properties
 ```
 
@@ -182,14 +182,14 @@ just test-aeron-cluster-harness
 
 ## Sources
 
-- Aeron 1.54.2:
-  [`aeron-samples/scripts/java-common`](https://github.com/aeron-io/aeron/blob/1.54.2/aeron-samples/scripts/java-common),
+- Aeron 1.54.3:
+  [`aeron-samples/scripts/java-common`](https://github.com/aeron-io/aeron/blob/1.54.3/aeron-samples/scripts/java-common),
   the cluster scripts in
-  [`aeron-samples/scripts/cluster`](https://github.com/aeron-io/aeron/tree/1.54.2/aeron-samples/scripts/cluster),
-  [`low-latency.properties`](https://github.com/aeron-io/aeron/blob/1.54.2/aeron-driver/src/main/resources/low-latency.properties),
-  [`build.gradle`](https://github.com/aeron-io/aeron/blob/1.54.2/build.gradle)
+  [`aeron-samples/scripts/cluster`](https://github.com/aeron-io/aeron/tree/1.54.3/aeron-samples/scripts/cluster),
+  [`low-latency.properties`](https://github.com/aeron-io/aeron/blob/1.54.3/aeron-driver/src/main/resources/low-latency.properties),
+  [`build.gradle`](https://github.com/aeron-io/aeron/blob/1.54.3/build.gradle)
   and its CI matrix in
-  [`.github/workflows/ci.yml`](https://github.com/aeron-io/aeron/blob/1.54.2/.github/workflows/ci.yml).
+  [`.github/workflows/ci.yml`](https://github.com/aeron-io/aeron/blob/1.54.3/.github/workflows/ci.yml).
 - [aeron-io/benchmarks](https://github.com/aeron-io/benchmarks):
   `scripts/run-java` and `scripts/aeron/low-latency-*.properties`.
 - [Aeron wiki: Performance Testing](https://github.com/aeron-io/aeron/wiki/Performance-Testing).

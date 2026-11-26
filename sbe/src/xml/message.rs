@@ -4,6 +4,8 @@ use std::collections::HashSet;
 
 use roxmltree::Node;
 
+use super::attr::GrammarAttr;
+
 use crate::ir::{Encoding, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
@@ -43,7 +45,7 @@ pub(crate) fn parse_message(
             since_version,
             deprecated: message_deprecated,
             description: collect_description(node),
-            semantic_type: node.attribute("semanticType").map(str::to_string),
+            semantic_type: node.grammar_attr("semanticType").map(str::to_string),
             // Stash declared `blockLength` on the BeginMessage token so resolve can
             // honor schema padding (max(computed, declared)). Cleared/overwritten by
             // `resolve_message_offsets` with the final wire block length.
@@ -80,7 +82,7 @@ pub(crate) fn parse_message(
             || child.tag_name().name() == "group"
             || child.tag_name().name() == "data"
         {
-            if let Some(name_attr) = child.attribute("name") {
+            if let Some(name_attr) = child.grammar_attr("name") {
                 let child_name = name_attr.to_string();
                 validate_sbe_name(child, &child_name, "field/group/data @name")?;
                 if !seen_names.insert(child_name.clone()) {
@@ -91,7 +93,7 @@ pub(crate) fn parse_message(
                     ));
                 }
             }
-            if let Some(id_str) = child.attribute("id") {
+            if let Some(id_str) = child.grammar_attr("id") {
                 let child_id: u16 = id_str.parse().map_err(|_| {
                     Fault::invalid(
                         child,
@@ -107,7 +109,7 @@ pub(crate) fn parse_message(
                     ));
                 }
             }
-            if let Some(offset_str) = child.attribute("offset") {
+            if let Some(offset_str) = child.grammar_attr("offset") {
                 let offset: usize = offset_str.parse().map_err(|_| {
                     Fault::invalid(
                         child,
@@ -285,11 +287,11 @@ pub(crate) fn parse_message_child(
             let type_encoding = registry.encodings.get(&type_name);
             // Inherit epoch/timeUnit/deprecated from the referenced type when not
             // explicitly set on the field (Gaps 11, 12).
-            let explicit_epoch = node.attribute("epoch");
+            let explicit_epoch = node.grammar_attr("epoch");
             let epoch = explicit_epoch
                 .map(str::to_string)
                 .or_else(|| type_encoding.and_then(|e| e.epoch.clone()));
-            let explicit_time_unit = node.attribute("timeUnit");
+            let explicit_time_unit = node.grammar_attr("timeUnit");
             let time_unit = explicit_time_unit
                 .map(str::to_string)
                 .or_else(|| type_encoding.and_then(|e| e.time_unit.clone()));
@@ -298,7 +300,7 @@ pub(crate) fn parse_message_child(
                 type_encoding.and_then(|e| e.deprecated),
             );
             // Gap 1: presence inheritance from referenced types
-            let explicit_presence = node.attribute("presence");
+            let explicit_presence = node.grammar_attr("presence");
             let presence = if let Some(p) = explicit_presence {
                 parse_presence(node, p)?
             } else {
@@ -307,7 +309,7 @@ pub(crate) fn parse_message_child(
                     .map(|e| e.presence)
                     .unwrap_or(Presence::Required)
             };
-            if node.attribute("nullValue").is_some() && presence != Presence::Optional {
+            if node.grammar_attr("nullValue").is_some() && presence != Presence::Optional {
                 warn_once(
                     &format!(
                         "warning: nullValue specified on non-optional field '{field_name}' \
@@ -317,14 +319,14 @@ pub(crate) fn parse_message_child(
                     warn_state,
                 );
             }
-            let value_ref = node.attribute("valueRef");
+            let value_ref = node.grammar_attr("valueRef");
             if let Some(value_ref) = value_ref {
                 value_ref_enum(node, value_ref, registry)?;
             }
             let constant_value = if presence == Presence::Constant {
                 reject_unrepresentable_constant(node, &type_name, value_ref, registry)?;
                 let from_value_ref = value_ref;
-                let from_constant_value = node.attribute("constantValue");
+                let from_constant_value = node.grammar_attr("constantValue");
                 if from_value_ref.is_none() && from_constant_value.is_none() {
                     // The field may inherit constant value from the referenced type.
                     let type_is_constant = registry
@@ -366,7 +368,7 @@ pub(crate) fn parse_message_child(
             ) {
                 let mut inlined = resolved;
                 if let Some(first) = inlined.first_mut() {
-                    if let Some(offset_str) = node.attribute("offset") {
+                    if let Some(offset_str) = node.grammar_attr("offset") {
                         match offset_str.parse::<usize>() {
                             Ok(offset) => first.encoding.offset = Some(offset),
                             Err(_) => {
@@ -388,7 +390,7 @@ pub(crate) fn parse_message_child(
                     // Propagate semanticType from the field element if set
                     if first.encoding.semantic_type.is_none() {
                         first.encoding.semantic_type =
-                            node.attribute("semanticType").map(str::to_string);
+                            node.grammar_attr("semanticType").map(str::to_string);
                     }
                     // Field-level extension marks live on the BeginField wrapper only.
                     first.extensions = extension_content(node);
@@ -409,9 +411,9 @@ pub(crate) fn parse_message_child(
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             let group_deprecated = parse_deprecated_attr(node)?;
             let dimension_type = node
-                .attribute("dimensionType")
+                .grammar_attr("dimensionType")
                 .unwrap_or("groupSizeEncoding");
-            let group_block_length = match node.attribute("blockLength") {
+            let group_block_length = match node.grammar_attr("blockLength") {
                 Some(s) => match s.parse::<usize>() {
                     Ok(v) => Some(v),
                     Err(_) => {
@@ -463,9 +465,9 @@ pub(crate) fn parse_message_child(
             let id = u16_attr(node, "id", "data @id")?;
             let since_version = opt_u16_attr(node, "sinceVersion", "sinceVersion")?.unwrap_or(0);
             let data_deprecated = parse_deprecated_attr(node)?;
-            let type_name = node.attribute("type").unwrap_or("varDataEncoding");
+            let type_name = node.grammar_attr("type").unwrap_or("varDataEncoding");
             let data_presence = node
-                .attribute("presence")
+                .grammar_attr("presence")
                 .map(|value| parse_presence(node, value))
                 .transpose()?
                 .unwrap_or(Presence::Required);
@@ -491,7 +493,7 @@ pub(crate) fn parse_message_child(
                     // declared-text field gets no `*_as_str` accessor.
                     // `structured_ir` prefers this value and falls back to the
                     // composite member.
-                    character_encoding: node.attribute("characterEncoding").map(str::to_string),
+                    character_encoding: node.grammar_attr("characterEncoding").map(str::to_string),
                     ..Encoding::default()
                 },
                 span: None,

@@ -39,7 +39,7 @@ reads `SystemTime`, a wall clock that can go back (minstant-0.1.7
 ## Aeron's clocks
 
 Aeron keeps its own clocks (`aeron_clock.c:91-136` in the Aeron tree
-shipped with rusteron-client 0.3.0). The driver's agents read a cached
+shipped with rusteron-client 0.3.3). The driver's agents read a cached
 copy (`aeron_clock_cache_t`).
 
 | Aeron API | Linux source | returns |

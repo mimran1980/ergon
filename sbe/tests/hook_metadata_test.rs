@@ -497,3 +497,328 @@ fn hooks_expose_deprecated_flags() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// Schema for the decoder-context tests: two messages (so group types carry
+/// the message prefix), a nested group, a constant, a keyword field, a
+/// reserved-name field, optional and versioned fields, an array, an enum, a
+/// set, a composite, a conversion (`*_wire`), a domain type, and a
+/// composite named `quoteSchema` so the `{Name}Schema` marker must be renamed.
+const BLOCK_SCHEMA_XML: &str = r#"<messageSchema xmlns:x="urn:acme:ext" package="acme" id="7" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <composite name="varStringEncoding">
+      <type name="length" primitiveType="uint32"/>
+      <type name="varData" primitiveType="uint8" length="0"/>
+    </composite>
+    <enum name="Venue" encodingType="uint8">
+      <validValue name="Lse">1</validValue>
+      <validValue name="Xetra">2</validValue>
+    </enum>
+    <set name="Flags" encodingType="uint8">
+      <choice name="fast">0</choice>
+    </set>
+    <composite name="Pair">
+      <type name="lo" primitiveType="uint32"/>
+      <type name="hi" primitiveType="uint32"/>
+    </composite>
+    <composite name="quoteSchema">
+      <type name="z" primitiveType="uint8"/>
+    </composite>
+    <type name="id16" primitiveType="uint8" length="16"/>
+  </types>
+  <message name="Quote" id="1">
+    <field name="venue" id="1" type="Venue"/>
+    <field name="priceScale" id="2" type="int8"/>
+    <field name="price" id="3" type="int64" x:scaleBy="priceScale" x:wire="y"/>
+    <field name="amount" id="4" type="uint64" x:dom="y"/>
+    <field name="type" id="5" type="uint8"/>
+    <field name="wrap" id="6" type="uint8"/>
+    <field name="maybe" id="7" type="int32" presence="optional"/>
+    <field name="late" id="8" type="uint32" sinceVersion="1"/>
+    <field name="key" id="9" type="id16"/>
+    <field name="flags" id="10" type="Flags"/>
+    <field name="pair" id="11" type="Pair"/>
+    <field name="k" id="12" type="uint16" presence="constant" constantValue="7"/>
+    <group name="legs" id="20" dimensionType="groupSizeEncoding" x:unit="lots">
+      <field name="qtyScale" id="1" type="int8"/>
+      <field name="qty" id="2" type="int64" x:scaleBy="qtyScale"/>
+      <group name="fills" id="3" dimensionType="groupSizeEncoding">
+        <field name="px" id="1" type="int64" x:scaleBy="priceScale"/>
+      </group>
+    </group>
+    <data name="note" id="30" type="varStringEncoding"/>
+  </message>
+  <message name="Other" id="2">
+    <field name="n" id="1" type="uint8"/>
+    <group name="legs" id="2" dimensionType="groupSizeEncoding">
+      <field name="q" id="1" type="uint8"/>
+    </group>
+  </message>
+</messageSchema>"#;
+
+/// One decoder-side context, flattened for assertions.
+#[derive(Debug, Clone)]
+struct Block {
+    kind: &'static str,
+    name: String,
+    group_decoder: Option<String>,
+    schema_marker: Option<String>,
+    enclosing: Vec<(String, Vec<String>)>,
+    fields: Vec<ergo_sbe::FieldInfo>,
+    group_unit: Option<String>,
+}
+
+fn capture_blocks() -> Result<(Vec<Block>, String), Box<dyn std::error::Error>> {
+    let sink: Arc<Mutex<Vec<Block>>> = Arc::new(Mutex::new(Vec::new()));
+    let hook_sink = Arc::clone(&sink);
+    let config = GenerationConfig::new("blocks")
+        .with_conversion(ergo_sbe::ConversionSelector::extension_attr("wire"))
+        .with_manual_domain_type(ergo_sbe::ConversionSelector::extension_attr("dom"), "u128")
+        .with_hook(move |ctx: &ItemContext| {
+            let block = match ctx {
+                ItemContext::MessageDecoder {
+                    name,
+                    fields,
+                    schema_marker,
+                    ..
+                } => Some(Block {
+                    kind: "message",
+                    name: name.clone(),
+                    group_decoder: None,
+                    schema_marker: Some(schema_marker.clone()),
+                    enclosing: vec![],
+                    fields: fields.clone(),
+                    group_unit: None,
+                }),
+                ItemContext::GroupEntryDecoder {
+                    name,
+                    group_decoder,
+                    fields,
+                    enclosing,
+                    extensions,
+                    ..
+                } => Some(Block {
+                    kind: "entry",
+                    name: name.clone(),
+                    group_decoder: Some(group_decoder.clone()),
+                    schema_marker: None,
+                    enclosing: enclosing
+                        .iter()
+                        .map(|b| {
+                            (
+                                b.decoder.clone(),
+                                b.fields.iter().map(|f| f.schema_name.clone()).collect(),
+                            )
+                        })
+                        .collect(),
+                    fields: fields.clone(),
+                    group_unit: extensions.attr("unit").map(str::to_string),
+                }),
+                _ => None,
+            };
+            if let Some(b) = block {
+                hook_sink.lock().expect("lock").push(b);
+            }
+            vec![]
+        });
+    let schema = Schema::from_ir(parse(SchemaSource::xml(BLOCK_SCHEMA_XML))?);
+    let modules = Generator::new(config).generate(&schema)?;
+    let src = modules.modules().next().ok_or("one module")?.source.clone();
+    let out = sink.lock().expect("lock").clone();
+    Ok((out, src))
+}
+
+fn field<'a>(b: &'a Block, schema_name: &str) -> &'a ergo_sbe::FieldInfo {
+    let found = b.fields.iter().find(|f| f.schema_name == schema_name);
+    assert!(
+        found.is_some(),
+        "{}: no field {schema_name}: {:?}",
+        b.name,
+        b.fields
+    );
+    found.expect("asserted above")
+}
+
+fn compact(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// G1, G5, the multi-message bug: a hook fires once per group entry, nested
+/// included, depth-first in schema order straight after the message decoder;
+/// entry and group decoder names are the generated ones (message prefix and
+/// parent-group prefix applied); `enclosing` is outermost first; the
+/// message's group row names the prefixed group decoder; `schema_marker` is
+/// the renamed `{Name}Schema` type.
+#[test]
+fn group_entry_contexts_name_the_generated_types() -> Result<(), Box<dyn std::error::Error>> {
+    let (blocks, src) = capture_blocks()?;
+    let order: Vec<(&str, &str)> = blocks.iter().map(|b| (b.kind, b.name.as_str())).collect();
+    assert_eq!(
+        order,
+        vec![
+            ("message", "QuoteDecoder"),
+            ("entry", "QuoteLegsEntryDecoder"),
+            ("entry", "QuoteLegsFillsEntryDecoder"),
+            ("message", "OtherDecoder"),
+            ("entry", "OtherLegsEntryDecoder"),
+        ]
+    );
+    for b in blocks.iter().filter(|b| b.kind == "entry") {
+        assert!(
+            src.contains(&format!("pub struct {}<", b.name)),
+            "entry type {} must exist in the generated source",
+            b.name
+        );
+        let g = b.group_decoder.as_deref().ok_or("group decoder")?;
+        assert!(
+            src.contains(&format!("pub struct {g}<")),
+            "group decoder {g} must exist in the generated source"
+        );
+    }
+    let fills = blocks
+        .iter()
+        .find(|b| b.name == "QuoteLegsFillsEntryDecoder")
+        .ok_or("fills")?;
+    assert_eq!(
+        fills.group_decoder.as_deref(),
+        Some("QuoteLegsFillsDecoder")
+    );
+    let enclosing: Vec<&str> = fills.enclosing.iter().map(|(d, _)| d.as_str()).collect();
+    assert_eq!(enclosing, vec!["QuoteDecoder", "QuoteLegsEntryDecoder"]);
+    assert!(fills.enclosing[0].1.contains(&"priceScale".to_string()));
+    let legs = blocks
+        .iter()
+        .find(|b| b.name == "QuoteLegsEntryDecoder")
+        .ok_or("legs")?;
+    assert_eq!(legs.group_unit.as_deref(), Some("lots"), "marks on <group>");
+
+    let quote = &blocks[0];
+    let marker = quote.schema_marker.as_deref().ok_or("marker")?;
+    assert_ne!(marker, "QuoteSchema", "the composite took the plain name");
+    assert!(
+        src.contains(&format!("pub struct {marker}")),
+        "marker {marker} must be the generated type"
+    );
+    let legs_row = field(quote, "legs");
+    assert_eq!(legs_row.kind(), ergo_sbe::FieldKind::Group);
+    assert_eq!(
+        legs_row.rust_type, "QuoteLegsDecoder",
+        "multi-message prefix"
+    );
+    Ok(())
+}
+
+/// G3, G4: `schema_name` keeps the schema spelling; constants are listed
+/// with presence "constant"; fixed fields come first, then groups, then data.
+#[test]
+fn decoder_contexts_list_constants_and_schema_names() -> Result<(), Box<dyn std::error::Error>> {
+    let (blocks, _) = capture_blocks()?;
+    let quote = &blocks[0];
+    let ps = field(quote, "priceScale");
+    assert_eq!(ps.name, "price_scale");
+    let k = field(quote, "k");
+    assert_eq!(k.presence, "constant");
+    let kinds: Vec<ergo_sbe::FieldKind> =
+        quote.fields.iter().map(ergo_sbe::FieldInfo::kind).collect();
+    let first_group = kinds
+        .iter()
+        .position(|k| *k != ergo_sbe::FieldKind::Fixed)
+        .ok_or("tail")?;
+    assert!(
+        kinds[first_group..]
+            .iter()
+            .all(|k| *k != ergo_sbe::FieldKind::Fixed)
+    );
+    assert_eq!(field(quote, "note").kind(), ergo_sbe::FieldKind::Data);
+    Ok(())
+}
+
+/// G2: `accessor` / `accessor_type` are the generated decoder method and its
+/// exact return type for every fixed-field kind, at message and entry level.
+#[test]
+fn decoder_contexts_name_accessors_and_their_types() -> Result<(), Box<dyn std::error::Error>> {
+    let (blocks, _) = capture_blocks()?;
+    let quote = &blocks[0];
+    let cases: &[(&str, &str, &str)] = &[
+        ("priceScale", "price_scale", "i8"),
+        ("price", "price_wire", "i64"),
+        (
+            "amount",
+            "amount",
+            "Result<u128, <u128 as TryFromSbe<u64>>::Error>",
+        ),
+        ("type", "type_", "u8"),
+        ("wrap", "wrap_field", "u8"),
+        ("maybe", "maybe", "Option<i32>"),
+        ("late", "late", "Option<u32>"),
+        ("key", "key", "[u8; 16]"),
+        ("k", "k", "u16"),
+    ];
+    for (schema_name, accessor, ty) in cases {
+        let f = field(quote, schema_name);
+        assert_eq!(f.accessor.as_deref(), Some(*accessor), "{schema_name}");
+        assert_eq!(
+            f.accessor_type.as_deref().map(compact),
+            Some(compact(ty)),
+            "{schema_name}"
+        );
+    }
+    for schema_name in ["venue", "flags", "pair"] {
+        let f = field(quote, schema_name);
+        assert!(
+            f.accessor.is_some() && f.accessor_type.is_some(),
+            "{schema_name}: {f:?}"
+        );
+    }
+    let legs = field(quote, "legs");
+    assert_eq!(legs.accessor.as_deref(), Some("legs"));
+    assert!(
+        legs.accessor_type
+            .as_deref()
+            .is_some_and(|t| compact(t).contains("QuoteLegsDecoder<")),
+        "{legs:?}"
+    );
+    let entry = &blocks[1];
+    let qty = field(entry, "qty");
+    assert_eq!(qty.accessor.as_deref(), Some("qty"));
+    assert_eq!(qty.accessor_type.as_deref(), Some("i64"));
+    Ok(())
+}
+
+/// Encoder and composite contexts have no decoder accessor.
+#[test]
+fn non_decoder_contexts_have_no_accessor() -> Result<(), Box<dyn std::error::Error>> {
+    let seen: Arc<Mutex<Vec<(String, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let config = GenerationConfig::new("noacc").with_hook(move |ctx: &ItemContext| {
+        let any = |fields: &[ergo_sbe::FieldInfo]| {
+            fields
+                .iter()
+                .any(|f| f.accessor.is_some() || f.accessor_type.is_some())
+        };
+        let row = match ctx {
+            ItemContext::MessageEncoder { name, fields, .. }
+            | ItemContext::Composite { name, fields, .. } => Some((name.clone(), any(fields))),
+            _ => None,
+        };
+        if let Some(r) = row {
+            sink.lock().expect("lock").push(r);
+        }
+        vec![]
+    });
+    let schema = Schema::from_ir(parse(SchemaSource::xml(BLOCK_SCHEMA_XML))?);
+    let _ = Generator::new(config).generate(&schema)?;
+    let rows = seen.lock().expect("lock").clone();
+    assert_ne!(rows.len(), 0, "encoder and composite contexts fire");
+    assert!(rows.iter().all(|(_, any)| !any), "{rows:?}");
+    Ok(())
+}

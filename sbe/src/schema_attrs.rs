@@ -87,3 +87,97 @@ pub const GROUP: &[&str] = &[
     "sinceVersion",
     "deprecated",
 ];
+
+/// Attributes of the type-level elements (`<type>`, `<composite>`, `<enum>`,
+/// `<set>`, `<validValue>`, `<choice>`, `<ref>`) not listed above.
+const TYPE_LEVEL: &[&str] = &[
+    "primitiveType",
+    "length",
+    "characterEncoding",
+    "nullValue",
+    "minValue",
+    "maxValue",
+    "encodingType",
+    "offset",
+    "valueRef",
+    "presence",
+    "epoch",
+    "timeUnit",
+    "type",
+];
+
+/// Whether `name` is an attribute the SBE grammar defines on any element.
+/// An unprefixed attribute that is not is an extension mark.
+pub fn is_grammar_attr(name: &str) -> bool {
+    [MESSAGE_SCHEMA, MESSAGE, FIELD_LIKE, ENUM, GROUP, TYPE_LEVEL]
+        .iter()
+        .any(|list| list.contains(&name))
+}
+
+/// The grammar attribute `name` is a likely misspelling of: within one edit
+/// per four characters (at least one), case-insensitive. Names shorter
+/// than four characters are never matched, so short custom marks pass.
+pub fn near_grammar_attr(name: &str) -> Option<&'static str> {
+    if name.len() < 4 {
+        return None;
+    }
+    let lower = name.to_ascii_lowercase();
+    [MESSAGE_SCHEMA, MESSAGE, FIELD_LIKE, ENUM, GROUP, TYPE_LEVEL]
+        .iter()
+        .flat_map(|list| list.iter())
+        .copied()
+        .filter(|g| g.len() >= 4)
+        .find(|g| edit_distance(&lower, &g.to_ascii_lowercase()) <= (g.len() / 4).max(1))
+}
+
+/// Optimal string alignment distance: insertions, deletions, substitutions
+/// and adjacent transpositions each cost one.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut best = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = best;
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_grammar_attr, near_grammar_attr};
+
+    #[test]
+    fn typos_are_near_grammar_names_and_custom_marks_are_not() {
+        assert_eq!(near_grammar_attr("presense"), Some("presence"));
+        assert_eq!(near_grammar_attr("semanticTpye"), Some("semanticType"));
+        assert_eq!(near_grammar_attr("primitivType"), Some("primitiveType"));
+        assert_eq!(near_grammar_attr("byteOrdre"), Some("byteOrder"));
+        for custom in [
+            "scale",
+            "jsonValue",
+            "unit",
+            "surprise",
+            "mic",
+            "scaleBy",
+            "bogusAttr",
+        ] {
+            assert_eq!(near_grammar_attr(custom), None, "{custom}");
+            assert!(!is_grammar_attr(custom), "{custom}");
+        }
+        assert!(is_grammar_attr("dimensionType"));
+    }
+}

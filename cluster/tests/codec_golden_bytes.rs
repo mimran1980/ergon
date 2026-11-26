@@ -6,9 +6,10 @@
 //! re-proven solely via **ergon** production encoders (`session`).
 //! Protocol goldens no longer require sbe-tool at runtime.
 //!
-//! Schema pin: vendored `cluster/schemas` (Aeron 1.54.2), schema id 111 v18. Every
-//! constant equals the Java 1.54.2 encoders' output (aeron-all-1.54.2.jar) for the
-//! same inputs; body bytes are unchanged since the 2026-07-18 capture.
+//! Schema pin: vendored `cluster/schemas` (Aeron 1.54.3, unchanged since 1.54.2),
+//! schema id 111 v18. Every constant equals the Java 1.54.2 encoders' output
+//! (aeron-all-1.54.2.jar) for the same inputs; body bytes are unchanged since the
+//! 2026-07-18 capture.
 
 #![allow(unused_must_use)]
 

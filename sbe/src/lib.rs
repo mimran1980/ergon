@@ -198,7 +198,26 @@
 //! which is embedded as [`SBE_XSD`]; [`SchemaSource::with_xsd_validation`]
 //! runs the same check inside [`parse`]. It is opt-in and checks shape only;
 //! it is not a full W3C validator. [`parse`] itself always rejects malformed
-//! XML, a bad root, unexpected elements and unknown attributes.
+//! XML, a bad root and unexpected elements. On `<messageSchema>`,
+//! `<message>`, `<field>`, `<group>` and `<data>` it also rejects a grammar
+//! attribute the element does not take and a near-miss typo of one
+//! (`presense`). Any other unknown attribute, prefixed or not, is captured
+//! as an extension mark. On `<types>`, `<type>`, `<composite>`, `<enum>`,
+//! `<set>`, `<validValue>`, `<choice>` and `<ref>` neither is rejected: a
+//! typo there is accepted (as a mark, where the element keeps marks), and so
+//! is a grammar attribute the element does not take. Grammar attributes are
+//! read only without a prefix, as sbe-tool reads them: `x:offset` or
+//! `x:blockLength` is a mark and never changes layout or code.
+//!
+//! The official XSD allows no attribute it does not declare, prefixed or
+//! not, so a schema carrying any mark fails it; sbe-tool checks it only when
+//! run with `-Dsbe.validation.xsd`. This crate's check lets namespaced
+//! attributes through and rejects unprefixed ones outside its allow-lists,
+//! which also admit sbe-tool extensions (`unit` on a top-level `<type>`,
+//! `jsonValue` on `<validValue>` and `<choice>`). It does not check the
+//! attributes of composite members, nor of anything inside a `<group>` (its
+//! fields, data and nested groups); a message's own fields, data and groups
+//! are checked.
 //!
 //! # Design
 //!
@@ -337,9 +356,9 @@ pub mod xsd;
 pub use build::{BuildError, generate};
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{
-    CompositeMapping, ConversionSelector, DomainImpl, DomainVarData, EnumMapping, EnumVariantInfo,
-    FieldInfo, FieldKind, GenerationConfig, GenerationProfile, ItemContext, ItemKind,
-    SetChoiceInfo,
+    BlockInfo, CompositeMapping, ConversionSelector, DomainImpl, DomainVarData, EnumMapping,
+    EnumVariantInfo, FieldInfo, FieldKind, GenerationConfig, GenerationProfile, ItemContext,
+    ItemKind, SetChoiceInfo,
 };
 pub use ir::{
     ByteOrder, Encoding, ExtensionAttr, ExtensionElement, Extensions, Ir, Presence, PrimitiveType,

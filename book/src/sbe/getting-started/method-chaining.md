@@ -29,7 +29,10 @@ that complete view.
 // The `.unwrap()` calls are a code smell; the fallible chain should use `?`.
 let enc = CarEncoder::wrap_and_apply_header(&mut buf, 0).fixed(&fields);
 let enc = enc.fuel_figures(2, |g| { ... }).unwrap();
+let enc = enc.performance_figures(0, |_| Ok(())).unwrap();
 let enc = enc.manufacturer_as_str("Honda").unwrap();
+let enc = enc.model_as_str("Civic VTi").unwrap();
+let enc = enc.activation_code_as_str("abcdef").unwrap();
 let len = enc.encoded_length_with_header();
 ```
 

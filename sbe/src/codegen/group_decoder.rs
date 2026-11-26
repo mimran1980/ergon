@@ -91,20 +91,20 @@ pub(crate) fn generate_group_decoder(
 
     let fixed_extent_validation = if g.has_fixed_stride() {
         quote::quote! {
-            let entries_length = count.checked_mul(block_length).ok_or(
-                sbe_rt::DecodeError::BufferTooShort {
-                    field: #g_name_lit,
-                    needed: usize::MAX,
-                    available: buf.len().saturating_sub(entries_start),
-                },
-            )?;
-            if entries_length > buf.len().saturating_sub(entries_start) {
-                sbe_rt::cold();
-                return Err(sbe_rt::DecodeError::BufferTooShort {
-                    field: #g_name_lit,
-                    needed: entries_length,
-                    available: buf.len().saturating_sub(entries_start),
-                });
+            // The dimension-header check above proves
+            // `entries_start <= buf.len()`, so the plain subtraction cannot
+            // wrap and equals the saturating form.
+            let available = buf.len() - entries_start;
+            match count.checked_mul(block_length) {
+                Some(entries_length) if entries_length <= available => {}
+                entries_length => {
+                    sbe_rt::cold();
+                    return Err(sbe_rt::DecodeError::BufferTooShort {
+                        field: #g_name_lit,
+                        needed: entries_length.unwrap_or(usize::MAX),
+                        available,
+                    });
+                }
             }
         }
     } else {
@@ -233,7 +233,7 @@ pub(crate) fn generate_group_decoder(
                 parent_block_length: usize,
             ) -> Result<#decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                 // Trust boundary: always validate dimension header fits in buffer
-                if #dim_size_lit > buf.len().saturating_sub(offset) {
+                if offset.checked_add(#dim_size_lit).is_none_or(|end| end > buf.len()) {
                     sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
@@ -1782,12 +1782,6 @@ pub(crate) fn generate_group_decoder(
                     });
                 }
                 Ok(offset + block_len)
-            }
-            /// [`Self::skip`] for a parent's tail walk; a fixed entry has no
-            /// var-data, so `CHECK_MAX` changes nothing.
-            #[inline]
-            pub(crate) const fn skip_with<const CHECK_MAX: bool>(buf: &'a [u8], offset: usize, block_len: usize, acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
-                Self::skip(buf, offset, block_len, acting_version)
             }
         });
     } else {

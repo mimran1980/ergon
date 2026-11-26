@@ -2,6 +2,101 @@
 
 ## [Unreleased]
 
+## [0.1.41] — 2026-11-26
+
+### Added
+
+- `ergo-sbe` hooks run once per repeating-group entry, nested groups included:
+  `ItemContext::GroupEntryDecoder` (and `ItemKind::GroupEntryDecoder`) gives the
+  generated entry and group decoder names, the entry's fields and the enclosing blocks'
+  fields (`BlockInfo`).
+- `ergo-sbe` `FieldInfo::accessor` and `accessor_type` name the decoder method that
+  returns a field and its exact return type, read from the generated decoder.
+- `ergo-sbe` `ItemContext::MessageDecoder.schema_marker` names the `{Name}Schema` type,
+  so hooks can add consts to it.
+- `ergo-sbe` `GenerationConfig::with_try_hook`: a hook that can fail generation with
+  `GenerateError::Hook`, which names the item.
+- `ergo-sbe` `GenerationConfig::with_extension_consts(true)` emits every extension
+  attribute and foreign child element as a `&'static str` const next to the field,
+  group, data, message, enum value, set choice or composite member it is on, nested
+  foreign elements included. Off by default; a mark that spells a const name already
+  on its type (another mark's or a generated one such as `TEMPLATE_ID`), an `<enum>`
+  mark that spells one of its variants, and a mark whose name has no ASCII letter or
+  digit fail generation.
+- The exchange sample renders a venue's SBE market-data responses as the JSON its REST
+  API returns, generated from the schema's marks through hooks only, and checks it
+  against recorded responses.
+
+### Changed
+
+- Requires rusteron 0.3.3 (Aeron 1.54.3); the samples pin `=0.3.3`.
+- `ergo-sbe` `GenerateError::NameClash`: two generated or hook consts on one type that
+  share a name (a field named `template` gives `TEMPLATE_ID`, which every message has)
+  fail generation, naming the const, instead of emitting a module that does not compile,
+  so a hook that emits such a repeat now fails at generation. The check reads the type's
+  inherent impls: a repeat under different `cfg`s or on different instantiations
+  (`impl G<u8>`, `impl G<u16>`, `impl<T> H<T, u8>`, `impl<T> H<T, u16>`) generates.
+  Repeats it cannot see (a type alias, `cfg`s that can both hold such as `cfg(test)`
+  and `cfg(all(test))`) are left to rustc.
+- `ergo-sbe` removes `GenerationConfig::with_variant_labels`, `with_exponent_links`
+  and `with_field_extension_defaults`, and `GenerateError::ExtensionReference`. Each
+  fixed one annotation convention in the library. The same output is now a short hook
+  over any attribute, or `with_extension_consts`; the book's Extension XML page has
+  copyable example hooks for labels and field pairs.
+- `ergo-sbe` enums always render their variant name from `as_str` and `Display`; a
+  label from a schema mark is a separate method a hook adds.
+- `ergo-sbe` `ItemContext::MessageDecoder.fields` now lists constant fields
+  (`presence == "constant"`), `ItemContext` gains the `GroupEntryDecoder` variant and
+  `FieldInfo` gains `schema_name`, `accessor` and `accessor_type`. Hooks that build
+  `FieldInfo` literals, match `ItemContext` or `ItemKind` exhaustively, or emit code per
+  decoder field need updating.
+- `ergo-sbe` `parse` captures an unprefixed attribute the SBE grammar does not define
+  (`scale="2"`) as an extension mark instead of rejecting it. On `<messageSchema>`,
+  `<message>`, `<field>`, `<group>` and `<data>`, a grammar attribute on the wrong
+  element and a near-miss typo of one (`presense`) are still rejected; the type-level
+  elements reject neither, as before. `validate_against_sbe_xsd` rejects unprefixed
+  marks outside its allow-lists and accepts prefixed ones; it does not check
+  composite members or anything inside a `<group>`, and allows `unit` only on a
+  top-level `<type>`. The official SBE XSD rejects both kinds of mark, and sbe-tool
+  checks it only with `-Dsbe.validation.xsd`.
+
+### Fixed
+
+- `ergo-sbe` `parse` reads grammar attributes only without a prefix, as sbe-tool does.
+  A prefixed grammar name (`x:offset`, `x:blockLength`, `x:presence`,
+  `x:sinceVersion`) is now a mark and no longer changes the layout or the generated
+  code; before, it could move a field or set a block length. `with_xsd_validation` no
+  longer takes `x:id` for the root's `id`.
+- `ergo-sbe` the group `FieldInfo::rust_type` a message hook sees now names the
+  generated, message-prefixed decoder in multi-message schemas.
+- `ergo-sbe` generated encoders: the entry-level nested-group methods (`x()`
+  and `x_unknown_size()` on an entry encoder) built the group from a
+  raw-pointer copy of the entry buffer, so safe code could swap the group out
+  inside the closure and write through it while the entry still held the same
+  buffer: two live `&mut` to one buffer, flagged by Miri. The group is now a
+  plain reborrow and the closure takes it for a lifetime of its own
+  (`for<'b> FnOnce(&mut XEncoder<'b>)`), so it cannot leave the closure. Code
+  that only writes entries inside the closure compiles unchanged.
+- `ergo-sbe` generated encoders: a dynamic group's `add` accepted an
+  entry-complete proof made in another group's `add` closure, so the real entry
+  was dropped unwritten and the cursor came from the other group, giving a wrong
+  frame that `verify` could pass. The closure now takes the entry for a lifetime
+  of its own (`for<'b> FnOnce(XEntryEncoder<'b>) -> Result<XEntryComplete<'b>, _>`),
+  so a proof cannot leave the closure that made it. Fixed-stride `add` and
+  `add_checked` now advance exactly one entry block, whatever entry or proof the
+  closure swapped in or returned.
+- `ergo-sbe` generated encoders: a group-writing closure (message or entry
+  level) could assign a group from the public `wrap` in place of the one it was
+  handed, so the method carried on with that group's cursor and count: a wrong
+  frame (one `send` committed with unwritten bytes), a misplaced count
+  back-patch, or a panic. Group encoders now take a context parameter
+  (`XEncoder<'a, C = sbe_rt::Attached>`): closures get an attached group that
+  only generated code builds, and `wrap` returns `XEncoder<'a, sbe_rt::Detached>`,
+  which cannot be assigned in. Message-level closures also take the group for a
+  lifetime of their own (`for<'b> FnOnce(&mut XEncoder<'b>)`), so two encodes in
+  flight cannot trade groups. Code that only writes entries inside the closure,
+  or names the group as `&mut XEncoder<'_>`, compiles unchanged.
+
 ## [0.1.40] — 2026-11-22
 
 The `ergon-shared-cpus` image and chart are published as 0.1.5.

@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use roxmltree::Node;
 
+use super::attr::GrammarAttr;
+
 use crate::ir::{Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 
 pub(crate) struct TypeRegistry {
@@ -294,8 +296,8 @@ pub(crate) fn estimate_composite_member_size(
     registry: &TypeRegistry,
 ) -> Option<usize> {
     if let Some(prim) = node
-        .attribute("primitiveType")
-        .or_else(|| node.attribute("type"))
+        .grammar_attr("primitiveType")
+        .or_else(|| node.grammar_attr("type"))
         .and_then(|s| match s {
             "char" => Some(PrimitiveType::Char),
             "int8" => Some(PrimitiveType::Int8),
@@ -322,12 +324,14 @@ pub(crate) fn estimate_composite_member_size(
         })
     {
         let len = node
-            .attribute("length")
+            .grammar_attr("length")
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(1);
         return Some(prim.size() * len);
     }
-    let ref_name = node.attribute("ref").or_else(|| node.attribute("type"))?;
+    let ref_name = node
+        .grammar_attr("ref")
+        .or_else(|| node.grammar_attr("type"))?;
     if let Some(enc) = registry.encodings.get(ref_name) {
         return Some(enc.primitive_type?.size() * enc.length.unwrap_or(1));
     }

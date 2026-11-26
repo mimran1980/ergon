@@ -7,6 +7,23 @@ use crate::ir::{ByteOrder, Encoding, Presence, PrimitiveType, Signal, Token};
 use super::error::{Fault, FaultKind};
 use super::registry::TypeRegistry;
 
+/// Grammar attribute reads. Only an attribute with no namespace is grammar,
+/// as in sbe-tool (`getNamedItemNS(null, name)`): roxmltree's
+/// `Node::attribute("offset")` matches the local name in any namespace, so
+/// it would read the mark `x:offset` as the element's offset.
+pub(crate) trait GrammarAttr<'a> {
+    /// The value of the unprefixed attribute `name`, if present.
+    fn grammar_attr(&self, name: &str) -> Option<&'a str>;
+}
+
+impl<'a> GrammarAttr<'a> for Node<'a, '_> {
+    fn grammar_attr(&self, name: &str) -> Option<&'a str> {
+        self.attributes()
+            .find(|a| a.namespace().is_none() && a.name() == name)
+            .map(|a| a.value())
+    }
+}
+
 pub(crate) fn is_primitive_name(s: &str) -> bool {
     matches!(
         s,
@@ -68,7 +85,7 @@ pub(crate) fn element_children<'a, 'input>(
 pub(crate) fn collect_description(node: Node<'_, '_>) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
-    if let Some(d) = node.attribute("description") {
+    if let Some(d) = node.grammar_attr("description") {
         parts.push(d.trim().to_string());
     }
 
@@ -131,17 +148,20 @@ pub(crate) fn preceding_xml_comments(node: Node<'_, '_>) -> Vec<String> {
 }
 
 pub(crate) fn string_attr(node: Node<'_, '_>, name: &str, what: &str) -> Result<String, Fault> {
-    node.attribute(name)
+    node.grammar_attr(name)
         .map(str::to_string)
         .ok_or_else(|| Fault::missing(node, what))
 }
 
-/// Reject attributes the SBE grammar does not define on `element`.
+/// Reject attribute typos on `element`: a grammar attribute the element does
+/// not take, or a near-miss of a grammar name (`presense`, `semanticTpye`,
+/// `primitivType`), whose intent would otherwise be dropped silently.
+/// Called only for `<messageSchema>`, `<message>`, `<field>`, `<group>` and
+/// `<data>`; type-level elements are not checked.
 ///
-/// An unknown attribute is almost always an authoring typo (`presense`,
-/// `semanticTpye`, `primitivType`); accepting it silently drops the intent.
-/// Namespaced (`xsi:…`, `xi:…`) and `xmlns*` attributes are outside the SBE
-/// grammar and pass through untouched.
+/// Any other unprefixed attribute is an extension mark and is captured (see
+/// `ext::extension_attrs`). Namespaced (`xsi:…`, `xi:…`, `x:…`) and `xmlns*`
+/// attributes are outside the SBE grammar and pass through untouched.
 pub(crate) fn reject_unknown_attrs(
     node: Node<'_, '_>,
     element: &str,
@@ -157,10 +177,20 @@ pub(crate) fn reject_unknown_attrs(
         if name.starts_with("xmlns") {
             continue;
         }
-        if !allowed.contains(&name) {
+        if allowed.contains(&name) {
+            continue;
+        }
+        if crate::schema_attrs::is_grammar_attr(name) {
             return Err(Fault::invalid(
                 node,
-                format!("<{element}> attribute (unknown)"),
+                format!("<{element}> attribute (not allowed on this element)"),
+                name,
+            ));
+        }
+        if let Some(meant) = crate::schema_attrs::near_grammar_attr(name) {
+            return Err(Fault::invalid(
+                node,
+                format!("<{element}> attribute (unknown; did you mean `{meant}`?)"),
                 name,
             ));
         }
@@ -207,7 +237,7 @@ pub(crate) fn reject_duplicate_type_name(
 }
 
 pub(crate) fn u16_attr(node: Node<'_, '_>, name: &str, what: &str) -> Result<u16, Fault> {
-    node.attribute(name)
+    node.grammar_attr(name)
         .ok_or_else(|| Fault::missing(node, what))
         .and_then(|s| s.parse::<u16>().map_err(|_| Fault::invalid(node, what, s)))
 }
@@ -217,7 +247,7 @@ pub(crate) fn opt_u16_attr(
     name: &str,
     what: &str,
 ) -> Result<Option<u16>, Fault> {
-    node.attribute(name)
+    node.grammar_attr(name)
         .map(|s| s.parse::<u16>().map_err(|_| Fault::invalid(node, what, s)))
         .transpose()
 }
@@ -227,7 +257,7 @@ pub(crate) fn opt_usize_attr(
     name: &str,
     what: &str,
 ) -> Result<Option<usize>, Fault> {
-    node.attribute(name)
+    node.grammar_attr(name)
         .map(|s| {
             s.parse::<usize>()
                 .map_err(|_| Fault::invalid(node, what, s))

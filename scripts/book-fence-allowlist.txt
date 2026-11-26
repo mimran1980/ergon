@@ -10,7 +10,7 @@ book/src/cluster/session-builder.md:67 — deliberate; see page context
 book/src/samples/build-patterns.md:33 — deliberate; see page context
 book/src/samples/exchange-example.md:20 — deliberate; see page context
 book/src/samples/exchange-example.md:53 — deliberate; sample test snippet naming generated types that exist only in the sample crate
-book/src/samples/exchange-example.md:69 — deliberate; sample build.rs knob wiring naming the sample's own module-level bindings
+book/src/samples/exchange-example.md:69 — deliberate; {{#include}} of the sample build.rs extension wiring, which names the sample's own ext_recipes module and json_hook; compile-checked by the sample build
 book/src/samples/l3-book.md:18 — deliberate; see page context
 book/src/samples/l3-book.md:40 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
 book/src/samples/l3-book.md:51 — deliberate; {{#include}} of the l3-book sample's own source, which names generated L3Book* types absent from the book harness. Compile-checked where it lives: samples/l3-book's tests build every included function.
@@ -38,9 +38,13 @@ book/src/sbe/configuration/feature-integrations.md:87 — deliberate; see page c
 book/src/sbe/configuration/feature-integrations.md:101 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:113 — deliberate; see page context
 book/src/sbe/configuration/feature-integrations.md:132 — deliberate; see page context
-book/src/sbe/configuration/generation-config.md:47 — deliberate; names generated CarDecoder types that do not exist in the book harness
-book/src/sbe/configuration/hooks.md:21 — deliberate; see page context
-book/src/sbe/configuration/hooks.md:124 — deliberate; build.rs extension hook needs quote/proc-macro2, which the book fence harness does not provide
+book/src/sbe/configuration/extension-xml.md:161 — deliberate; {{#include}} of sbe/tests/common/ext_recipes.rs (a build.rs hook needing quote/proc-macro2, absent from the book harness); compiled by ergo-sbe's extension_recipes_test
+book/src/sbe/configuration/extension-xml.md:172 — deliberate; {{#include}} of sbe/tests/common/ext_recipes.rs (a build.rs hook needing quote/proc-macro2, absent from the book harness); compiled by ergo-sbe's extension_recipes_test
+book/src/sbe/configuration/extension-xml.md:178 — deliberate; {{#include}} of sbe/tests/common/ext_recipes.rs (a build.rs hook needing quote/proc-macro2, absent from the book harness); compiled by ergo-sbe's extension_recipes_test
+book/src/sbe/configuration/extension-xml.md:185 — deliberate; build.rs registration naming the ext_recipes module, which the book harness does not include
+book/src/sbe/configuration/generation-config.md:46 — deliberate; names generated CarDecoder types that do not exist in the book harness
+book/src/sbe/configuration/hooks.md:22 — deliberate; see page context
+book/src/sbe/configuration/hooks.md:172 — deliberate; build.rs extension hook needs quote/proc-macro2, which the book fence harness does not provide
 book/src/sbe/configuration.md:19 — deliberate; see page context
 book/src/sbe/core-concepts/composite-layout.md:19 — deliberate; see page context
 book/src/sbe/core-concepts/wire-order-stages.md:24 — deliberate; see page context

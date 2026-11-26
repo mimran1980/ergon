@@ -61,8 +61,9 @@ pub(crate) mod decoder_display;
 pub(crate) mod domain_cluster;
 pub(crate) use domain_cluster::*;
 pub(crate) mod encoded_length;
-pub(crate) mod extension_helpers;
+mod extension_consts;
 pub(crate) mod field_type;
+mod hook_context;
 pub(crate) mod message_header_template;
 pub(crate) mod nullification;
 // `runtime`, `group_decoder` and `message_decoder` still hold unused local bindings.
@@ -179,19 +180,36 @@ pub enum GenerateError {
         /// First differing property / fingerprint mismatch summary.
         difference: String,
     },
-    /// An extension attribute names a field that cannot take part in the
-    /// reference it annotates (only [`GenerationConfig::with_exponent_links`]
-    /// has references today). Fails closed: never a silent skip.
-    ExtensionReference {
-        /// Message or group the annotated field belongs to.
+    /// A hook registered with [`GenerationConfig::with_try_hook`] returned
+    /// `Err`.
+    Hook {
+        /// The item the hook failed on: its kind and generated type name
+        /// (`"GroupEntryDecoder QuoteLegsEntryDecoder"`).
         item: String,
-        /// The field carrying the extension attribute.
-        field: String,
-        /// The sibling field name the attribute's value spells.
-        target: String,
-        /// Why the reference is invalid.
+        /// The hook's reason.
         reason: String,
     },
+    /// Two consts the generator or a hook emits on one type share a name, so
+    /// the module would not compile: a field named `template` gives
+    /// `TEMPLATE_ID`, which every message already has. Repeats under
+    /// different `cfg`s or on different concrete instantiations of a generic
+    /// type are allowed; a type alias or a defaulted parameter written out in
+    /// one impl only is left to rustc. Rename the schema item or the hook's
+    /// item.
+    NameClash {
+        /// The repeated name, `{Type}::{NAME}`.
+        name: String,
+        /// What the two items are.
+        reason: String,
+    },
+}
+
+/// Append `ts` to generated source, one item per line; nothing when empty.
+fn push_tokens(src: &mut String, ts: &proc_macro2::TokenStream) {
+    if !ts.is_empty() {
+        src.push_str(&ts.to_string());
+        src.push('\n');
+    }
 }
 
 impl core::fmt::Display for GenerateError {
@@ -249,16 +267,9 @@ impl core::fmt::Display for GenerateError {
                      '{owner_module}' (owner) and '{consumer_module}': {difference}"
                 )
             }
-            Self::ExtensionReference {
-                item,
-                field,
-                target,
-                reason,
-            } => {
-                write!(
-                    f,
-                    "extension reference in '{item}' field '{field}' names '{target}': {reason}"
-                )
+            Self::Hook { item, reason } => write!(f, "hook failed on {item}: {reason}"),
+            Self::NameClash { name, reason } => {
+                write!(f, "generated name '{name}' is defined twice: {reason}")
             }
         }
     }
@@ -475,18 +486,6 @@ impl Generator {
                 value: token.clone(),
                 reason,
             });
-        }
-        // The variant-labels method name becomes a generated `fn`; reject a
-        // non-identifier or keyword now rather than as an unreadable
-        // compile error in the consumer's crate.
-        if let Some((_, method)) = &self.config.variant_labels {
-            if !crate::config::is_valid_module_ident(method) {
-                return Err(GenerateError::InvalidConfiguration {
-                    option: "with_variant_labels".into(),
-                    value: method.clone(),
-                    reason: "method must be one Rust identifier that is not a keyword".into(),
-                });
-            }
         }
         Ok(())
     }
@@ -915,68 +914,49 @@ impl Generator {
         }
     }
 
-    /// Build a message decoder/encoder context from a [`MessageStructure`].
+    /// Build a message decoder or encoder context. With `decoder` (the
+    /// `{Name}Schema` marker, accessor naming and the decoder's accessor
+    /// table) it is a decoder context: constants listed, accessors filled in.
     fn build_message_ctx<'s>(
         msg: &MessageStructure,
-        kind: crate::ItemKind,
         schema: &'s crate::Schema,
+        multi_message: bool,
+        decoder: Option<(
+            &str,
+            &hook_context::AccessorNaming<'_>,
+            &hook_context::AccessorTable,
+        )>,
     ) -> crate::ItemContext<'s> {
         let name = to_pascal_case(&msg.name);
-        let name_with = |suffix: &str| format!("{name}{suffix}");
-        let mut fields = message_field_infos(&msg.fields, &[], None);
-        for g in &msg.groups {
-            fields.push(crate::FieldInfo {
-                name: to_snake_case(&g.name),
-                rust_type: format!("{}Decoder", to_pascal_case(&g.name)),
-                kind: crate::FieldKind::Group,
-                offset: None,
-                since_version: g.since_version,
-                semantic_type: None,
-                presence: "required",
-                null_value: None,
-                deprecated: g.deprecated,
-                description: g.description.clone(),
-                extensions: g.extensions.clone(),
-            });
-        }
-        for vd in &msg.var_data {
-            fields.push(crate::FieldInfo {
-                name: to_snake_case(&vd.name),
-                rust_type: "&[u8]".to_string(),
-                kind: crate::FieldKind::Data,
-                offset: None,
-                since_version: vd.since_version,
-                semantic_type: None,
-                presence: "required",
-                null_value: None,
-                deprecated: vd.deprecated,
-                description: vd.description.clone(),
-                extensions: vd.extensions.clone(),
-            });
-        }
-        let name = match kind {
-            crate::ItemKind::MessageDecoder => name_with("Decoder"),
-            crate::ItemKind::MessageEncoder => name_with("Encoder"),
-            _ => name,
-        };
-        match kind {
-            crate::ItemKind::MessageDecoder => crate::ItemContext::MessageDecoder {
+        let prefix = hook_context::group_prefix(msg, multi_message);
+        let block = hook_context::message_block(msg, &prefix);
+        match decoder {
+            Some((schema_marker, naming, table)) => {
+                let owner = format!("{name}Decoder");
+                let side = hook_context::DecoderSide {
+                    owner: &owner,
+                    reserved: conversion_helpers::DECODER_RESERVED,
+                    naming,
+                    table,
+                };
+                crate::ItemContext::MessageDecoder {
+                    schema,
+                    extensions: msg.extensions.clone(),
+                    fields: hook_context::block_fields(&block, Some(&side)),
+                    name: owner,
+                    template_id: msg.id,
+                    block_length: msg.block_length,
+                    schema_marker: schema_marker.to_string(),
+                }
+            }
+            None => crate::ItemContext::MessageEncoder {
                 schema,
                 extensions: msg.extensions.clone(),
-                name,
+                name: format!("{name}Encoder"),
                 template_id: msg.id,
                 block_length: msg.block_length,
-                fields,
+                fields: hook_context::block_fields(&block, None),
             },
-            crate::ItemKind::MessageEncoder => crate::ItemContext::MessageEncoder {
-                schema,
-                extensions: msg.extensions.clone(),
-                name,
-                template_id: msg.id,
-                block_length: msg.block_length,
-                fields,
-            },
-            _ => unreachable!("build_message_ctx only for MessageDecoder/MessageEncoder"),
         }
     }
 
@@ -1070,6 +1050,9 @@ impl Generator {
                     // The member element's own marks live on its BeginField
                     // wrapper, not on the inlined type's inner token.
                     extensions: field_tok.map(|t| t.extensions.clone()).unwrap_or_default(),
+                    schema_name: m.name.clone(),
+                    accessor: None,
+                    accessor_type: None,
                 }
             })
             .collect();
@@ -1119,11 +1102,11 @@ impl Generator {
     }
 
     /// Run registered hooks and append returned tokens to `src`.
-    fn run_hooks(&self, ctx: &crate::ItemContext, src: &mut String) {
+    fn run_hooks(&self, ctx: &crate::ItemContext, src: &mut String) -> Result<(), GenerateError> {
         if !self.config.has_hooks() {
-            return;
+            return Ok(());
         }
-        self.config.run_hooks(ctx, src);
+        self.config.run_hooks(ctx, src)
     }
     /// type names already generated by earlier schemas; those types are skipped
     /// in this call (the caller arranges `pub use super::*;`).
@@ -1229,26 +1212,7 @@ impl Generator {
             if shared.contains(&type_name) {
                 continue;
             }
-            // One predicate, one decision: the labels impl exists exactly
-            // when it is emitted, so `as_str` is suppressed exactly then too.
-            let labels = self
-                .config
-                .variant_labels
-                .as_ref()
-                .and_then(|(attr, method)| {
-                    extension_helpers::enum_labels_impl(enum_tokens, attr, method)
-                });
-            let labels_shadow_as_str = labels.is_some()
-                && self
-                    .config
-                    .variant_labels
-                    .as_ref()
-                    .is_some_and(|(_, method)| method == "as_str");
-            generate_enum(&mut src, enum_tokens, labels_shadow_as_str);
-            if let Some(labels) = &labels {
-                src.push_str(&labels.to_string());
-                src.push('\n');
-            }
+            generate_enum(&mut src, enum_tokens);
             if let Some(mapping) = self
                 .config
                 .enum_mappings
@@ -1257,9 +1221,28 @@ impl Generator {
             {
                 src.push_str(&enum_mapping_impl_tokens(enum_tokens, mapping).to_string());
             }
+            if self.config.extension_consts {
+                let values: Vec<_> = enum_tokens
+                    .iter()
+                    .filter(|t| {
+                        t.signal == crate::ir::Signal::Encoding
+                            && t.encoding.constant_value.is_some()
+                    })
+                    .map(|t| (t.name.as_str(), &t.extensions))
+                    .collect();
+                push_tokens(
+                    &mut src,
+                    &extension_consts::type_consts(
+                        &enum_tokens[0].name,
+                        &enum_tokens[0].extensions,
+                        "enum",
+                        &values,
+                    )?,
+                );
+            }
             if self.config.has_hooks() {
                 let ctx = Self::build_enum_ctx(enum_tokens, schema);
-                self.run_hooks(&ctx, &mut src);
+                self.run_hooks(&ctx, &mut src)?;
             }
         }
 
@@ -1269,20 +1252,25 @@ impl Generator {
                 continue;
             }
             generate_set(&mut src, set_tokens);
-            if let Some(labels) = self
-                .config
-                .variant_labels
-                .as_ref()
-                .and_then(|(attr, method)| {
-                    extension_helpers::set_labels_impl(set_tokens, attr, method)
-                })
-            {
-                src.push_str(&labels.to_string());
-                src.push('\n');
+            if self.config.extension_consts {
+                let choices: Vec<_> = set_tokens
+                    .iter()
+                    .filter(|t| t.signal == crate::ir::Signal::Encoding)
+                    .map(|t| (t.name.as_str(), &t.extensions))
+                    .collect();
+                push_tokens(
+                    &mut src,
+                    &extension_consts::type_consts(
+                        &set_tokens[0].name,
+                        &set_tokens[0].extensions,
+                        "set",
+                        &choices,
+                    )?,
+                );
             }
             if self.config.has_hooks() {
                 let ctx = Self::build_set_ctx(set_tokens, schema);
-                self.run_hooks(&ctx, &mut src);
+                self.run_hooks(&ctx, &mut src)?;
             }
         }
 
@@ -1293,6 +1281,30 @@ impl Generator {
             }
             let comp_byte_order = ir.byte_order;
             generate_composite(&mut src, composite_tokens, comp_byte_order);
+            if self.config.extension_consts {
+                // A member's own marks live on its BeginField wrapper.
+                let members: Vec<_> =
+                    crate::structured_ir::parse_composite_members(composite_tokens)
+                        .into_iter()
+                        .filter_map(|m| {
+                            composite_tokens
+                                .iter()
+                                .find(|t| {
+                                    t.signal == crate::ir::Signal::BeginField && t.name == m.name
+                                })
+                                .map(|t| (t.name.as_str(), &t.extensions))
+                        })
+                        .collect();
+                push_tokens(
+                    &mut src,
+                    &extension_consts::type_consts(
+                        &composite_tokens[0].name,
+                        &composite_tokens[0].extensions,
+                        "composite",
+                        &members,
+                    )?,
+                );
+            }
             if let Some(mapping) = self
                 .config
                 .composite_mappings
@@ -1311,7 +1323,7 @@ impl Generator {
             }
             if self.config.has_hooks() {
                 let ctx = Self::build_composite_ctx(composite_tokens, schema);
-                self.run_hooks(&ctx, &mut src);
+                self.run_hooks(&ctx, &mut src)?;
             }
         }
 
@@ -1361,39 +1373,53 @@ impl Generator {
                 &self.config.null_as_option,
                 self.config.all_enums_as_option,
                 &gen_ctx,
-            );
+            )?;
             src.push_str(&decoder_ts.to_string());
             src.push('\n');
-            // Extension built-ins (B2/B3): empty when no knob is set, so the
-            // default output is byte-identical.
-            if self.config.exponent_links.is_some()
-                || self.config.field_extension_defaults.is_some()
-            {
-                let walk = extension_helpers::KnobWalk {
-                    exponent_links: self.config.exponent_links.as_deref(),
-                    field_defaults: self
-                        .config
-                        .field_extension_defaults
-                        .as_ref()
-                        .map(|(d, o)| (d.as_str(), o.as_str())),
+            // Converter seam: domain-type / with_conversion / auto_bool. Built
+            // here because its domain getters are decoder accessors the hook
+            // table reads; emitted after the encoder as before.
+            let converter_src = (!conv_sels.is_empty()).then(|| {
+                let manual_impl_snippets = generate_manual_impl_snippets(
+                    &elements,
+                    domain_types,
+                    &self.config.manual_impl_selectors,
+                );
+                generate_converter_impls(
+                    msg,
+                    &conv_sels,
+                    domain_types,
+                    &manual_impl_snippets,
+                    multi,
+                    &self.config.null_as_option,
+                    self.config.all_enums_as_option,
+                )
+            });
+            if self.config.extension_consts {
+                push_tokens(
+                    &mut src,
+                    &extension_consts::message_consts(msg, &marker, multi)?,
+                );
+            }
+            // Hooks for the message decoder, then one per group entry.
+            if self.config.has_hooks() {
+                let mut accessors = decoder_ts.clone();
+                if let Some(conv) = &converter_src {
+                    accessors.extend(conv.parse::<proc_macro2::TokenStream>().ok());
+                }
+                let table = hook_context::AccessorTable::from_tokens(&accessors);
+                let naming = hook_context::AccessorNaming {
                     conv_sels: &conv_sels,
                     domain_types,
-                    null_as_option: &self.config.null_as_option,
-                    all_enums_as_option: self.config.all_enums_as_option,
-                    multi_message: multi,
                 };
-                let ext_ts = extension_helpers::message_extension_impls(msg, &marker, &walk)?;
-                if !ext_ts.is_empty() {
-                    src.push_str(&ext_ts.to_string());
-                    src.push('\n');
+                let ctx =
+                    Self::build_message_ctx(msg, schema, multi, Some((&marker, &naming, &table)));
+                self.run_hooks(&ctx, &mut src)?;
+                for ctx in hook_context::entry_contexts(schema, msg, multi, &naming, &table) {
+                    self.run_hooks(&ctx, &mut src)?;
                 }
             }
             message_markers.push((to_pascal_case(&msg.name), marker));
-            // Hooks for the message decoder
-            if self.config.has_hooks() {
-                let ctx = Self::build_message_ctx(msg, crate::ItemKind::MessageDecoder, schema);
-                self.run_hooks(&ctx, &mut src);
-            }
             let encode_version = self.config.encode_version.unwrap_or(ir.version);
             let encoder_msg = msg.for_encode(encode_version);
             let encoder_ts = generate_message_encoder(
@@ -1413,28 +1439,12 @@ impl Generator {
             src.push_str(&encoder_ts.to_string());
             // Hooks for the message encoder
             if self.config.has_hooks() {
-                let ctx =
-                    Self::build_message_ctx(&encoder_msg, crate::ItemKind::MessageEncoder, schema);
-                self.run_hooks(&ctx, &mut src);
+                let ctx = Self::build_message_ctx(&encoder_msg, schema, multi, None);
+                self.run_hooks(&ctx, &mut src)?;
             }
 
-            // Converter seam: domain-type / with_conversion / auto_bool.
-            if !conv_sels.is_empty() {
-                let manual_impl_snippets = generate_manual_impl_snippets(
-                    &elements,
-                    domain_types,
-                    &self.config.manual_impl_selectors,
-                );
-                let converter_ts = generate_converter_impls(
-                    msg,
-                    &conv_sels,
-                    domain_types,
-                    &manual_impl_snippets,
-                    multi,
-                    &self.config.null_as_option,
-                    self.config.all_enums_as_option,
-                );
-                src.push_str(&converter_ts);
+            if let Some(converter_src) = &converter_src {
+                src.push_str(converter_src);
             }
             if self.config.source_traits {
                 let source_ts = generate_source_traits(
@@ -1610,6 +1620,7 @@ impl Generator {
                 });
             }
         };
+        extension_consts::check_duplicate_consts(&file.items)?;
         annotate_missing_public_docs(&mut file);
         Ok(prettyplease::unparse(&file))
     }

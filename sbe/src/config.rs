@@ -326,6 +326,8 @@ pub enum ItemKind {
     MessageEncoder,
     /// A domain DTO struct.
     DomainStruct,
+    /// One repeating-group entry decoder, nested groups included.
+    GroupEntryDecoder,
 }
 
 /// One enum variant for hook introspection.
@@ -411,6 +413,33 @@ pub struct FieldInfo {
     /// `<field>`, `<group>` or `<data>` element). Empty unless the schema
     /// annotates it; build-time data only.
     pub extensions: crate::ir::Extensions,
+    /// Name exactly as the schema spells it (`"qtyExponent"`), which is what
+    /// extension marks that name another field hold.
+    pub schema_name: String,
+    /// Decoder method that returns this field (`"price"`, `"price_wire"`
+    /// under a conversion, `"type_"` for a keyword, `"wrap_field"` for a
+    /// reserved name, the domain getter when a domain type applies). Set on
+    /// [`ItemContext::MessageDecoder`] and [`ItemContext::GroupEntryDecoder`]
+    /// fields only (groups and var-data included); `None` elsewhere.
+    pub accessor: Option<String>,
+    /// Return type of [`Self::accessor`] as Rust source (`"i64"`,
+    /// `"Option<u32>"`, `"[u8; 16]"`, `"Result<FillsDecoder<'a>,
+    /// sbe_rt::DecodeError>"`), read from the generated decoder, never
+    /// re-derived. It may name the decoder's lifetime `'a`, so emit methods
+    /// in an `impl<'a> Decoder<'a>` block. `Some` exactly when
+    /// [`Self::accessor`] is `Some` and the method exists. Parse it with
+    /// `str::parse::<proc_macro2::TokenStream>()`.
+    pub accessor_type: Option<String>,
+}
+
+/// One block that encloses a group entry: the message, or a parent entry.
+#[derive(Clone, Debug)]
+pub struct BlockInfo {
+    /// Decoder type of that block, as generated (`"QuoteDecoder"`,
+    /// `"QuoteLegsEntryDecoder"`).
+    pub decoder: String,
+    /// Its fields, the same shape as [`ItemContext::MessageDecoder`]'s.
+    pub fields: Vec<FieldInfo>,
 }
 
 impl FieldInfo {
@@ -482,8 +511,31 @@ pub enum ItemContext<'a> {
         template_id: u16,
         /// Compiled fixed block length in bytes.
         block_length: usize,
-        /// Fixed/group/data fields visible on this message.
+        /// Fixed fields (constants included, `presence == "constant"`), then
+        /// groups, then var-data, in schema order.
         fields: Vec<FieldInfo>,
+        /// The `{Name}Schema` unit type generation chose for this message
+        /// (renamed when a schema type already takes the plain name). Hooks
+        /// can add associated consts to it.
+        schema_marker: String,
+    },
+    /// One repeating-group entry decoder, fired depth-first in schema order
+    /// straight after the owning message decoder's hooks.
+    GroupEntryDecoder {
+        /// Full schema IR for advanced hooks.
+        schema: &'a crate::Schema,
+        /// Extension content of the `<group>` element.
+        extensions: crate::ir::Extensions,
+        /// Entry decoder type as generated (`"QuoteLegsEntryDecoder"`: the
+        /// multi-message prefix and parent-group prefix applied).
+        name: String,
+        /// Group decoder (iterator) type as generated (`"QuoteLegsDecoder"`).
+        group_decoder: String,
+        /// Same shape as [`ItemContext::MessageDecoder`]'s fields.
+        fields: Vec<FieldInfo>,
+        /// Enclosing blocks, outermost first: the message, then each parent
+        /// entry.
+        enclosing: Vec<BlockInfo>,
     },
     /// A message encoder stage root.
     MessageEncoder {
@@ -515,16 +567,25 @@ pub enum ItemContext<'a> {
     },
 }
 
-impl std::fmt::Debug for ItemContext<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (kind, name) = match self {
+impl ItemContext<'_> {
+    /// The item's kind and generated type name, as `Debug` and hook errors
+    /// show them.
+    fn kind_and_name(&self) -> (&'static str, &str) {
+        match self {
             Self::Enum { name, .. } => ("Enum", name.as_str()),
             Self::Set { name, .. } => ("Set", name.as_str()),
             Self::Composite { name, .. } => ("Composite", name.as_str()),
             Self::MessageDecoder { name, .. } => ("MessageDecoder", name.as_str()),
             Self::MessageEncoder { name, .. } => ("MessageEncoder", name.as_str()),
             Self::DomainStruct { name, .. } => ("DomainStruct", name.as_str()),
-        };
+            Self::GroupEntryDecoder { name, .. } => ("GroupEntryDecoder", name.as_str()),
+        }
+    }
+}
+
+impl std::fmt::Debug for ItemContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, name) = self.kind_and_name();
         f.debug_struct("ItemContext")
             .field("kind", &kind)
             .field("name", &name)
@@ -535,10 +596,16 @@ impl std::fmt::Debug for ItemContext<'_> {
 /// A hook: returns token streams appended after the generated item.
 pub type HookFn = dyn Fn(&ItemContext<'_>) -> Vec<proc_macro2::TokenStream> + Send + Sync;
 
+/// A hook that can fail generation: `Err(reason)` aborts it with
+/// [`crate::GenerateError::Hook`], which names the item.
+pub type TryHookFn =
+    dyn Fn(&ItemContext<'_>) -> Result<Vec<proc_macro2::TokenStream>, String> + Send + Sync;
+
 /// Wrapper so hooks can live in [`GenerationConfig`]. Uses [`Arc`] so
-/// `GenerationConfig` can derive [`Clone`].
+/// `GenerationConfig` can derive [`Clone`]. Plain hooks are stored as
+/// try-hooks that always succeed, so both kinds run in registration order.
 #[derive(Clone, Default)]
-pub(crate) struct Hooks(Vec<std::sync::Arc<HookFn>>);
+pub(crate) struct Hooks(Vec<std::sync::Arc<TryHookFn>>);
 
 impl std::fmt::Debug for Hooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -546,11 +613,27 @@ impl std::fmt::Debug for Hooks {
     }
 }
 impl Hooks {
-    pub(crate) fn push(&mut self, hook: std::sync::Arc<HookFn>) {
+    pub(crate) fn push(&mut self, hook: std::sync::Arc<TryHookFn>) {
         self.0.push(hook);
     }
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, std::sync::Arc<HookFn>> {
-        self.0.iter()
+    /// Run every hook on `ctx` in registration order and append its tokens
+    /// to `out`; the first `Err` stops generation.
+    pub(crate) fn run(
+        &self,
+        ctx: &ItemContext<'_>,
+        out: &mut impl Extend<proc_macro2::TokenStream>,
+    ) -> Result<(), crate::GenerateError> {
+        for hook in &self.0 {
+            let tokens = hook(ctx).map_err(|reason| {
+                let (kind, name) = ctx.kind_and_name();
+                crate::GenerateError::Hook {
+                    item: format!("{kind} {name}"),
+                    reason,
+                }
+            })?;
+            out.extend(tokens);
+        }
+        Ok(())
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -641,23 +724,9 @@ pub struct GenerationConfig {
     /// Emit opt-in `validate()` on message decoders, group entry decoders
     /// and `AnyMessage`.
     pub(crate) validate: bool,
-    /// `(attribute local name, method name)`: emit a total label method on
-    /// every enum/set whose values carry the attribute. Emitted only when at
-    /// least one value carries it; the method name is validated as a Rust
-    /// identifier at generation time.
-    pub(crate) variant_labels: Option<(String, String)>,
-    /// Attribute local name on a fixed field whose value names a sibling
-    /// exponent field: emit a `{field}_with_exponent()` pair helper on the
-    /// owning decoder. Dangling or type-invalid references fail generation
-    /// with [`crate::GenerateError::ExtensionReference`].
-    pub(crate) exponent_links: Option<String>,
-    /// `(default attribute, omit-null attribute)`: emit stringly
-    /// `{FIELD}_SCHEMA_DEFAULT: Option<&'static str>` and
-    /// `{FIELD}_SCHEMA_OMIT_NULL: bool` consts for fields carrying either
-    /// attribute, on the message's `{Name}Schema` unit or the owning group
-    /// decoder. Values are the schema's own strings; no parsing, no error
-    /// surface.
-    pub(crate) field_extension_defaults: Option<(String, String)>,
+    /// Emit every extension attribute and foreign child element as an
+    /// associated `&'static str` const next to the item it is on.
+    pub(crate) extension_consts: bool,
 }
 
 impl std::fmt::Debug for GenerationConfig {
@@ -686,9 +755,7 @@ impl std::fmt::Debug for GenerationConfig {
             .field("composite_mappings", &self.composite_mappings)
             .field("source_traits", &self.source_traits)
             .field("validate", &self.validate)
-            .field("variant_labels", &self.variant_labels)
-            .field("exponent_links", &self.exponent_links)
-            .field("field_extension_defaults", &self.field_extension_defaults)
+            .field("extension_consts", &self.extension_consts)
             .finish()
     }
 }
@@ -727,9 +794,7 @@ impl GenerationConfig {
             composite_mappings: Vec::new(),
             source_traits: false,
             validate: false,
-            variant_labels: None,
-            exponent_links: None,
-            field_extension_defaults: None,
+            extension_consts: false,
         }
     }
 
@@ -1346,97 +1411,75 @@ impl GenerationConfig {
     where
         F: Fn(&ItemContext) -> Vec<proc_macro2::TokenStream> + Send + Sync + 'static,
     {
+        self.hooks
+            .push(std::sync::Arc::new(move |ctx| Ok(hook(ctx))));
+        self
+    }
+
+    /// Emit every schema extension mark as an associated `&'static str`
+    /// const next to the item it is on, with no hook code (default off).
+    ///
+    /// Each extension attribute (namespaced or not) and each foreign child
+    /// element (its text, then each of its attributes, then its own foreign
+    /// children the same way) becomes one const, named in upper snake case
+    /// from the schema names:
+    ///
+    /// | Mark on | Const |
+    /// |---|---|
+    /// | `<message>` | `{Name}Schema::{ATTR}` |
+    /// | message `<field>`, `<group>`, `<data>` | `{Name}Schema::{FIELD}_{ATTR}` |
+    /// | `<field>`, `<group>`, `<data>` in a group | `{Group}Decoder::{FIELD}_{ATTR}` |
+    /// | `<enum>`, `<set>`, `<composite>` | `{Type}::{ATTR}` |
+    /// | `<validValue>`, `<choice>`, composite member | `{Type}::{VALUE}_{ATTR}` |
+    /// | foreign child `<x:meta a="1">text</x:meta>` | `…::META` = `"text"`, `…::META_A` = `"1"` |
+    /// | nested foreign child `<x:meta><x:b c="2">t</x:b></x:meta>` | `…::META_B` = `"t"`, `…::META_B_C` = `"2"` |
+    ///
+    /// Values are the schema's own strings, never parsed. A const name already
+    /// on its type fails generation with
+    /// [`crate::GenerateError::InvalidConfiguration`]: two marks that spell
+    /// one name (one local name in two namespaces, a repeated child element),
+    /// a mark that spells a generated const (`x:templateId` on a
+    /// `<message>` gives `TEMPLATE_ID`), an `<enum>` mark that spells one of
+    /// its variants, or a mark whose name has no ASCII letter or digit. A
+    /// schema without
+    /// marks generates byte-identical output, and no encoder, setter or wire
+    /// path changes.
+    ///
+    /// ```rust
+    /// use ergo_sbe::GenerationConfig;
+    /// let _ = GenerationConfig::new("msgs").with_extension_consts(true);
+    /// ```
+    #[must_use]
+    pub const fn with_extension_consts(mut self, enable: bool) -> Self {
+        self.extension_consts = enable;
+        self
+    }
+
+    /// Register a hook that can fail generation. Like
+    /// [`Self::with_hook`], but `Err(reason)` aborts generation with
+    /// [`crate::GenerateError::Hook`], which names the item (kind and
+    /// generated type name). Plain and try hooks run together in
+    /// registration order.
+    ///
+    /// ```rust
+    /// use ergo_sbe::{GenerationConfig, ItemContext};
+    ///
+    /// let config = GenerationConfig::new("msgs").with_try_hook(|ctx: &ItemContext| match ctx {
+    ///     ItemContext::Enum { variants, .. } if variants.is_empty() => {
+    ///         Err("an enum with no values".to_string())
+    ///     }
+    ///     _ => Ok(vec![]),
+    /// });
+    /// ```
+    #[must_use]
+    pub fn with_try_hook<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&ItemContext) -> Result<Vec<proc_macro2::TokenStream>, String>
+            + Send
+            + Sync
+            + 'static,
+    {
         self.hooks.push(std::sync::Arc::new(hook));
-        self
-    }
-
-    /// Emit a total label method on every enum/set at least one of whose
-    /// values carries the schema extension attribute `attr` (matched by
-    /// local name, any prefix).
-    ///
-    /// The method is named `method` and returns `&'static str`: the value's
-    /// extension label when it carries one, an enum's variant name (exactly
-    /// what the built-in `as_str` returns, so unmarked values never change
-    /// rendering) or a set's raw schema name otherwise, and `"NullVal"` /
-    /// `"UNKNOWN"` for an enum's unknown variant / a set
-    /// that is not exactly one labelled choice. `method` must be a Rust
-    /// identifier that is not a keyword, else generation fails with
-    /// [`crate::GenerateError::InvalidConfiguration`]. Choosing `as_str`
-    /// replaces the enum's built-in `as_str` (and `Display`, which delegates
-    /// to it); any other name adds a second method. A name that collides
-    /// with another inherent method fails to compile in the consumer.
-    ///
-    /// Nothing is emitted for a value set that carries no such attribute,
-    /// and no encoder, setter or wire path changes.
-    ///
-    /// ```rust
-    /// use ergo_sbe::GenerationConfig;
-    /// let _ = GenerationConfig::new("msgs").with_variant_labels("jsonValue", "as_str");
-    /// ```
-    #[must_use]
-    pub fn with_variant_labels(
-        mut self,
-        attr: impl Into<String>,
-        method: impl Into<String>,
-    ) -> Self {
-        self.variant_labels = Some((attr.into(), method.into()));
-        self
-    }
-
-    /// Emit a `{field}_with_exponent()` helper on the decoder that owns each
-    /// fixed field carrying the schema extension attribute `attr` (local
-    /// name, any prefix), whose *value* names a sibling field holding the
-    /// exponent.
-    ///
-    /// The helper returns the pair of the two accessors' values — `(mantissa,
-    /// exponent)` — so its tuple elements are exactly what `self.mantissa()`
-    /// and `self.exponent()` return (domain types and `Option` included).
-    /// Both fields must be non-constant fixed primitive integer — a scalar
-    /// or a fixed-size array (a `[u8; 16]` magnitude pairs as `[u8; 16]`) —
-    /// and the named sibling must exist **in the same block** (message or
-    /// one group entry); a dangling or type-invalid reference there fails
-    /// generation with [`crate::GenerateError::ExtensionReference`]. A group
-    /// field whose target lives in the *enclosing message* instead gets no
-    /// helper: the pair spans two decoders the entry cannot reach, so the
-    /// reference is recognised and skipped rather than emitted or rejected.
-    /// Decode side only: no encoder, setter or wire path changes, and a
-    /// field without the attribute gets nothing.
-    ///
-    /// ```rust
-    /// use ergo_sbe::GenerationConfig;
-    /// let _ = GenerationConfig::new("msgs").with_exponent_links("exponent");
-    /// ```
-    #[must_use]
-    pub fn with_exponent_links(mut self, attr: impl Into<String>) -> Self {
-        self.exponent_links = Some(attr.into());
-        self
-    }
-
-    /// Emit schema-default consts for fixed fields carrying either extension
-    /// attribute (matched by local name, any prefix): `default_attr`'s value
-    /// becomes `{FIELD}_SCHEMA_DEFAULT: Option<&'static str>` (`Some` of the
-    /// schema's own string, untrimmed and unparsed), and `omit_attr`'s
-    /// presence becomes `{FIELD}_SCHEMA_OMIT_NULL: bool` (`true` for a
-    /// truthy value such as `"true"`, `false` otherwise).
-    ///
-    /// Message-level fields land on the message's `{Name}Schema` unit,
-    /// group-entry fields on the group decoder that owns them. Constants
-    /// only — a hook reads them alongside [`ItemContext`]
-    /// and emits whatever layer it wants. Fields carrying neither attribute
-    /// get nothing, and no encoder, setter or wire path changes.
-    ///
-    /// ```rust
-    /// use ergo_sbe::GenerationConfig;
-    /// let _ = GenerationConfig::new("msgs")
-    ///     .with_field_extension_defaults("jsonDefaultValue", "jsonOmitNull");
-    /// ```
-    #[must_use]
-    pub fn with_field_extension_defaults(
-        mut self,
-        default_attr: impl Into<String>,
-        omit_attr: impl Into<String>,
-    ) -> Self {
-        self.field_extension_defaults = Some((default_attr.into(), omit_attr.into()));
         self
     }
 
@@ -1445,14 +1488,20 @@ impl GenerationConfig {
         !self.hooks.is_empty()
     }
 
-    /// Run every hook on `ctx` and append its tokens to `out`.
-    pub(crate) fn run_hooks(&self, ctx: &ItemContext, out: &mut String) {
-        for hook in self.hooks.iter() {
-            for ts in hook(ctx) {
-                use std::fmt::Write;
-                let _ = writeln!(out, "{}", ts);
-            }
+    /// Run every hook on `ctx` and append its tokens to `out`, one line
+    /// each.
+    pub(crate) fn run_hooks(
+        &self,
+        ctx: &ItemContext,
+        out: &mut String,
+    ) -> Result<(), crate::GenerateError> {
+        let mut tokens = Vec::new();
+        self.hooks.run(ctx, &mut tokens)?;
+        for ts in tokens {
+            use std::fmt::Write;
+            let _ = writeln!(out, "{ts}");
         }
+        Ok(())
     }
 }
 

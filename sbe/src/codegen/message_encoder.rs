@@ -1381,7 +1381,8 @@ pub(crate) fn generate_message_encoder(
                         f: F,
                     ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError>
                     where
-                                                F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
+                        // `for<'b>`: two encodes in flight cannot trade groups.
+                        F: for<'b> FnOnce(&mut #g_pascal_enc<'b>) -> sbe_rt::GroupResult,
                     {
                         if self.offset + #dim_size_lit > self.buf.len() {
                             sbe_rt::cold();
@@ -1398,7 +1399,7 @@ pub(crate) fn generate_message_encoder(
                             [self.offset + #num_offset_lit..self.offset + #num_offset_lit + #num_size_lit]
                             .copy_from_slice(&count.#to_endian());
                         let mut group =
-                            #g_pascal_enc::wrap(self.buf, self.offset + #dim_size_lit, count);
+                            #g_pascal_enc::attach(self.buf, self.offset + #dim_size_lit, count);
                         f(&mut group)?;
                         let written = group.written();
                         if written != count {
@@ -1424,7 +1425,8 @@ pub(crate) fn generate_message_encoder(
                         f: F,
                     ) -> Result<#next_stage<'a, H>, sbe_rt::EncodeError>
                     where
-                                                F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
+                        // `for<'b>`: two encodes in flight cannot trade groups.
+                        F: for<'b> FnOnce(&mut #g_pascal_enc<'b>) -> sbe_rt::GroupResult,
                     {
                         if self.offset + #dim_size_lit > self.buf.len() {
                             sbe_rt::cold();
@@ -1443,7 +1445,7 @@ pub(crate) fn generate_message_encoder(
                         // Run in a block so group's reborrow of self.buf ends
                         // before we back-patch the count.
                         let (buf, offset, actual) = {
-                            let mut group = #g_pascal_enc::wrap(
+                            let mut group = #g_pascal_enc::attach(
                                 self.buf, self.offset + #dim_size_lit, #count_ty::MAX,
                             );
                             f(&mut group)?;

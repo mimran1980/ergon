@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use roxmltree::{Document, Node};
 
+use super::attr::GrammarAttr;
+
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 
 use super::attr::{
@@ -73,15 +75,15 @@ pub(crate) fn parse_schema(
     let id = u16_attr(root, "id", "messageSchema @id")?;
     let version = opt_u16_attr(root, "version", "messageSchema @version")?.unwrap_or(0);
     let byte_order = root
-        .attribute("byteOrder")
+        .grammar_attr("byteOrder")
         .map(parse_byte_order)
         .transpose()?
         .unwrap_or(ByteOrder::LittleEndian);
 
     let description = collect_description(root);
-    let semantic_version = root.attribute("semanticVersion").map(str::to_string);
+    let semantic_version = root.grammar_attr("semanticVersion").map(str::to_string);
     let header_type = root
-        .attribute("headerType")
+        .grammar_attr("headerType")
         .unwrap_or("messageHeader")
         .to_string();
 
@@ -92,7 +94,7 @@ pub(crate) fn parse_schema(
     // First pass: Parse all types, including included files
     for child in element_children(root) {
         if child.tag_name().name() == "include" {
-            if let Some(href) = child.attribute("href") {
+            if let Some(href) = child.grammar_attr("href") {
                 ingest_include(
                     href,
                     Some(child.range()),
@@ -328,7 +330,7 @@ fn ingest_included_document(
     for sub_child in element_children(inc_node) {
         match sub_child.tag_name().name() {
             "include" => {
-                if let Some(nested) = sub_child.attribute("href") {
+                if let Some(nested) = sub_child.grammar_attr("href") {
                     ingest_include(
                         nested,
                         Some(sub_child.range()),

@@ -62,7 +62,7 @@ pub type CarUnfixedEncoder<'a, H = sbe_rt::HeaderPresent> =
     CarEncoder<'a, H, sbe_rt::FieldsUnfixed>;
 
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
-    pub fn fixed(self, fields: &CarFixedFields) -> CarEncoder<'a, H, sbe_rt::FieldsFixed> { ... }
+    pub fn fixed(self, fixed: &CarFixedFields) -> CarEncoder<'a, H, sbe_rt::FieldsFixed> { ... }
 }
 
 // Calling stages out of order is a type error: `CarEncoder` has no `asks()`.

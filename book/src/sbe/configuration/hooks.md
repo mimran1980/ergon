@@ -11,7 +11,8 @@
 > derive would expand to anyway.
 
 Hooks let you append arbitrary Rust tokens after each generated item (enum, set,
-composite, message decoder/encoder, domain struct). The closure receives an
+composite, message decoder/encoder, group entry decoder, domain struct). The
+closure receives an
 [`ItemContext`](https://docs.rs/ergo-sbe/latest/ergo_sbe/enum.ItemContext.html)
 with structured field/variant/choice metadata, plus a `schema` reference for
 full IR access.
@@ -96,6 +97,52 @@ the schema; use them to build custom `impl` blocks or trait implementations.
 Hooks fire in registration order; the returned tokens are appended after the
 generated item (so they extend it with `impl`s, not with derives).
 
+## Contexts
+
+| Context | Fires | Names |
+|---|---|---|
+| `Enum` / `Set` / `Composite` | after the type | `name`, `variants` / `choices` / `fields` |
+| `MessageDecoder` | after the message decoder | `name` (`QuoteDecoder`), `fields`, `schema_marker` (the `{Name}Schema` type, renamed when a schema type takes the plain name) |
+| `GroupEntryDecoder` | once per group entry type, nested groups included, depth-first straight after its message decoder | `name` (`QuoteLegsEntryDecoder`), `group_decoder` (`QuoteLegsDecoder`), `fields`, `enclosing` (the message, then each parent entry, as `BlockInfo { decoder, fields }`) |
+| `MessageEncoder` | after the encoder | `name`, `fields` |
+| `DomainStruct` | after each DTO, message and entry | `name`, `fields` |
+
+Type names are the generated ones: the message prefix in a multi-message
+schema and the parent-group prefix of a nested group are already applied.
+Decoder contexts list fixed fields (constants included, `presence ==
+"constant"`), then groups, then var-data. Each [`FieldInfo`](https://docs.rs/ergo-sbe/latest/ergo_sbe/struct.FieldInfo.html)
+carries:
+
+| Field | Value |
+|---|---|
+| `name` / `schema_name` | snake_case Rust name / the name as the schema spells it (`qtyExponent`) |
+| `kind`, `rust_type`, `offset`, `presence`, `since_version`, … | schema metadata |
+| `accessor` | decoder contexts only: the decoder method returning the field (`price`, `price_wire` under a conversion, `type_` for a keyword, `wrap_field` for a reserved name, the domain getter under a domain type) |
+| `accessor_type` | its exact return type as Rust source (`i64`, `Option<u32>`, `[u8; 16]`, `Result<QuoteLegsDecoder<'a>, sbe_rt::DecodeError>`), read from the generated decoder; may name the decoder's lifetime `'a`, so emit into `impl<'a> Decoder<'a>` |
+| `extensions` | the element's [extension marks](extension-xml.md) |
+
+## Hooks that can fail
+
+`with_try_hook` registers a hook returning `Result<Vec<TokenStream>, String>`.
+An `Err(reason)` stops generation with `GenerateError::Hook { item, reason }`,
+where `item` is the context's kind and generated type name
+(`"GroupEntryDecoder QuoteLegsEntryDecoder"`). Plain and try hooks run
+together in registration order.
+
+```rust
+use ergo_sbe::{FieldKind, GenerationConfig, ItemContext};
+
+let config = GenerationConfig::new("msgs").with_try_hook(|ctx: &ItemContext| {
+    let ItemContext::GroupEntryDecoder { name, fields, .. } = ctx else {
+        return Ok(vec![]);
+    };
+    if fields.iter().any(|f| f.kind() == FieldKind::Data) {
+        return Err(format!("{name}: var-data in a group is not supported here"));
+    }
+    Ok(vec![])
+});
+```
+
 Full runnable example with serde + serde_json round-trip:
 [`hook_serde_test`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/hook_serde_test.rs).
 
@@ -109,6 +156,7 @@ child elements that the SBE grammar does not own.
 |---|---|
 | `Enum` / `Set` / `Composite` | that `<enum>` / `<set>` / `<composite>` element's own marks |
 | `MessageDecoder` / `MessageEncoder` | the `<message>` element's marks, foreign children included |
+| `GroupEntryDecoder` | the `<group>` element's marks |
 | `DomainStruct` | the `<message>` (message DTO) or `<group>` (entry DTO) element's marks |
 | `EnumVariantInfo` / `SetChoiceInfo` | that `<validValue>` / `<choice>` element's marks |
 | `FieldInfo` | that `<field>` / `<group>` / `<data>` element's marks |
@@ -128,6 +176,5 @@ which selects message and group fields only.
 The exchange sample applies exactly this hook to its venue schema —
 [exchange example](../../samples/exchange-example.md).
 
-Capture rules, the full context surface, `ExtensionAttr` selectors and
-the three built-in knobs that read the same marks:
-[Extension XML](extension-xml.md).
+Capture rules, the consts switch, the example label and field-pair hooks
+and `ExtensionAttr` selectors: [Extension XML](extension-xml.md).

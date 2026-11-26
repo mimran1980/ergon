@@ -81,8 +81,12 @@ impl<'a> SchemaSource<'a> {
     ///
     /// A shape check for schema authors' CI, not a full W3C XSD engine (see
     /// [`crate::xsd`]). Included files are not XSD-checked. [`parse`] alone
-    /// already rejects malformed XML, a bad root, unexpected elements and
-    /// unknown attributes.
+    /// already rejects malformed XML, a bad root and unexpected elements, and
+    /// on `<messageSchema>`, `<message>`, `<field>`, `<group>` and `<data>`
+    /// misplaced grammar attributes and near-miss typos of them. It captures
+    /// any other unknown attribute as an extension mark, which this check
+    /// rejects when it is unprefixed and outside its allow-lists (composite
+    /// members and anything inside a `<group>` are not checked).
     #[must_use]
     pub const fn with_xsd_validation(mut self) -> Self {
         self.xsd = true;

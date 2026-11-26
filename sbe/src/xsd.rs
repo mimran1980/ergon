@@ -12,9 +12,13 @@
 //! # Relationship to [`crate::parse`]
 //!
 //! [`parse`] is **always on** and rejects malformed XML, a bad
-//! root, unexpected elements, and unknown attributes on its own. This module
-//! is an **opt-in, deliberately stricter** gate for schema authors; it is
-//! not a prerequisite for parsing.
+//! root and unexpected elements on its own; it captures unknown attributes as
+//! extension marks (see the crate docs for the typos it rejects). This module
+//! is an **opt-in, deliberately stricter** gate for schema authors: it also
+//! rejects unprefixed attributes outside its allow-lists (the grammar plus
+//! the sbe-tool extensions listed below), except on composite members and on
+//! anything inside a `<group>` (its fields, data and nested groups), whose
+//! attributes it does not check. It is not a prerequisite for parsing.
 //!
 //! Attribute allow-lists are shared with the parser (one private
 //! `schema_attrs` module owns them) so the two cannot drift apart.
@@ -25,10 +29,13 @@
 //! reference implementation accepts. Only `@id` is required.
 //!
 //! Vendor extensions the published XSD does not declare but sbe-tool accepts
-//! (`characterEncoding` on `<data>`, `unit` on `<type>`, `jsonValue` on
+//! (`characterEncoding` on `<data>`, `unit` on a top-level `<type>`, `jsonValue` on
 //! `<validValue>` / `<choice>`, `package` on `<types>`) are permitted, as are
 //! all namespaced attributes (`xsi:*`, `xi:*`, and vendor namespaces such as
 //! an exchange's `mbx:*`). Rejecting those would fail real-world schemas.
+//! The published XSD itself rejects every undeclared attribute, namespaced
+//! or not, so a schema with any extension mark fails a full XSD validator
+//! (and sbe-tool run with `-Dsbe.validation.xsd`).
 
 use miette::Diagnostic;
 use thiserror::Error;
@@ -135,7 +142,11 @@ pub fn validate_against_sbe_xsd(xml: &str) -> Result<(), XsdValidationError> {
     // defaults it to 0. Enforcing it would reject upstream-mirrored fixtures:
     // a validator stricter than both the parser and the reference tool only
     // produces false positives.
-    if root.attribute("id").is_none() {
+    // Unprefixed only: `x:id` is a mark, as in sbe-tool.
+    if !root
+        .attributes()
+        .any(|a| a.namespace().is_none() && a.name() == "id")
+    {
         return Err(XsdValidationError::MissingAttribute { attr: "id" });
     }
     check_attrs("messageSchema", root, crate::schema_attrs::MESSAGE_SCHEMA)?;
@@ -577,6 +588,103 @@ mod tests {
                 element,
                 attr
             }) if element == "enum" && attr == "surprise"
+        ));
+    }
+
+    /// Pins the documented scope: unprefixed attributes are checked on
+    /// top-level elements and on a message's own fields, data and groups, but
+    /// not inside a group or on composite members; `unit` is allowed only on
+    /// a top-level `<type>`; a prefixed `x:id` does not supply the root `id`.
+    #[test]
+    fn attribute_check_scope_is_as_documented() {
+        let schema = |root: &str, ty: &str, member: &str, message: &str| {
+            format!(
+                r#"<messageSchema xmlns:x="urn:x" package="t" {root}version="0">
+          <types>
+            <composite name="groupSizeEncoding">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="numInGroup" primitiveType="uint16" {member}/>
+            </composite>
+            <type name="u32" primitiveType="uint32" {ty}/>
+          </types>
+          <message name="M" id="1">{message}</message>
+        </messageSchema>"#
+            )
+        };
+        let group = |inner: &str| {
+            format!(r#"<group name="g" id="2" dimensionType="groupSizeEncoding">{inner}</group>"#)
+        };
+        let id = r#"id="1" "#;
+        let accepted = [
+            schema(id, r#"unit="ms""#, "", ""),
+            schema(id, "", r#"scale="2""#, ""),
+            schema(
+                id,
+                "",
+                "",
+                &group(r#"<field name="f" id="1" type="u32" scale="2"/>"#),
+            ),
+            schema(
+                id,
+                "",
+                "",
+                &group(r#"<field name="f" id="1" type="u32" unit="ms"/>"#),
+            ),
+            schema(
+                id,
+                "",
+                "",
+                &group(r#"<data name="d" id="3" type="u32" scale="2"/>"#),
+            ),
+            schema(
+                id,
+                "",
+                "",
+                &group(r#"<group name="n" id="4" dimensionType="groupSizeEncoding" scale="2"/>"#),
+            ),
+        ];
+        for xml in &accepted {
+            assert!(validate_against_sbe_xsd(xml).is_ok(), "{xml}");
+        }
+        let rejected = [
+            schema(id, r#"scale="2""#, "", ""),
+            schema(
+                id,
+                "",
+                "",
+                r#"<field name="f" id="1" type="u32" unit="ms"/>"#,
+            ),
+            schema(
+                id,
+                "",
+                "",
+                r#"<field name="f" id="1" type="u32" scale="2"/>"#,
+            ),
+            schema(
+                id,
+                "",
+                "",
+                r#"<data name="d" id="3" type="u32" scale="2"/>"#,
+            ),
+            schema(
+                id,
+                "",
+                "",
+                r#"<group name="g" id="2" dimensionType="groupSizeEncoding" scale="2"/>"#,
+            ),
+        ];
+        for xml in &rejected {
+            assert!(
+                matches!(
+                    validate_against_sbe_xsd(xml),
+                    Err(XsdValidationError::UnexpectedAttribute { .. })
+                ),
+                "{xml}"
+            );
+        }
+        assert!(matches!(
+            validate_against_sbe_xsd(&schema(r#"x:id="1" "#, "", "", "")),
+            Err(XsdValidationError::MissingAttribute { attr: "id" })
         ));
     }
 }
